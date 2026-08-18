@@ -153,6 +153,7 @@ export class SiteFrontendService {
                 contentData,
                 heroSlider,
                 promotions,
+                featuredCategories,
                 sectionOneProducts,
                 sectionTwoProducts,
                 sectionThreeProducts,
@@ -163,6 +164,7 @@ export class SiteFrontendService {
                 this.homePageCmsRepository.findAll(),
                 this.heroSliderRepository.findAllWithOrder({ status: true }, order),
                 this.promotionsRepository.findAllWithOrder({ status: true }, sort),
+                this.firstCategoryRepository.findAll({ showOnHome: true, status: true }),
                 this.productRepository.findAll({ isProductSectionOne: true, status: true, isApprove: true }),
                 this.productRepository.findAll({ isProductSectionTwo: true, status: true, isApprove: true }),
                 this.productRepository.findAll({ isProductSectionThree: true, status: true, isApprove: true }),
@@ -190,10 +192,17 @@ export class SiteFrontendService {
                 'isDeleted'
             ]);
 
+            const filteredFeaturedCategories = omitMany(featuredCategories ?? [], [
+                'createdAt',
+                'updatedAt',
+                'isDeleted'
+            ]);
+
             const data = {
                 contentData: filteredContentData,
                 heroSlider: filteredHeroSlider,
                 promotions: filteredPromotions,
+                featuredCategories: filteredFeaturedCategories ?? [],
                 sectionOneProducts: sectionOneProducts.map(toSafeProduct) ?? [],
                 sectionTwoProducts: sectionTwoProducts.map(toSafeProduct) ?? [],
                 sectionThreeProducts: sectionThreeProducts.map(toSafeProduct) ?? [],

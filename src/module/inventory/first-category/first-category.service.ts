@@ -21,6 +21,7 @@ export class FirstCategoryService {
         dto: CreateFirstCategoryDto,
         files: {
             bannerImage?: UploadMulterFile;
+            image?: UploadMulterFile;
         }
     ): Promise<ApiResponse<FirstCategoryInterface>> {
         try {
@@ -36,6 +37,14 @@ export class FirstCategoryService {
                     'first-category'
                 );
                 dto.bannerImage = bannerImage;
+            }
+
+            if (files && files.image) {
+                const image: any = await this.spaceService.uploadFile(
+                    files.image[0],
+                    'first-category'
+                );
+                dto.image = image;
             }
 
             const output = (await this.repository.create({ ...dto, slug })) as FirstCategory | null;
@@ -125,6 +134,7 @@ export class FirstCategoryService {
         dto: UpdateFirstCategoryDto,
         files: {
             bannerImage?: UploadMulterFile;
+            image?: UploadMulterFile;
         }
     ): Promise<ApiResponse<FirstCategory>> {
         try {
@@ -151,6 +161,17 @@ export class FirstCategoryService {
                 dto.bannerImage = bannerImage;
             } else {
                 dto.bannerImage = foundImage;
+            }
+
+            const foundIcon = (output as FirstCategory)?.image;
+            if (files && files.image) {
+                const image: any = await this.spaceService.uploadFile(
+                    files.image[0],
+                    'first-category'
+                );
+                dto.image = image;
+            } else {
+                dto.image = foundIcon;
             }
 
             const response = await this.repository.update(id, dto);

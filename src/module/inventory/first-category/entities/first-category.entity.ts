@@ -12,8 +12,14 @@ export class FirstCategory extends AbstractEntity {
 	@Column({ type: 'varchar' })
 	bannerImage: string;
 
+	@Column({ type: 'varchar', default: '' })
+	image: string;
+
 	@Column({ type: 'boolean', default: true })
     status: boolean;
+
+	@Column({ type: 'boolean', default: false })
+	showOnHome: boolean;
 
 	@Column({ type: 'varchar' })
 	mainCategoryId: string;

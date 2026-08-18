@@ -33,12 +33,13 @@ export class FirstCategoryController {
     @UseGuards(JwtAuthGuard, RolesGuard)
     @Roles(Role.ADMIN)
     @Post()
-    @UseInterceptors(FileFieldsInterceptor([{ name: 'bannerImage', maxCount: 1 }]))
+    @UseInterceptors(FileFieldsInterceptor([{ name: 'bannerImage', maxCount: 1 }, { name: 'image', maxCount: 1 }]))
     async create(
         @Body() dto: CreateFirstCategoryDto,
         @UploadedFiles()
         files: {
             bannerImage?: UploadMulterFile;
+            image?: UploadMulterFile;
         }
     ): Promise<ApiResponse<FirstCategoryInterface>> {
         return await this.service.create(dto, files);
@@ -71,13 +72,14 @@ export class FirstCategoryController {
     @UseGuards(JwtAuthGuard, RolesGuard)
     @Roles(Role.ADMIN)
     @Patch(':id')
-    @UseInterceptors(FileFieldsInterceptor([{ name: 'bannerImage', maxCount: 1 }]))
+    @UseInterceptors(FileFieldsInterceptor([{ name: 'bannerImage', maxCount: 1 }, { name: 'image', maxCount: 1 }]))
     async update(
         @Param('id') id: string,
         @Body() dto: UpdateFirstCategoryDto,
         @UploadedFiles()
         files: {
             bannerImage?: UploadMulterFile;
+            image?: UploadMulterFile;
         }
     ): Promise<ApiResponse<FirstCategory>> {
         return await this.service.update(id, dto, files);

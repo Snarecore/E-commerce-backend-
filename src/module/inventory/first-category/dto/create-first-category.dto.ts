@@ -8,9 +8,17 @@ export class CreateFirstCategoryDto {
     @IsOptional()
     bannerImage: string;
 
+    @IsOptional()
+    image: string;
+
     @IsBoolean()
     @Transform(({ value }) => value === 'true' || value === true)
     status: boolean;
+
+    @IsBoolean()
+    @IsOptional()
+    @Transform(({ value }) => value === 'true' || value === true)
+    showOnHome?: boolean;
 
     @IsNotEmpty()
     mainCategoryId: string;
