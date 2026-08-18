@@ -1,0 +1,34 @@
+export interface HomePageCmsInterface {
+	id: string;
+	createdAt: Date;
+	updatedAt: Date;
+	isDeleted: boolean;
+	categorySectionTitle: string;
+	isCategorySectionVisible: boolean;
+	productSectionOneTitle: string;
+	isProductSectionOneVisible: boolean;
+	productSectionOneFontColor: string;
+	productSectionOneBackgroundColor: string;
+	productSectionTwoTitle: string;
+	isProductSectionTwoVisible: boolean;
+	productSectionTwoFontColor: string;
+	productSectionTwoBackgroundColor: string;
+	productSectionThreeTitle: string;
+	isProductSectionThreeVisible: boolean;
+	productSectionThreeFontColor: string;
+	productSectionThreeBackgroundColor: string;
+	productSectionFourTitle: string;
+	isProductSectionFourVisible: boolean;
+	productSectionFourFontColor: string;
+	productSectionFourBackgroundColor: string;
+	productSectionFiveTitle: string;
+	isProductSectionFiveVisible: boolean;
+	productSectionFiveFontColor: string;
+	productSectionFiveBackgroundColor: string;
+	productSectionSixTitle: string;
+	isProductSectionSixVisible: boolean;
+	productSectionSixFontColor: string;
+	productSectionSixBackgroundColor: string;
+	bannerImage: string;
+	bannerImageLink: string;
+}
