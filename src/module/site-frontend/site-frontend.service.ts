@@ -175,12 +175,12 @@ export class SiteFrontendService {
                 this.heroSliderRepository.findAllWithOrder({ status: true }, order),
                 this.promotionsRepository.findAllWithOrder({ status: true }, sort),
                 this.firstCategoryRepository.findAllWithOrder({ showOnHome: true, status: true }, firstCategoryOrder),
-                this.productRepository.findAll({ isProductSectionOne: true, status: true, isApprove: true }),
-                this.productRepository.findAll({ isProductSectionTwo: true, status: true, isApprove: true }),
-                this.productRepository.findAll({ isProductSectionThree: true, status: true, isApprove: true }),
-                this.productRepository.findAll({ isProductSectionFour: true, status: true, isApprove: true }),
-                this.productRepository.findAll({ isProductSectionFive: true, status: true, isApprove: true }),
-                this.productRepository.findAll({ isProductSectionSix: true, status: true, isApprove: true })
+                this.productRepository.findAll({ isProductSectionOne: true, status: true }),
+                this.productRepository.findAll({ isProductSectionTwo: true, status: true }),
+                this.productRepository.findAll({ isProductSectionThree: true, status: true }),
+                this.productRepository.findAll({ isProductSectionFour: true, status: true }),
+                this.productRepository.findAll({ isProductSectionFive: true, status: true }),
+                this.productRepository.findAll({ isProductSectionSix: true, status: true })
             ]);
 
             const filteredContentData = omit(contentData[0] ?? {}, [
@@ -234,8 +234,7 @@ export class SiteFrontendService {
             const [recommendedProductsRaw] = await Promise.all([
                 this.productRepository.findAll({
                     isProductSectionTwo: true,
-                    status: true,
-                    isApprove: true
+                    status: true
                 })
             ]);
 
@@ -300,7 +299,6 @@ export class SiteFrontendService {
             }
 
             query.status = true;
-            query.isApprove = true;
 
             const order: FindOptionsOrder<Product> = {
                 createdAt: 'desc'
@@ -336,7 +334,6 @@ export class SiteFrontendService {
             let query: ProductFilter = {};
 
             query.status = true;
-            query.isApprove = true;
 
             const order: FindOptionsOrder<Product> = {
                 createdAt: 'desc'
@@ -427,7 +424,7 @@ export class SiteFrontendService {
 
             const [productImages, relatedProductsRaw, productReview, vendor, vendorProfile, seoData] = await Promise.all([
                 this.productImageGalleryRepository.findAll({ productId: product.id }),
-                this.productRepository.findByQueryWithHardLimit({ mainCategoryId: product.mainCategoryId, isApprove: true }),
+                this.productRepository.findByQueryWithHardLimit({ mainCategoryId: product.mainCategoryId, status: true }),
                 this.getProductReviewData(product.id),
                 this.userRepository.findOne(product.vendorId),
                 this.userProfileRepository.findOneByQuery({ user: { id: product.vendorId } }),

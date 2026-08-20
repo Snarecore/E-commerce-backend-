@@ -26,6 +26,7 @@ export interface SafeProduct {
     rating: number | null;
     status: boolean;
     isApprove: boolean;
+    sizesString: string | null;
     isProductSectionOne: boolean;
     isProductSectionTwo: boolean;
     isProductSectionThree: boolean;
@@ -61,6 +62,7 @@ export function toSafeProduct(product: Product): SafeProduct {
         rating,
         status,
         isApprove,
+        sizesString,
         isProductSectionOne,
         isProductSectionTwo,
         isProductSectionThree,
@@ -95,6 +97,7 @@ export function toSafeProduct(product: Product): SafeProduct {
         rating,
         status,
         isApprove,
+        sizesString,
         isProductSectionOne,
         isProductSectionTwo,
         isProductSectionThree,

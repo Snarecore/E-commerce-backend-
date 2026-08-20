@@ -1,18 +1,18 @@
-import { Column, Entity } from 'typeorm';
+import { Column, Entity, Index } from 'typeorm';
 import { AbstractEntity } from 'src/database/abstract.entity';
-import { Role } from 'src/enums/role.enum';
 
 @Entity('conversations')
+@Index(['lastMessageAt', 'customerId'])
 export class Conversation extends AbstractEntity {
-    @Column({ type: 'varchar' })
-    participantOneId: string;
+    @Column({ type: 'varchar', unique: true })
+    customerId: string;
 
-    @Column({ type: 'enum', enum: Role })
-    participantOneRole: Role;
+    @Column({ type: 'text', nullable: true })
+    lastMessage: string | null;
 
-    @Column({ type: 'varchar' })
-    participantTwoId: string;
+    @Column({ type: 'timestamp', nullable: true })
+    lastMessageAt: Date | null;
 
-    @Column({ type: 'enum', enum: Role })
-    participantTwoRole: Role;
+    @Column({ type: 'int', default: 0 })
+    unreadCountAdmin: number;
 }

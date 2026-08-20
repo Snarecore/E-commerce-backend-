@@ -86,6 +86,10 @@ export class CreateProductDto {
     thirdCategoryName?: string;
 
     @IsOptional()
+    @IsString()
+    sizesString?: string;
+
+    @IsOptional()
     vendorId: string;
 
     @IsOptional()

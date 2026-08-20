@@ -9,35 +9,43 @@ export class ConversationRepository extends AbstractRepository<Conversation> {
         super(dataSource, Conversation);
     }
 
-    // async paginateUserConversations(userId: string, page = 1, limit = 10) {
-    //     const [data, total] = await this.repository
-    //         .createQueryBuilder('conversation')
-    //         .where('conversation.participantOneId = :userId', { userId })
-    //         .orWhere('conversation.participantTwoId = :userId', { userId })
-    //         .andWhere('conversation.isDeleted = false')
-    //         .orderBy('conversation.createdAt', 'DESC')
-    //         .skip((page - 1) * limit)
-    //         .take(limit)
-    //         .getManyAndCount();
-
-    //     const pageCount = Math.ceil(total / limit);
-
-    //     return {
-    //         data,
-    //         total,
-    //         page,
-    //         limit,
-    //         pageCount
-    //     };
-    // }
-
-    async findAllUserConversations(userId: string): Promise<Conversation[]> {
-        return this.repository
+    /**
+     * Admin messenger inbox — all conversations sorted by lastMessageAt DESC.
+     */
+    async findAllConversationsPaginated(page = 1, limit = 20): Promise<{
+        data: Conversation[];
+        total: number;
+        page: number;
+        limit: number;
+        pageCount: number;
+    }> {
+        const [data, total] = await this.repository
             .createQueryBuilder('conversation')
-            .where('conversation.participantOneId = :userId', { userId })
-            .orWhere('conversation.participantTwoId = :userId', { userId })
-            .andWhere('conversation.isDeleted = false')
-            .orderBy('conversation.createdAt', 'DESC')
-            .getMany();
+            .where('conversation.isDeleted = false')
+            .andWhere('conversation.customerId != :empty', { empty: '' })
+            .orderBy('conversation.lastMessageAt', 'DESC')
+            .addOrderBy('conversation.createdAt', 'DESC')
+            .skip((page - 1) * limit)
+            .take(limit)
+            .getManyAndCount();
+
+        const pageCount = Math.ceil(total / limit);
+        return { data, total, page, limit, pageCount };
+    }
+
+    /**
+     * Find active conversation by customerId.
+     */
+    async findByCustomerId(customerId: string): Promise<Conversation | null> {
+        return this.repository.findOne({
+            where: { customerId, isDeleted: false }
+        });
+    }
+
+    /**
+     * Atomic increment to avoid race conditions during concurrent messages.
+     */
+    async incrementUnreadCount(conversationId: string, value = 1): Promise<void> {
+        await this.repository.increment({ id: conversationId }, 'unreadCountAdmin', value);
     }
 }

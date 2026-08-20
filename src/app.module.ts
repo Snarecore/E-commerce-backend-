@@ -64,9 +64,14 @@ import { join } from 'path';
 import { HandlebarsAdapter } from '@nestjs-modules/mailer/dist/adapters/handlebars.adapter';
 import { EmailServiceModule } from './module/email-service/email-sender.module';
 import { SesModule } from './common/ses/ses.module';
+import { ThrottlerModule } from '@nestjs/throttler';
 
 @Module({
 	imports: [
+		ThrottlerModule.forRoot([{
+			ttl: 60000,
+			limit: 100
+		}]),
 		ConfigModule.forRoot({
 			isGlobal: true
 		}),

@@ -22,7 +22,7 @@ export class ProductController {
 	constructor(private readonly service: ProductService) { }
 
 	@UseGuards(JwtAuthGuard, RolesGuard)
-	@Roles(Role.VENDOR)
+	@Roles(Role.VENDOR, Role.ADMIN)
 	@Post()
 	@UseInterceptors(FileFieldsInterceptor(
         [

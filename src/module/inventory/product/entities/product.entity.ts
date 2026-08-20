@@ -99,6 +99,9 @@ export class Product extends AbstractEntity {
 	@Column({ type: 'boolean', default: false })
 	isProductSectionSix: boolean;
 
+	@Column({ type: 'varchar', nullable: true })
+	sizesString: string;
+
 	@OneToOne(() => ProductSeo, (seo) => seo.product, { cascade: true, eager: true })
 	seo: ProductSeo;
 

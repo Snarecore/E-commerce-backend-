@@ -55,7 +55,7 @@ export class ProductService {
                 dto.fileUrl = fileUrl;
             }
 
-            const output = (await this.repository.create({ ...dto, slug })) as Product | null;
+            const output = (await this.repository.create({ ...dto, slug, isApprove: true, status: true })) as Product | null;
             if (!output) {
                 throw new HttpException(
                     'Something went wrong! Please try again.',
@@ -109,6 +109,18 @@ export class ProductService {
 
             if (dto.mainCategoryId) {
                 query.mainCategoryId = dto.mainCategoryId;
+            }
+
+            if (dto.firstCategoryId) {
+                query.firstCategoryId = dto.firstCategoryId;
+            }
+
+            if (dto.secondCategoryId) {
+                query.secondCategoryId = dto.secondCategoryId;
+            }
+
+            if (dto.thirdCategoryId) {
+                query.thirdCategoryId = dto.thirdCategoryId;
             }
 
             if (dto.vendorId) {
@@ -198,6 +210,18 @@ export class ProductService {
                 query.mainCategoryId = dto.mainCategoryId;
             }
 
+            if (dto.firstCategoryId) {
+                query.firstCategoryId = dto.firstCategoryId;
+            }
+
+            if (dto.secondCategoryId) {
+                query.secondCategoryId = dto.secondCategoryId;
+            }
+
+            if (dto.thirdCategoryId) {
+                query.thirdCategoryId = dto.thirdCategoryId;
+            }
+
             if (dto.vendorId) {
                 query.vendorId = dto.vendorId;
             }
@@ -284,6 +308,18 @@ export class ProductService {
 
             if (dto.mainCategoryId) {
                 query.mainCategoryId = dto.mainCategoryId;
+            }
+
+            if (dto.firstCategoryId) {
+                query.firstCategoryId = dto.firstCategoryId;
+            }
+
+            if (dto.secondCategoryId) {
+                query.secondCategoryId = dto.secondCategoryId;
+            }
+
+            if (dto.thirdCategoryId) {
+                query.thirdCategoryId = dto.thirdCategoryId;
             }
 
             if (dto.vendorId) {
