@@ -5,10 +5,16 @@ import {
     Body,
     UseGuards,
     Query,
-    Req
+    Req,
+    UseInterceptors,
+    UploadedFile,
+    BadRequestException,
+    InternalServerErrorException,
+    HttpStatus
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { CONFIG } from 'src/utils/config';
-import { ApiResponse } from 'src/utils/response.utils';
+import { ApiResponse, ResponseUtils } from 'src/utils/response.utils';
 import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/guards/role.guard';
 import { Roles } from 'src/decorators/role.decorator';
@@ -22,6 +28,7 @@ import { GetThreadDto } from './dto/get-thread.dto';
 import { Message } from './entities/message.entity';
 import { Conversation } from '../conversation/entities/conversation.entity';
 import { EnrichedConversation } from '../conversation/type/conversation.type';
+import { SpaceService } from 'src/module/space-module/space-service/space.service';
 
 interface AuthenticatedUser {
     id: string;
@@ -36,7 +43,10 @@ interface AuthenticatedRequest extends Request {
 
 @Controller({ path: 'message', version: CONFIG.API_VERSION })
 export class MessageController {
-    constructor(private readonly service: MessageService) { }
+    constructor(
+        private readonly service: MessageService,
+        private readonly spaceService: SpaceService
+    ) { }
 
     /**
      * Customer sends message from floating chat button.
@@ -112,5 +122,30 @@ export class MessageController {
         @Query() dto: GetThreadDto
     ): Promise<ApiResponse<Message[]>> {
         return await this.service.getThreadMessages(req.user, dto);
+    }
+
+    /**
+     * Upload chat attachments/images.
+     * Accessible by any authenticated customer/guest.
+     */
+    @UseGuards(JwtAuthGuard)
+    @Post('upload')
+    @UseInterceptors(FileInterceptor('file'))
+    async uploadChatFile(
+        @UploadedFile() file: any
+    ): Promise<ApiResponse<{ url: string }>> {
+        if (!file) {
+            throw new BadRequestException('No file uploaded.');
+        }
+        const url = await this.spaceService.uploadFile(file, 'chat');
+        if (!url) {
+            throw new InternalServerErrorException('Failed to upload file.');
+        }
+        return ResponseUtils.successResponseHandler(
+            HttpStatus.OK,
+            'File uploaded successfully.',
+            'data',
+            { url }
+        );
     }
 }
