@@ -7,6 +7,7 @@ export interface FirstCategoryInterface {
     slug: string;
 	bannerImage: string;
     status: boolean;
+	position?: number;
 	mainCategoryId: string;
 	mainCategoryName: string;
 }

@@ -21,6 +21,9 @@ export class FirstCategory extends AbstractEntity {
 	@Column({ type: 'boolean', default: false })
 	showOnHome: boolean;
 
+	@Column({ type: 'int', default: 9999 })
+	position: number;
+
 	@Column({ type: 'varchar' })
 	mainCategoryId: string;
 

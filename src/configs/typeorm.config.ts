@@ -13,7 +13,7 @@ export const getTypeOrmConfig = (): TypeOrmModuleOptions => {
 		password: configService.get<string>('DATABASE_PASSWORD'),
 		database: configService.get<string>('DATABASE_NAME'),
 		autoLoadEntities: true,
-		synchronize: true,
+		synchronize: false,
 		dropSchema: false,
 		logging: false
 	};

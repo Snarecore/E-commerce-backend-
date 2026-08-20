@@ -25,4 +25,12 @@ export class CreateFirstCategoryDto {
 
     @IsNotEmpty()
     mainCategoryName: string;
+
+    @IsOptional()
+    @Transform(({ value }) => {
+        if (value === undefined || value === null || value === '') return 9999;
+        const val = Number(value);
+        return isNaN(val) ? 9999 : val;
+    })
+    position?: number;
 }

@@ -24,6 +24,7 @@ import { Orders } from "../order/entity/order.entity";
 import { SocialLinkRepository } from "../setting/social-link/social-link.repository";
 import { HeroSlider } from "../setting/hero-slider/entities/hero-slider.entity";
 import { Promotions } from "../setting/promotions/entities/promotions.entity";
+import { FirstCategory } from "../inventory/first-category/entities/first-category.entity";
 import { UserFilterDto } from "../user/dto/user-filter.dto";
 import { UserFilter } from "../user/type/user-filter.type";
 import { ProductReviewRepository } from "../inventory/product-review/product-review.repository";
@@ -84,10 +85,14 @@ export class SiteFrontendService {
 
     async getFirstCategoryByMainCategoryId(mainCategoryId: string) {
         try {
-            const firstCategories = await this.firstCategoryRepository.findAll({
+            const order: FindOptionsOrder<FirstCategory> = {
+                position: 'asc',
+                createdAt: 'desc'
+            };
+            const firstCategories = await this.firstCategoryRepository.findAllWithOrder({
                 status: true,
                 mainCategoryId: mainCategoryId
-            });
+            }, order);
 
             const data = {
                 firstCategories: firstCategories ?? []
@@ -149,6 +154,11 @@ export class SiteFrontendService {
                 createdAt: 'desc'
             };
 
+            const firstCategoryOrder: FindOptionsOrder<FirstCategory> = {
+                position: 'asc',
+                createdAt: 'desc'
+            };
+
             const [
                 contentData,
                 heroSlider,
@@ -164,7 +174,7 @@ export class SiteFrontendService {
                 this.homePageCmsRepository.findAll(),
                 this.heroSliderRepository.findAllWithOrder({ status: true }, order),
                 this.promotionsRepository.findAllWithOrder({ status: true }, sort),
-                this.firstCategoryRepository.findAll({ showOnHome: true, status: true }),
+                this.firstCategoryRepository.findAllWithOrder({ showOnHome: true, status: true }, firstCategoryOrder),
                 this.productRepository.findAll({ isProductSectionOne: true, status: true, isApprove: true }),
                 this.productRepository.findAll({ isProductSectionTwo: true, status: true, isApprove: true }),
                 this.productRepository.findAll({ isProductSectionThree: true, status: true, isApprove: true }),
@@ -462,10 +472,14 @@ export class SiteFrontendService {
 
             const nestedCategories = await Promise.all(
                 mainCategories.map(async (mainCategory) => {
-                    const firstCategories = await this.firstCategoryRepository.findAll({
+                    const firstCategoryOrder: FindOptionsOrder<FirstCategory> = {
+                        position: 'asc',
+                        createdAt: 'desc'
+                    };
+                    const firstCategories = await this.firstCategoryRepository.findAllWithOrder({
                         status: true,
                         mainCategoryId: mainCategory.id
-                    });
+                    }, firstCategoryOrder);
 
                     const firstCategoryData = await Promise.all(
                         firstCategories.map(async (firstCategory) => {

@@ -81,6 +81,7 @@ export class FirstCategoryService {
             let query = {};
 
             const order: FindOptionsOrder<FirstCategory> = {
+                position: 'asc',
                 createdAt: 'desc',
             };
 
