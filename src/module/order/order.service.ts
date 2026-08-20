@@ -88,6 +88,13 @@ export class OrdersService {
                     vendorId: item.vendorId,
                     commissionAmount: commissionAmount
                 });
+
+                // Deduct product stock/quantity
+                const product = await this.productRepository.findOne(item.id);
+                if (product) {
+                    const newQuantity = Math.max(0, (product.quantity ?? 0) - item.quantity);
+                    await this.productRepository.update(product.id, { quantity: newQuantity });
+                }
             }
 
             return ResponseUtils.successResponseHandler(201, 'Order created successfully.', 'data', data);

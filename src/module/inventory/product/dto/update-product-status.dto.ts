@@ -41,4 +41,12 @@ export class UpdateProductStatusDto {
     @IsBoolean()
     @Transform(({ value }) => value === 'true' || value === true)
     isProductSectionSix?: boolean;
+
+    @IsOptional()
+    @Transform(({ value }) => parseInt(value, 10))
+    quantity?: number;
+
+    @IsOptional()
+    @Transform(({ value }) => parseInt(value, 10))
+    quantityAlert?: number;
 }

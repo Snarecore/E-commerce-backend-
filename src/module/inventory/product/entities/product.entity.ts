@@ -102,6 +102,12 @@ export class Product extends AbstractEntity {
 	@Column({ type: 'varchar', nullable: true })
 	sizesString: string;
 
+	@Column({ type: 'int', default: 0 })
+	quantity: number;
+
+	@Column({ type: 'int', default: 0 })
+	quantityAlert: number;
+
 	@OneToOne(() => ProductSeo, (seo) => seo.product, { cascade: true, eager: true })
 	seo: ProductSeo;
 

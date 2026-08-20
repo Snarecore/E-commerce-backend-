@@ -90,6 +90,16 @@ export class CreateProductDto {
     sizesString?: string;
 
     @IsOptional()
+    @IsNumber()
+    @Transform(({ value }) => parseInt(value, 10))
+    quantity?: number;
+
+    @IsOptional()
+    @IsNumber()
+    @Transform(({ value }) => parseInt(value, 10))
+    quantityAlert?: number;
+
+    @IsOptional()
     vendorId: string;
 
     @IsOptional()
