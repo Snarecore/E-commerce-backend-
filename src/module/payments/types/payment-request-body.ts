@@ -1,6 +1,6 @@
-import { Product } from "./product";
+import { Product } from './product';
 
 export interface PaymentRequestBody {
-	products: Product[];
-	currency: string;
+    products: Product[];
+    currency: string;
 }

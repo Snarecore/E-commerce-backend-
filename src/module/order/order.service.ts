@@ -12,8 +12,6 @@ import { UpdateOrdersDto } from './dto/update.order.dto';
 import { UniqueCodeGeneratorService } from '../unique-code-generator/unique-code-generator.service';
 import { OrderSummaryRepository } from '../order-summary/order-summary.repository';
 import { OrderStatus, PaymentStatus } from 'src/enums/order-status.enum';
-import { CommissionRateCmsRepository } from '../subscription-module/commission-rate-cms/commission-rate-cms.repository';
-import { VendorSubscriptionRepository } from '../subscription-module/vendor-subscription/vendor-subscription.repository';
 import { toSafeUser } from 'src/utils/safe-user.utils';
 import { ProductRepository } from '../inventory/product/product.repository';
 import { unitAfterDiscount } from 'src/utils/helper.utils';
@@ -26,13 +24,10 @@ export class OrdersService {
         private readonly uniqueCodeGeneratorService: UniqueCodeGeneratorService,
         private readonly repository: OrdersRepository,
         private readonly orderSummaryRepository: OrderSummaryRepository,
-        private readonly commissionRateCmsRepository: CommissionRateCmsRepository,
-        private readonly vendorSubscriptionRepository: VendorSubscriptionRepository,
         private readonly productRepository: ProductRepository
     ) {
-        this.stripe = new Stripe(process.env.API_SECRET_KEY as string, {
-            apiVersion: '2025-04-30.basil'
-        });
+        const secretKey = process.env.STRIPE_SECRET_KEY || process.env.API_SECRET_KEY || '';
+        this.stripe = new Stripe(secretKey);
     }
 
     async create(dto: CreateOrdersDto, id: any): Promise<ApiResponse<OrdersInterface>> {
@@ -57,36 +52,22 @@ export class OrdersService {
             if (!data) {
                 throw new HttpException('Failed to create order.', HttpStatus.INTERNAL_SERVER_ERROR);
             }
-
-            const globalCommission = await this.commissionRateCmsRepository.findOneByQuery({});
-            const globalRate = globalCommission?.commissionRate ?? 10;
-
             for (const item of dto.products) {
-                const vendorTier = await this.vendorSubscriptionRepository.findOneByQueryRelation(
-                    {
-                        vendorId: item.vendorId,
-                        endDate: IsNull()
-                    },
-                    { relations: ['tier'] }
-                );
-
-                const commissionRate = vendorTier?.tier?.commissionRate ?? globalRate;
                 const unitPrice = unitAfterDiscount({
                     price: item.price,
                     discountType: item.discountType,
                     discountAmount: item.discountAmount
                 });
-                const commissionAmount = (unitPrice * item.quantity * commissionRate) / 100;
 
                 await this.orderSummaryRepository.create({
                     orderId: data.id,
                     productId: item.id,
                     productName: item.name,
-                    productImage: item.featuredImage,
+                    productImage: item.featuredImage || '',
                     price: unitPrice,
                     quantity: item.quantity,
-                    vendorId: item.vendorId,
-                    commissionAmount: commissionAmount
+                    vendorId: item.vendorId || '',
+                    commissionAmount: 0
                 });
 
                 // Deduct product stock/quantity

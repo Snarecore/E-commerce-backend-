@@ -23,7 +23,7 @@ export class OrderSummary extends AbstractEntity {
     @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
     commissionAmount: number;
 
-    @Column({ type: 'varchar' })
+    @Column({ type: 'varchar', nullable: true })
     vendorId: string;
 
     @Column({ type: 'uuid' })

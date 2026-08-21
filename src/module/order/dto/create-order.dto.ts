@@ -22,8 +22,8 @@ class ProductDto {
     @IsNotEmpty()
     quantity: number;
 
-    @IsNotEmpty()
-    vendorId: string;
+    @IsOptional()
+    vendorId?: string;
 
     @IsOptional()
     featuredImage?: string;

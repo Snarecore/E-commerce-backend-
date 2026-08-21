@@ -39,12 +39,7 @@ import { BlogModule } from './module/blog/blog.module';
 import { MessageModule } from './module/chat/message/message.module';
 import { ConversationModule } from './module/chat/conversation/conversation.module';
 import { PageMetaModule } from './module/seo/page-meta/page-meta.module';
-import { SubscriptionTierModule } from './module/subscription-module/subscription-tier/subscription-tier.module';
-import { VendorSubscriptionModule } from './module/subscription-module/vendor-subscription/vendor-subscription.module';
 import { ScheduleModule } from '@nestjs/schedule';
-import { CommissionRateCmsModule } from './module/subscription-module/commission-rate-cms/commission-rate-cms.module';
-import { VendorPaymentRequestModule } from './module/subscription-module/vendor-payment-request/vendor-payment-request.module';
-import { VendorDashboardModule } from './module/vendor-dashboard/vendor-dashboard.module';
 import { ProductSeoModule } from './module/seo/product-meta/product-seo.module';
 import { PolicyOneCmsModule } from './module/setting/policy/policy-one-cms/policy-one-cms.module';
 import { PolicyTwoCmsModule } from './module/setting/policy/policy-two-cms/policy-two-cms.module';
@@ -138,11 +133,6 @@ import { ThrottlerModule } from '@nestjs/throttler';
 		MessageModule,
 		ConversationModule,
 		PageMetaModule,
-		SubscriptionTierModule,
-		VendorSubscriptionModule,
-		CommissionRateCmsModule,
-		VendorPaymentRequestModule,
-		VendorDashboardModule,
 		ProductSeoModule,
 		PolicyOneCmsModule,
 		PolicyTwoCmsModule,

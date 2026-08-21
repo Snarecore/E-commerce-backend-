@@ -8,14 +8,21 @@ import * as bodyParser from 'body-parser';
 
 async function bootstrap(): Promise<void> {
 	dotenv.config();
-	const app = await NestFactory.create(AppModule);
+	const app = await NestFactory.create(AppModule, { rawBody: true });
 	app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
 	app.enableCors({
 		credentials: true,
 		origin: true,
         methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS'
 	});
-	app.use(bodyParser.json({ limit: '100mb' }));
+	app.use(
+		bodyParser.json({
+			limit: '100mb',
+			verify: (req: any, _res, buf) => {
+				req.rawBody = buf;
+			},
+		}),
+	);
     app.use(bodyParser.urlencoded({ limit: '100mb', extended: true }));
 	app.use(cookieParser());
 	app.setGlobalPrefix(CONFIG.API);

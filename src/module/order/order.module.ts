@@ -7,8 +7,6 @@ import { OrdersRepository } from './order.repository';
 import { UniqueCodeGeneratorService } from '../unique-code-generator/unique-code-generator.service';
 import { UniqueCodeGeneratorRepository } from '../unique-code-generator/unique-code-generator.repository';
 import { OrderSummaryRepository } from '../order-summary/order-summary.repository';
-import { VendorSubscriptionRepository } from '../subscription-module/vendor-subscription/vendor-subscription.repository';
-import { CommissionRateCmsRepository } from '../subscription-module/commission-rate-cms/commission-rate-cms.repository';
 import { ProductRepository } from '../inventory/product/product.repository';
 
 @Module({
@@ -22,8 +20,6 @@ import { ProductRepository } from '../inventory/product/product.repository';
 		UniqueCodeGeneratorService, 
 		UniqueCodeGeneratorRepository, 
 		OrderSummaryRepository,
-		VendorSubscriptionRepository,
-		CommissionRateCmsRepository,
 		ProductRepository
 	],
 	exports: [OrdersService, OrdersRepository]

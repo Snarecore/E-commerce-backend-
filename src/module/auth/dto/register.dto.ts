@@ -4,6 +4,7 @@ import {
     IsEmail,
     IsEnum,
     IsNotEmpty,
+    IsOptional,
     IsString,
     MinLength
 } from 'class-validator';
@@ -30,5 +31,6 @@ export class RegisterDto {
     confirmPassword: string;
 
     @IsEnum(Role, { message: 'Invalid role value' })
-    role: Role;
+    @IsOptional()
+    role?: Role;
 }

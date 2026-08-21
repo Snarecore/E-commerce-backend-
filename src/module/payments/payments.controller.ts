@@ -1,55 +1,61 @@
-import { Body, Controller, HttpStatus, Post, Req, Res } from '@nestjs/common';
-import { Request, Response } from 'express';
-import { PaymentsService } from './payments.service';
-import { PaymentRequestBody } from './types/payment-request-body';
-import { CONFIG } from 'src/utils/config';
+import {
+    Body,
+    Controller,
+    Headers,
+    HttpCode,
+    HttpStatus,
+    Post,
+    Req,
+    BadRequestException,
+} from '@nestjs/common';
+import { Request } from 'express';
 import { Public } from 'src/decorators/public.decorator';
-import Stripe from 'stripe';
-import { VendorSubscriptionService } from '../subscription-module/vendor-subscription/vendor-subscription.service';
+import { CONFIG } from 'src/utils/config';
+import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';
+import { PaymentsService } from './payments.service';
 
-@Controller({ path: "payments", version: CONFIG.API_VERSION })
+interface RequestWithRawBody extends Request {
+    rawBody?: Buffer;
+}
+
+@Controller({ path: 'payments', version: CONFIG.API_VERSION })
 export class PaymentsController {
-	private stripe: Stripe;
+    constructor(private readonly paymentsService: PaymentsService) {}
 
-	constructor(
-		private paymentService: PaymentsService,
-		private vendorSubscriptionService: VendorSubscriptionService
-	) { 
-		this.stripe = new Stripe(process.env.API_SECRET_KEY as string, {
-            apiVersion: '2025-04-30.basil'
-        });
-	}
+    @Public()
+    @Post()
+    async createPayment(
+        @Body() body: any
+    ): Promise<{ clientSecret: string }> {
+        return this.paymentsService.createPayment(body);
+    }
 
-	@Public()
-	@Post()
-	async createPayment(@Body() body: PaymentRequestBody) {
-		return await this.paymentService.createPayment(body);
-	}
+    @Public()
+    @Post('create-checkout-session')
+    async createCheckoutSession(
+        @Body() dto: CreateCheckoutSessionDto
+    ): Promise<{ url: string; sessionId: string; orderId: string }> {
+        return this.paymentsService.createCheckoutSession(dto);
+    }
 
-	// @Post('webhook')
-	// @Public()
-	// async handleStripeWebhook(@Req() request: Request, @Res() res: Response) {
-	// 	const stripeSignature = request.headers['stripe-signature'] as string;
+    @Public()
+    @Post('webhook')
+    @HttpCode(HttpStatus.OK)
+    async handleWebhook(
+        @Req() req: RequestWithRawBody,
+        @Headers('stripe-signature') signature: string
+    ): Promise<{ received: boolean }> {
+        if (!signature) {
+            throw new BadRequestException('Missing stripe-signature header');
+        }
 
-	// 	let event;
-	// 	try {
-	// 		event = this.stripe.webhooks.constructEvent(
-	// 			request.body,
-	// 			stripeSignature,
-	// 			process.env.STRIPE_WEBHOOK_SECRET!
-	// 		);
-	// 	} catch (err) {
-	// 		return res.status(400).send(`Webhook Error: ${err.message}`);
-	// 	}
+        const rawBody = req.rawBody;
+        if (!rawBody) {
+            throw new BadRequestException(
+                'Raw body missing. Ensure NestFactory rawBody: true is enabled.'
+            );
+        }
 
-	// 	if (event.type === 'payment_intent.succeeded') {
-	// 		const intent = event.data.object as Stripe.PaymentIntent;
-	// 		const vendorId = intent.metadata.vendorId;
-	// 		const tierId = intent.metadata.tierId;
-
-	// 		await this.vendorSubscriptionService.assignTierToVendor(vendorId, tierId);
-	// 	}
-
-	// 	res.json({ received: true });
-	// }
+        return this.paymentsService.handleWebhookEvent(rawBody, signature);
+    }
 }

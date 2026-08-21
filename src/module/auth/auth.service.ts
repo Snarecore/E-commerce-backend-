@@ -18,6 +18,7 @@ import { SpaceService } from '../space-module/space-service/space.service';
 import { EmailService } from '../email-service/email-sender.service';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { SesEmailService } from 'src/common/ses/ses-email.service';
+import { Role } from 'src/enums/role.enum';
 
 @Injectable()
 export class AuthService {
@@ -128,7 +129,7 @@ export class AuthService {
 			const createdUser = await this.userRepository.create({
 				...userData,
 				password: hashedPassword,
-				role: dto.role
+				role: dto.role || Role.CUSTOMER
 			});
 
 			if (createdUser) {
@@ -137,8 +138,13 @@ export class AuthService {
 				});
 			}
 
+			await queryRunner.commitTransaction();
 			return ResponseUtils.successResponseHandler(HttpStatus.OK, 'Data saved successfully.', 'data', createdUser);
 		} catch (error) {
+			await queryRunner.rollbackTransaction();
+			if (error instanceof HttpException) {
+				throw error;
+			}
 			const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
 			throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
 		} finally {

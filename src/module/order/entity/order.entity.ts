@@ -12,8 +12,11 @@ export class Orders extends AbstractEntity {
     @Column({ type: 'varchar', nullable: false })
     userId: string;
 
-    @Column({ type: 'varchar', nullable: false })
+    @Column({ type: 'varchar', nullable: true })
     paymentIntentId: string;
+
+    @Column({ type: 'varchar', nullable: true })
+    stripeSessionId: string;
 
     @Column({ type: 'decimal', precision: 10, scale: 2, nullable: false })
     totalAmount: number;
