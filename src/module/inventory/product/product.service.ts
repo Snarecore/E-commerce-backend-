@@ -119,10 +119,6 @@ export class ProductService {
                 query.secondCategoryId = dto.secondCategoryId;
             }
 
-            if (dto.thirdCategoryId) {
-                query.thirdCategoryId = dto.thirdCategoryId;
-            }
-
             if (dto.vendorId) {
                 query.vendorId = dto.vendorId;
             }
@@ -216,10 +212,6 @@ export class ProductService {
 
             if (dto.secondCategoryId) {
                 query.secondCategoryId = dto.secondCategoryId;
-            }
-
-            if (dto.thirdCategoryId) {
-                query.thirdCategoryId = dto.thirdCategoryId;
             }
 
             if (dto.vendorId) {
@@ -316,10 +308,6 @@ export class ProductService {
 
             if (dto.secondCategoryId) {
                 query.secondCategoryId = dto.secondCategoryId;
-            }
-
-            if (dto.thirdCategoryId) {
-                query.thirdCategoryId = dto.thirdCategoryId;
             }
 
             if (dto.vendorId) {

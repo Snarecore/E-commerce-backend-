@@ -1,10 +1,16 @@
 import { AbstractEntity } from 'src/database/abstract.entity';
 import { ProductSeo } from 'src/module/seo/product-meta/entity/product-seo.entity';
-import { Column, Entity, OneToMany, OneToOne } from 'typeorm';
+import { Column, Entity, Index, OneToMany, OneToOne } from 'typeorm';
 import { ProductComment } from '../../product-comment/entities/product-comment.entity';
 import { DiscountType } from 'src/enums/product.enum';
 
 @Entity('product')
+@Index('IDX_product_slug', ['slug'])
+@Index('IDX_product_vendor_status', ['vendorId', 'status', 'isApprove', 'isDeleted'])
+@Index('IDX_product_main_category', ['mainCategoryId', 'status', 'isApprove', 'isDeleted'])
+@Index('IDX_product_first_category', ['firstCategoryId', 'status', 'isApprove', 'isDeleted'])
+@Index('IDX_product_second_category', ['secondCategoryId', 'status', 'isApprove', 'isDeleted'])
+@Index('IDX_product_status_approve_created', ['status', 'isApprove', 'isDeleted', 'createdAt'])
 export class Product extends AbstractEntity {
 	@Column({ type: 'varchar', nullable: false })
 	name: string;
@@ -59,12 +65,6 @@ export class Product extends AbstractEntity {
 
 	@Column({ type: 'varchar', nullable: true })
 	secondCategoryName: string;
-
-	@Column({ type: 'uuid', nullable: true })
-	thirdCategoryId: string;
-
-	@Column({ type: 'varchar', nullable: true })
-	thirdCategoryName: string;
 
 	@Column({ type: 'varchar', nullable: false })
 	vendorId: string;

@@ -14,7 +14,6 @@ import { PromotionsModule } from './module/setting/promotions/promotions.module'
 import { MainCategoryModule } from './module/inventory/main-category/main-category.module';
 import { FirstCategoryModule } from './module/inventory/first-category/first-category.module';
 import { SecondCategoryModule } from './module/inventory/second-category/second-category.module';
-import { ThirdCategoryModule } from './module/inventory/third-category/third-category.module';
 import { SiteFrontendModule } from './module/site-frontend/site-frontend.module';
 import { ProductModule } from './module/inventory/product/product.module';
 import { ProductReviewModule } from './module/inventory/product-review/product-review.module';
@@ -35,7 +34,6 @@ import { UserProfileModule } from './module/user-profile/user-profile.module';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { SocialLinkModule } from './module/setting/social-link/social-link.module';
 import { VendorMessageModule } from './module/setting/vendor-message/vendor-message.module';
-import { BlogModule } from './module/blog/blog.module';
 import { NotificationModule } from './module/notification/notification.module';
 import { MessageModule } from './module/chat/message/message.module';
 import { ConversationModule } from './module/chat/conversation/conversation.module';
@@ -112,7 +110,6 @@ import { ThrottlerModule } from '@nestjs/throttler';
 		MainCategoryModule,
 		FirstCategoryModule,
 		SecondCategoryModule,
-		ThirdCategoryModule,
 		SiteFrontendModule,
 		ProductModule,
 		ProductReviewModule,
@@ -130,7 +127,6 @@ import { ThrottlerModule } from '@nestjs/throttler';
 		OrderSummaryModule,
 		SocialLinkModule,
 		VendorMessageModule,
-		BlogModule,
 		NotificationModule,
 		MessageModule,
 		ConversationModule,

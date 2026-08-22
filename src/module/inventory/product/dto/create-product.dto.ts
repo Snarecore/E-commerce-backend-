@@ -79,13 +79,6 @@ export class CreateProductDto {
     secondCategoryName?: string;
 
     @IsOptional()
-    thirdCategoryId?: string;
-
-    @IsOptional()
-    @IsString()
-    thirdCategoryName?: string;
-
-    @IsOptional()
     @IsString()
     sizesString?: string;
 

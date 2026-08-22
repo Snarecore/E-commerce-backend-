@@ -19,8 +19,6 @@ export interface SafeProduct {
     firstCategoryName: string | null;
     secondCategoryId: string | null;
     secondCategoryName: string | null;
-    thirdCategoryId: string | null;
-    thirdCategoryName: string | null;
     vendorId: string;
     vendorName: string;
     rating: number | null;
@@ -55,8 +53,6 @@ export function toSafeProduct(product: Product): SafeProduct {
         firstCategoryName,
         secondCategoryId,
         secondCategoryName,
-        thirdCategoryId,
-        thirdCategoryName,
         vendorId,
         vendorName,
         rating,
@@ -90,8 +86,6 @@ export function toSafeProduct(product: Product): SafeProduct {
         firstCategoryName,
         secondCategoryId,
         secondCategoryName,
-        thirdCategoryId,
-        thirdCategoryName,
         vendorId,
         vendorName,
         rating,

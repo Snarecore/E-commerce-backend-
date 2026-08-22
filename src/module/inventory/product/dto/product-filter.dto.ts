@@ -13,9 +13,6 @@ export class ProductFilterDto extends FilterDto {
     secondCategoryId?: string;
 
     @IsOptional()
-    thirdCategoryId?: string;
-
-    @IsOptional()
     vendorId?: string;
 
     @IsOptional()

@@ -21,8 +21,6 @@ export interface ProductInterface {
 	firstCategoryName: string;
 	secondCategoryId: string;
 	secondCategoryName: string;
-	thirdCategoryId: string;
-	thirdCategoryName: string;
 	vendorId: string;
 	vendorName: string;
 	status: boolean;

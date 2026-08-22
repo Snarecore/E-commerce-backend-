@@ -1,9 +1,11 @@
-import { Column, Entity, ManyToOne, JoinColumn } from 'typeorm';
+import { Column, Entity, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { AbstractEntity } from 'src/database/abstract.entity';
 import { Orders } from '../../order/entity/order.entity';
 import { Product } from 'src/module/inventory/product/entities/product.entity';
 
 @Entity('order-summary')
+@Index('IDX_order_summary_vendor_created', ['vendorId', 'createdAt'])
+@Index('IDX_order_summary_order', ['orderId'])
 export class OrderSummary extends AbstractEntity {
     @Column({ type: 'varchar', nullable: false })
     productId: string;

@@ -3,7 +3,6 @@ import { ResponseUtils } from 'src/utils/response.utils';
 import { MainCategoryRepository } from "../inventory/main-category/main-category.repository";
 import { FirstCategoryRepository } from "../inventory/first-category/first-category.repository";
 import { SecondCategoryRepository } from "../inventory/second-category/second-category.repository";
-import { ThirdCategoryRepository } from "../inventory/third-category/third-category.repository";
 import { HeroSliderRepository } from "../setting/hero-slider/hero-slider.repository";
 import { PromotionsRepository } from "../setting/promotions/promotions.repository";
 import { ProductRepository } from "../inventory/product/product.repository";
@@ -30,9 +29,6 @@ import { UserFilter } from "../user/type/user-filter.type";
 import { ProductReviewRepository } from "../inventory/product-review/product-review.repository";
 import { OrderSummaryRepository } from "../order-summary/order-summary.repository";
 import { UserProfileRepository } from "../user-profile/user-profile.repository";
-import { BlogFilterDto } from "../blog/dto/blog-filter.dto";
-import { Blog } from "../blog/entities/blog.entity";
-import { BlogRepository } from "../blog/blog.repository";
 import { toSafeUser } from "src/utils/safe-user.utils";
 import { PageMetaRepository } from "../seo/page-meta/page-meta.repository";
 import { VendorMessageRepository } from "../setting/vendor-message/vendor-message.repository";
@@ -46,7 +42,6 @@ export class SiteFrontendService {
         private readonly mainCategoryRepository: MainCategoryRepository,
         private readonly firstCategoryRepository: FirstCategoryRepository,
         private readonly secondCategoryRepository: SecondCategoryRepository,
-        private readonly thirdCategoryRepository: ThirdCategoryRepository,
         private readonly heroSliderRepository: HeroSliderRepository,
         private readonly promotionsRepository: PromotionsRepository,
         private readonly productRepository: ProductRepository,
@@ -61,7 +56,6 @@ export class SiteFrontendService {
         private readonly productReviewRepository: ProductReviewRepository,
         private readonly orderSummaryRepository: OrderSummaryRepository,
         private readonly userProfileRepository: UserProfileRepository,
-        private readonly blogRepository: BlogRepository,
         private readonly pageMetaRepository: PageMetaRepository,
         private readonly vendorMessageRepository: VendorMessageRepository,
         private readonly productSeoRepository: ProductSeoRepository
@@ -115,25 +109,6 @@ export class SiteFrontendService {
 
             const data = {
                 secondCategories: secondCategories ?? []
-            };
-
-            return ResponseUtils.successResponseHandler(200, 'Data fetched successfully', 'data', data);
-        } catch (error) {
-            throw new InternalServerErrorException(
-                error.message || 'An unexpected error occurred while fetching data.'
-            );
-        }
-    }
-
-    async getThirdCategoryBySecondCategoryId(secondCategoryId: string) {
-        try {
-            const thirdCategories = await this.thirdCategoryRepository.findAll({
-                status: true,
-                secondCategoryId: secondCategoryId
-            });
-
-            const data = {
-                thirdCategories: thirdCategories ?? []
             };
 
             return ResponseUtils.successResponseHandler(200, 'Data fetched successfully', 'data', data);
@@ -288,10 +263,6 @@ export class SiteFrontendService {
 
             if (dto.secondCategoryId) {
                 query.secondCategoryId = dto.secondCategoryId;
-            }
-
-            if (dto.thirdCategoryId) {
-                query.thirdCategoryId = dto.thirdCategoryId;
             }
 
             if (dto.searchKeyword) {
@@ -485,19 +456,9 @@ export class SiteFrontendService {
                                 firstCategoryId: firstCategory.id
                             });
 
-                            const secondCategoryData = await Promise.all(
-                                secondCategories.map(async (secondCategory) => {
-                                    const thirdCategories = await this.thirdCategoryRepository.findAll({
-                                        status: true,
-                                        secondCategoryId: secondCategory.id
-                                    });
-
-                                    return {
-                                        ...omit(secondCategory, [...metaKeys]),
-                                        thirdCategories
-                                    };
-                                })
-                            );
+                            const secondCategoryData = secondCategories.map((secondCategory) => {
+                                return omit(secondCategory, [...metaKeys]);
+                            });
 
                             return {
                                 ...omit(firstCategory, [...metaKeys]),
@@ -723,77 +684,10 @@ export class SiteFrontendService {
 
             const safeCustomerList = (customerList ?? []).map(toSafeUser);
 
-            const data = {
-                customerList: safeCustomerList ?? []
-            }
-
-            return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', data);
+            return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', safeCustomerList ?? []);
         } catch (error: unknown) {
             const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
             throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
-        }
-    }
-
-    async findBlogList(dto: BlogFilterDto) {
-        try {
-            let query: any = {};
-
-            query.status = true;
-
-            const order: FindOptionsOrder<Blog> = {
-                createdAt: 'desc'
-            };
-
-            const result = await this.blogRepository.paginate({
-                page: dto.page ? dto?.page : 1,
-                limit: dto.limit ? dto?.limit : 10,
-                query,
-                order
-            });
-
-            return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', result);
-        } catch (error) {
-            throw new InternalServerErrorException(
-                error.message || 'An unexpected error occurred while fetching data.'
-            );
-        }
-    }
-
-    async findSingleBlog(slug: string) {
-        try {
-            const blog = await this.blogRepository.findBySlug(slug);
-
-            if (!blog) {
-                throw new HttpException('Blog not found!', HttpStatus.BAD_REQUEST);
-            }
-
-            let query: any = {};
-
-            query.status = true;
-
-            const order: FindOptionsOrder<Blog> = {
-                createdAt: 'desc'
-            };
-
-            const latestBlogList = await this.blogRepository.findByQueryWithHardLimit(query, 10, [], order);
-
-            const latestBlogListFiltered = (latestBlogList ?? []).filter(b => b.slug !== blog.slug);
-
-            const metaKeys = ['createdAt', 'updatedAt', 'isDeleted'] as const;
-
-            const safeBlog = omit(blog, [...metaKeys]);
-            const safeLatestBlogList = omitMany(latestBlogListFiltered, [...metaKeys]);
-
-            const payload = {
-                ...safeBlog,
-                latestBlogList: safeLatestBlogList
-            };
-
-            return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', payload);
-        } catch (error) {
-            throw new InternalServerErrorException(
-                error.message || 'An unexpected error occurred while fetching data.'
-            );
         }
     }
 }

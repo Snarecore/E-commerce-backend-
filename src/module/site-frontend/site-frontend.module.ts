@@ -10,8 +10,6 @@ import { MainCategoryRepository } from '../inventory/main-category/main-category
 import { FirstCategoryRepository } from '../inventory/first-category/first-category.repository';
 import { SecondCategory } from '../inventory/second-category/entities/second-category.entity';
 import { SecondCategoryRepository } from '../inventory/second-category/second-category.repository';
-import { ThirdCategoryRepository } from "../inventory/third-category/third-category.repository";
-import { ThirdCategory } from '../inventory/third-category/entities/third-category.entity';
 import { HeroSliderRepository } from '../setting/hero-slider/hero-slider.repository';
 import { PromotionsRepository } from '../setting/promotions/promotions.repository';
 import { HeroSlider } from '../setting/hero-slider/entities/hero-slider.entity';
@@ -33,7 +31,6 @@ import { SocialLinkRepository } from '../setting/social-link/social-link.reposit
 import { ProductReviewRepository } from '../inventory/product-review/product-review.repository';
 import { OrderSummaryRepository } from '../order-summary/order-summary.repository';
 import { UserProfileRepository } from '../user-profile/user-profile.repository';
-import { BlogRepository } from '../blog/blog.repository';
 import { PageMetaRepository } from '../seo/page-meta/page-meta.repository';
 import { VendorMessageRepository } from '../setting/vendor-message/vendor-message.repository';
 import { ProductSeoRepository } from '../seo/product-meta/product-seo.repository';
@@ -47,7 +44,6 @@ import { ProductSeoRepository } from '../seo/product-meta/product-seo.repository
             MainCategory, 
             FirstCategory, 
             SecondCategory,
-            ThirdCategory,
             HeroSlider,
             Promotions,
             Product,
@@ -63,7 +59,6 @@ import { ProductSeoRepository } from '../seo/product-meta/product-seo.repository
         MainCategoryRepository,
         FirstCategoryRepository,
         SecondCategoryRepository,
-        ThirdCategoryRepository,
         HeroSliderRepository,
         PromotionsRepository,
         ProductRepository,
@@ -78,7 +73,6 @@ import { ProductSeoRepository } from '../seo/product-meta/product-seo.repository
         ProductReviewRepository,
         OrderSummaryRepository,
         UserProfileRepository,
-        BlogRepository,
         PageMetaRepository,
         VendorMessageRepository,
         ProductSeoRepository

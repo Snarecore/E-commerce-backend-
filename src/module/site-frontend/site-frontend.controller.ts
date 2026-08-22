@@ -9,7 +9,6 @@ import { Roles } from 'src/decorators/role.decorator';
 import { Role } from 'src/enums/role.enum';
 import { Request } from 'express';
 import { UserFilterDto } from '../user/dto/user-filter.dto';
-import { BlogFilterDto } from '../blog/dto/blog-filter.dto';
 
 @Controller({
     path: 'site',
@@ -40,15 +39,6 @@ export class SiteFrontendController {
             throw new BadRequestException('First category ID is required');
         }
         return this.service.getSecondCategoryByFirstCategoryId(firstCategoryId);
-    }
-
-    @Public()
-    @Get('third-categories')
-    async getThirdCategories(@Query('secondCategoryId') secondCategoryId: string) {
-        if (!secondCategoryId) {
-            throw new BadRequestException('Second category ID is required');
-        }
-        return this.service.getThirdCategoryBySecondCategoryId(secondCategoryId);
     }
 
     @Public()
@@ -91,18 +81,6 @@ export class SiteFrontendController {
     @Get('/product/:slug')
     async findSingleProduct(@Param('slug') slug: string) {
         return await this.service.findSingleProduct(slug);
-    }
-
-    @Public()
-    @Get('/blog')
-	async findBlogList(@Query() dto: BlogFilterDto) {
-		return await this.service.findBlogList(dto);
-	}
-
-    @Public()
-    @Get('/blog/:slug')
-    async findSingleBlog(@Param('slug') slug: string) {
-        return await this.service.findSingleBlog(slug);
     }
 
     @UseGuards(JwtAuthGuard, RolesGuard)

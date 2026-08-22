@@ -8,7 +8,6 @@ export interface ProductFilter {
     mainCategoryId?: string;
     firstCategoryId?: string;
     secondCategoryId?: string;
-    thirdCategoryId?: string;
     vendorId?: string;
     createdAt?: Date | FindOperator<Date>;
 }

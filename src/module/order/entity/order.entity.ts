@@ -1,10 +1,12 @@
 import { AbstractEntity } from 'src/database/abstract.entity';
-import { Column, Entity, JoinColumn, ManyToOne, OneToMany } from 'typeorm';
+import { Column, Entity, Index, JoinColumn, ManyToOne, OneToMany } from 'typeorm';
 import { OrderStatus, PaymentStatus } from '../../../enums/order-status.enum';
 import { OrderSummary } from '../../order-summary/entity/order-summary.entity';
 import { User } from 'src/module/user/entities/user.entity';
 
 @Entity('orders')
+@Index('IDX_orders_orderId', ['orderId'])
+@Index('IDX_orders_user_created', ['userId', 'createdAt'])
 export class Orders extends AbstractEntity {
     @Column({ type: 'varchar', nullable: false })
     orderId: string;
