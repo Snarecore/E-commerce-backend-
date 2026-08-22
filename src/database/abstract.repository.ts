@@ -62,6 +62,10 @@ export abstract class AbstractRepository<T extends BaseEntity> implements IRepos
         this.repository = this.dataSource.getRepository(this.entity);
     }
 
+    async query(sql: string, parameters?: any[]): Promise<any> {
+        return this.repository.query(sql, parameters);
+    }
+
     private isDeletedCondition(query?: FindOptionsWhere<T>): FindOptionsWhere<T> {
         return { ...query, isDeleted: false } as FindOptionsWhere<T>;
     }

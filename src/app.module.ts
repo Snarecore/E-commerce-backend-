@@ -36,6 +36,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { SocialLinkModule } from './module/setting/social-link/social-link.module';
 import { VendorMessageModule } from './module/setting/vendor-message/vendor-message.module';
 import { BlogModule } from './module/blog/blog.module';
+import { NotificationModule } from './module/notification/notification.module';
 import { MessageModule } from './module/chat/message/message.module';
 import { ConversationModule } from './module/chat/conversation/conversation.module';
 import { PageMetaModule } from './module/seo/page-meta/page-meta.module';
@@ -130,6 +131,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
 		SocialLinkModule,
 		VendorMessageModule,
 		BlogModule,
+		NotificationModule,
 		MessageModule,
 		ConversationModule,
 		PageMetaModule,

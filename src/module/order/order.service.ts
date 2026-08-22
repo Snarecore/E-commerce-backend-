@@ -20,6 +20,7 @@ import { ProductRepository } from '../inventory/product/product.repository';
 import { Product } from '../inventory/product/entities/product.entity';
 import { OrderSummary } from '../order-summary/entity/order-summary.entity';
 import { unitAfterDiscount } from 'src/utils/helper.utils';
+import { NotificationService } from '../notification/notification.service';
 
 @Injectable()
 export class OrdersService {
@@ -31,6 +32,7 @@ export class OrdersService {
         private readonly repository: OrdersRepository,
         private readonly orderSummaryRepository: OrderSummaryRepository,
         private readonly productRepository: ProductRepository,
+        @Optional() private readonly notificationService?: NotificationService,
         @Optional() private readonly configService?: ConfigService
     ) {}
 
@@ -302,8 +304,18 @@ export class OrdersService {
             });
             order.statusHistory = history;
 
-            const updatedOrder = await this.repository.save(order);
-            return ResponseUtils.successResponseHandler(200, 'Order status updated successfully.', 'data', updatedOrder as Orders);
+            const updatedOrder = (await this.repository.save(order)) as Orders;
+
+            if (this.notificationService && updatedOrder?.userId) {
+                await this.notificationService.createOrderNotification(
+                    updatedOrder.userId,
+                    updatedOrder.orderId || updatedOrder.id,
+                    dto.newStatus,
+                    dto.note
+                );
+            }
+
+            return ResponseUtils.successResponseHandler(200, 'Order status updated successfully.', 'data', updatedOrder);
         } catch (error: unknown) {
             if (error instanceof HttpException) throw error;
             const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
@@ -325,8 +337,18 @@ export class OrdersService {
             order.trackingId = dto.trackingId;
             order.courierTrackingLink = dto.courierTrackingLink || '';
 
-            const updatedOrder = await this.repository.save(order);
-            return ResponseUtils.successResponseHandler(200, 'Courier information updated successfully.', 'data', updatedOrder as Orders);
+            const updatedOrder = (await this.repository.save(order)) as Orders;
+
+            if (this.notificationService && updatedOrder?.userId) {
+                await this.notificationService.createOrderNotification(
+                    updatedOrder.userId,
+                    updatedOrder.orderId || updatedOrder.id,
+                    updatedOrder.status || 'Shipped',
+                    `Courier updated: ${dto.courierName} (Tracking ID: ${dto.trackingId})`
+                );
+            }
+
+            return ResponseUtils.successResponseHandler(200, 'Courier information updated successfully.', 'data', updatedOrder);
         } catch (error: unknown) {
             if (error instanceof HttpException) throw error;
             const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';

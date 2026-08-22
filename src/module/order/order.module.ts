@@ -8,10 +8,12 @@ import { UniqueCodeGeneratorService } from '../unique-code-generator/unique-code
 import { UniqueCodeGeneratorRepository } from '../unique-code-generator/unique-code-generator.repository';
 import { OrderSummaryRepository } from '../order-summary/order-summary.repository';
 import { ProductRepository } from '../inventory/product/product.repository';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
 	imports: [
-		TypeOrmModule.forFeature([Orders])
+		TypeOrmModule.forFeature([Orders]),
+		NotificationModule
 	],
 	controllers: [OrdersController],
 	providers: [
