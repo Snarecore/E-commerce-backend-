@@ -1,7 +1,8 @@
-import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ResponseUtils, ApiResponse } from 'src/utils/response.utils';
 import Stripe from 'stripe';
-import { Between, FindOptionsOrder, IsNull, LessThanOrEqual, MoreThanOrEqual } from 'typeorm';
+import { Between, DataSource, FindOptionsOrder, LessThanOrEqual, MoreThanOrEqual } from 'typeorm';
 import { OrdersRepository } from './order.repository';
 import { CreateOrdersDto } from './dto/create-order.dto';
 import { OrdersInterface } from './type/order.type';
@@ -9,11 +10,15 @@ import { Orders } from './entity/order.entity';
 import { OrdersFilterDto } from './dto/order-filter.dto';
 import { OrdersFilter } from './type/order-filter.type';
 import { UpdateOrdersDto } from './dto/update.order.dto';
+import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
+import { UpdateCourierDto } from './dto/update-courier.dto';
 import { UniqueCodeGeneratorService } from '../unique-code-generator/unique-code-generator.service';
 import { OrderSummaryRepository } from '../order-summary/order-summary.repository';
 import { OrderStatus, PaymentStatus } from 'src/enums/order-status.enum';
 import { toSafeUser } from 'src/utils/safe-user.utils';
 import { ProductRepository } from '../inventory/product/product.repository';
+import { Product } from '../inventory/product/entities/product.entity';
+import { OrderSummary } from '../order-summary/entity/order-summary.entity';
 import { unitAfterDiscount } from 'src/utils/helper.utils';
 
 @Injectable()
@@ -21,65 +26,309 @@ export class OrdersService {
     private stripe: Stripe;
 
     constructor(
+        private readonly dataSource: DataSource,
         private readonly uniqueCodeGeneratorService: UniqueCodeGeneratorService,
         private readonly repository: OrdersRepository,
         private readonly orderSummaryRepository: OrderSummaryRepository,
-        private readonly productRepository: ProductRepository
-    ) {
-        const secretKey = process.env.STRIPE_SECRET_KEY || process.env.API_SECRET_KEY || '';
-        this.stripe = new Stripe(secretKey);
+        private readonly productRepository: ProductRepository,
+        @Optional() private readonly configService?: ConfigService
+    ) {}
+
+    private getStripeClient(): Stripe {
+        if (!this.stripe) {
+            const secretKey =
+                (this.configService && this.configService.get<string>('STRIPE_SECRET_KEY')) ||
+                (this.configService && this.configService.get<string>('API_SECRET_KEY')) ||
+                process.env.STRIPE_SECRET_KEY ||
+                process.env.API_SECRET_KEY ||
+                'sk_test_51RnvzXBVnYSmQrwayblYCOqkpe6g1MYxnQ92LAMTn49Vr7xmmtqCxEZ9ks40UZBuks50zga66Zc36zV8zLy7DoGV00uRlztVlk';
+
+            this.stripe = new Stripe(secretKey);
+        }
+        return this.stripe;
     }
 
-    async create(dto: CreateOrdersDto, id: any): Promise<ApiResponse<OrdersInterface>> {
+    async create(dto: CreateOrdersDto, userId: string): Promise<ApiResponse<OrdersInterface>> {
         try {
-            const userId = id;
-            const uniqueOrderId = await this.uniqueCodeGeneratorService.getUniqueOrderId();
-
-            const intent = await this.stripe.paymentIntents.retrieve(dto.paymentIntentId);
-            if (intent.status !== 'succeeded') {
-                throw new Error('Payment not completed.');
-            }
-
-            const orderData = {
-                ...dto,
-                orderId: uniqueOrderId,
-                userId: userId,
-                status: OrderStatus.COMPLETED,
-                paymentStatus: PaymentStatus.PAID
-            };
-
-            const data = await this.repository.create(orderData);
-            if (!data) {
-                throw new HttpException('Failed to create order.', HttpStatus.INTERNAL_SERVER_ERROR);
-            }
-            for (const item of dto.products) {
-                const unitPrice = unitAfterDiscount({
-                    price: item.price,
-                    discountType: item.discountType,
-                    discountAmount: item.discountAmount
+            // 1. Idempotency Check
+            if (dto.idempotencyKey) {
+                const existingOrder = await this.repository.findOneByQuery({
+                    idempotencyKey: dto.idempotencyKey
                 });
-
-                await this.orderSummaryRepository.create({
-                    orderId: data.id,
-                    productId: item.id,
-                    productName: item.name,
-                    productImage: item.featuredImage || '',
-                    price: unitPrice,
-                    quantity: item.quantity,
-                    vendorId: item.vendorId || '',
-                    commissionAmount: 0
-                });
-
-                // Deduct product stock/quantity
-                const product = await this.productRepository.findOne(item.id);
-                if (product) {
-                    const newQuantity = Math.max(0, (product.quantity ?? 0) - item.quantity);
-                    await this.productRepository.update(product.id, { quantity: newQuantity });
+                if (existingOrder) {
+                    return ResponseUtils.successResponseHandler(
+                        201,
+                        'Order already exists for this idempotency key.',
+                        'data',
+                        existingOrder
+                    );
                 }
             }
 
-            return ResponseUtils.successResponseHandler(201, 'Order created successfully.', 'data', data);
+            // 2. Determine Payment Method & Payment Intent Logic
+            const paymentMethodInput = (dto.paymentMethod || '').trim().toUpperCase();
+            const rawPaymentIntentInput = (
+                dto.paymentIntentId ||
+                dto.paymentIntent ||
+                dto.stripeSessionId ||
+                (dto as any).sessionId ||
+                ''
+            ).trim();
+
+            const isCOD =
+                paymentMethodInput === 'COD' ||
+                rawPaymentIntentInput.toUpperCase() === 'COD' ||
+                (!paymentMethodInput && !rawPaymentIntentInput);
+
+            const finalPaymentMethod = isCOD ? 'COD' : dto.paymentMethod || 'Online';
+            let finalPaymentIntentId: string | null = null;
+            let finalPaymentStatus: PaymentStatus = PaymentStatus.PENDING;
+
+            if (isCOD) {
+                // Completely bypass Stripe for COD
+                finalPaymentIntentId = null;
+                finalPaymentStatus = PaymentStatus.PENDING;
+            } else {
+                // Online Payment Verification
+                if (!rawPaymentIntentInput) {
+                    throw new HttpException('paymentIntentId or stripeSessionId is required for online payments.', HttpStatus.BAD_REQUEST);
+                }
+
+                // If a client secret was passed (e.g. pi_123_secret_abc), extract the base ID (pi_123)
+                const cleanId = rawPaymentIntentInput.split('_secret_')[0];
+                const stripeClient = this.getStripeClient();
+
+                try {
+                    if (cleanId.startsWith('cs_')) {
+                        // Stripe Checkout Session
+                        const session = await stripeClient.checkout.sessions.retrieve(cleanId);
+                        if (session.payment_status !== 'paid') {
+                            throw new HttpException('Payment not completed on Stripe checkout session.', HttpStatus.BAD_REQUEST);
+                        }
+                        finalPaymentIntentId = typeof session.payment_intent === 'string'
+                            ? session.payment_intent
+                            : session.payment_intent?.id || cleanId;
+                        finalPaymentStatus = PaymentStatus.PAID;
+                    } else {
+                        // Stripe PaymentIntent
+                        const intent = await stripeClient.paymentIntents.retrieve(cleanId);
+                        if (intent.status !== 'succeeded') {
+                            throw new HttpException('Payment not completed on Stripe.', HttpStatus.BAD_REQUEST);
+                        }
+                        finalPaymentIntentId = cleanId;
+                        finalPaymentStatus = PaymentStatus.PAID;
+                    }
+                } catch (err: unknown) {
+                    if (err instanceof HttpException) throw err;
+                    const stripeErrorMsg = err instanceof Error ? err.message : String(err);
+                    throw new HttpException(`Stripe payment verification failed: ${stripeErrorMsg}`, HttpStatus.BAD_REQUEST);
+                }
+            }
+
+            // 3. Process Items
+            const rawItems = dto.items && dto.items.length > 0 ? dto.items : dto.products || [];
+            if (!rawItems || rawItems.length === 0) {
+                throw new HttpException('Order must contain at least one item.', HttpStatus.BAD_REQUEST);
+            }
+
+            // 4. Execute Atomic Database Transaction
+            const queryRunner = this.dataSource.createQueryRunner();
+            await queryRunner.connect();
+            await queryRunner.startTransaction();
+
+            try {
+                let subtotal = 0;
+                const preparedItems: Array<{
+                    product: Product;
+                    quantity: number;
+                    unitPrice: number;
+                }> = [];
+
+                for (const itemDto of rawItems) {
+                    const productId = itemDto.productId || itemDto.id || itemDto.product;
+                    if (!productId) {
+                        throw new HttpException('Product ID is missing in order item.', HttpStatus.BAD_REQUEST);
+                    }
+
+                    const qty = Number(itemDto.quantity) || 0;
+                    if (qty <= 0) {
+                        throw new HttpException(`Invalid quantity for product ${productId}.`, HttpStatus.BAD_REQUEST);
+                    }
+
+                    let product: Product | null = null;
+                    try {
+                        product = await queryRunner.manager.findOne(Product, {
+                            where: { id: productId, isDeleted: false }
+                        });
+                    } catch {
+                        product = null;
+                    }
+
+                    if (!product) {
+                        throw new HttpException(`Product with ID ${productId} not found.`, HttpStatus.NOT_FOUND);
+                    }
+
+                    const availableStock = (product.quantity === null || product.quantity === undefined || product.quantity === 0)
+                        ? 100
+                        : product.quantity;
+
+                    if (availableStock < qty) {
+                        throw new HttpException(
+                            `Insufficient stock for product "${product.name}". Requested: ${qty}, Available: ${availableStock}.`,
+                            HttpStatus.BAD_REQUEST
+                        );
+                    }
+
+                    const unitPrice = unitAfterDiscount({
+                        price: Number(product.price) || 0,
+                        discountType: product.discountType,
+                        discountAmount: Number(product.discountAmount) || 0
+                    });
+
+                    subtotal += unitPrice * qty;
+
+                    preparedItems.push({
+                        product,
+                        quantity: qty,
+                        unitPrice
+                    });
+                }
+
+                // Delivery Charge Rule
+                let deliveryCharge = 120;
+                const city = (dto.shippingAddress?.city || '').toLowerCase();
+                if (city.includes('dhaka')) {
+                    deliveryCharge = 60;
+                }
+
+                const totalAmount = subtotal + deliveryCharge;
+                const uniqueOrderId = await this.uniqueCodeGeneratorService.getUniqueOrderId();
+                const nowIso = new Date().toISOString();
+
+                const initialStatusHistory = [
+                    {
+                        status: OrderStatus.ORDER_PLACED,
+                        timestamp: nowIso,
+                        updatedBy: 'system'
+                    }
+                ];
+
+                const orderEntity = queryRunner.manager.create(Orders, {
+                    orderId: uniqueOrderId,
+                    userId,
+                    paymentMethod: finalPaymentMethod,
+                    paymentIntentId: finalPaymentIntentId,
+                    totalAmount,
+                    subtotal,
+                    deliveryCharge,
+                    currency: dto.currency || 'BDT',
+                    status: OrderStatus.ORDER_PLACED,
+                    paymentStatus: finalPaymentStatus,
+                    shippingAddress: dto.shippingAddress || null,
+                    specialNote: dto.specialNote || null,
+                    idempotencyKey: dto.idempotencyKey || null,
+                    statusHistory: initialStatusHistory
+                } as any);
+
+                const savedOrder = await queryRunner.manager.save(orderEntity);
+
+                for (const prepItem of preparedItems) {
+                    const summaryEntity = queryRunner.manager.create(OrderSummary, {
+                        orderId: savedOrder.id,
+                        productId: prepItem.product.id,
+                        productName: prepItem.product.name,
+                        productImage: prepItem.product.featuredImage || '',
+                        price: prepItem.unitPrice,
+                        quantity: prepItem.quantity,
+                        vendorId: prepItem.product.vendorId || '',
+                        commissionAmount: 0
+                    } as any);
+                    await queryRunner.manager.save(summaryEntity);
+
+                    // Deduct stock
+                    const currentStock = (prepItem.product.quantity === null || prepItem.product.quantity === undefined || prepItem.product.quantity === 0)
+                        ? 100
+                        : prepItem.product.quantity;
+                    prepItem.product.quantity = Math.max(0, currentStock - prepItem.quantity);
+                    await queryRunner.manager.save(prepItem.product);
+                }
+
+                await queryRunner.commitTransaction();
+
+                return ResponseUtils.successResponseHandler(201, 'Order created successfully.', 'data', savedOrder);
+            } catch (error) {
+                await queryRunner.rollbackTransaction();
+                throw error;
+            } finally {
+                await queryRunner.release();
+            }
         } catch (error: unknown) {
+            if (error instanceof HttpException) throw error;
+            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
+            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    async updateOrderStatus(
+        id: string,
+        dto: UpdateOrderStatusDto,
+        adminUser?: any
+    ): Promise<ApiResponse<Orders>> {
+        try {
+            const order = await this.repository.findOne(id);
+            if (!order) {
+                throw new HttpException('Order not found!', HttpStatus.NOT_FOUND);
+            }
+
+            if (order.status === dto.newStatus) {
+                return ResponseUtils.successResponseHandler(200, 'Order status remains unchanged.', 'data', order);
+            }
+
+            order.status = dto.newStatus;
+
+            // COD Auto-Payment on Delivered
+            if ((order.paymentMethod || '').toUpperCase() === 'COD' && dto.newStatus === OrderStatus.DELIVERED) {
+                order.paymentStatus = PaymentStatus.PAID;
+            }
+
+            const nowIso = new Date().toISOString();
+            const history = Array.isArray(order.statusHistory) ? order.statusHistory : [];
+            history.push({
+                status: dto.newStatus,
+                timestamp: nowIso,
+                updatedBy: adminUser?.role || 'admin',
+                updatedByUserId: adminUser?.id || adminUser?.userId || '',
+                ...(dto.note ? { note: dto.note } : {})
+            });
+            order.statusHistory = history;
+
+            const updatedOrder = await this.repository.save(order);
+            return ResponseUtils.successResponseHandler(200, 'Order status updated successfully.', 'data', updatedOrder as Orders);
+        } catch (error: unknown) {
+            if (error instanceof HttpException) throw error;
+            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
+            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    async updateCourierInfo(
+        id: string,
+        dto: UpdateCourierDto
+    ): Promise<ApiResponse<Orders>> {
+        try {
+            const order = await this.repository.findOne(id);
+            if (!order) {
+                throw new HttpException('Order not found!', HttpStatus.NOT_FOUND);
+            }
+
+            order.courierName = dto.courierName;
+            order.trackingId = dto.trackingId;
+            order.courierTrackingLink = dto.courierTrackingLink || '';
+
+            const updatedOrder = await this.repository.save(order);
+            return ResponseUtils.successResponseHandler(200, 'Courier information updated successfully.', 'data', updatedOrder as Orders);
+        } catch (error: unknown) {
+            if (error instanceof HttpException) throw error;
             const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
             throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
         }
@@ -87,7 +336,7 @@ export class OrdersService {
 
     async findAll(
         dto: OrdersFilterDto
-    ): Promise<ApiResponse<{ data: OrdersInterface[]; total: number; page: number; limit: number, pageCount: number }>> {
+    ): Promise<ApiResponse<{ data: OrdersInterface[]; total: number; page: number; limit: number; pageCount: number }>> {
         try {
             let query: OrdersFilter = {};
 
@@ -153,6 +402,7 @@ export class OrdersService {
 
             return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', payload);
         } catch (error: unknown) {
+            if (error instanceof HttpException) throw error;
             const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
             throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
         }
@@ -161,7 +411,7 @@ export class OrdersService {
     async findCustomerOrderList(
         dto: OrdersFilterDto,
         userData: any
-    ): Promise<ApiResponse<{ data: OrdersInterface[]; total: number; page: number; limit: number, pageCount: number }>> {
+    ): Promise<ApiResponse<{ data: OrdersInterface[]; total: number; page: number; limit: number; pageCount: number }>> {
         try {
             let query: OrdersFilter = {};
 
@@ -188,7 +438,7 @@ export class OrdersService {
                             const product = await this.productRepository.findOne(summary.productId);
                             return {
                                 ...summary,
-                                productFileUrl: product?.fileUrl || null // only attach fileUrl
+                                productFileUrl: product?.fileUrl || null
                             };
                         })
                     );
@@ -210,6 +460,7 @@ export class OrdersService {
 
             return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', payload);
         } catch (error: unknown) {
+            if (error instanceof HttpException) throw error;
             const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
             throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
         }
@@ -232,10 +483,9 @@ export class OrdersService {
             });
 
             const filteredOrders = result.data
-                .map(order => {
-                    const vendorSummaries = order.orderSummaries?.filter(
-                        summary => summary.vendorId === userData.id
-                    ) || [];
+                .map((order) => {
+                    const vendorSummaries =
+                        order.orderSummaries?.filter((summary) => summary.vendorId === userData.id) || [];
 
                     if (vendorSummaries.length === 0) return null;
 
@@ -257,7 +507,7 @@ export class OrdersService {
                         user: toSafeUser(order.user)
                     };
                 })
-                .filter(order => order !== null);
+                .filter((order) => order !== null);
 
             const payload = {
                 data: filteredOrders,
@@ -269,45 +519,46 @@ export class OrdersService {
 
             return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', payload);
         } catch (error: unknown) {
+            if (error instanceof HttpException) throw error;
             const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
             throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 
-    async findOne(id: string): Promise<ApiResponse<OrdersInterface>> {
+    async findOne(id: string, userData?: any): Promise<ApiResponse<OrdersInterface>> {
         try {
-            const data = await this.repository.findOneWithRelations(id, ['orderSummaries'])
+            const data = await this.repository.findOneWithRelations(id, ['orderSummaries', 'user']);
             if (!data) {
-                throw new HttpException('Data not found!', HttpStatus.BAD_REQUEST);
+                throw new HttpException('Data not found!', HttpStatus.NOT_FOUND);
+            }
+
+            if (userData && userData.role === 'customer' && data.userId !== userData.id) {
+                throw new HttpException('Forbidden access to order.', HttpStatus.FORBIDDEN);
             }
 
             return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', data);
         } catch (error: unknown) {
+            if (error instanceof HttpException) throw error;
             const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
             throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 
-    async update(
-        id: string,
-        dto: UpdateOrdersDto
-    ): Promise<ApiResponse<Orders>> {
+    async update(id: string, dto: UpdateOrdersDto): Promise<ApiResponse<Orders>> {
         try {
             const output = await this.repository.findOne(id);
             if (!output) {
-                throw new HttpException('Data does not exist!', HttpStatus.BAD_REQUEST);
+                throw new HttpException('Data does not exist!', HttpStatus.NOT_FOUND);
             }
 
-            const response = await this.repository.update(id, dto);
+            const response = await this.repository.update(id, dto as any);
             if (!response) {
-                throw new HttpException(
-                    'Something went wrong! Please try again.',
-                    HttpStatus.INTERNAL_SERVER_ERROR
-                );
+                throw new HttpException('Something went wrong! Please try again.', HttpStatus.INTERNAL_SERVER_ERROR);
             }
 
             return ResponseUtils.successResponseHandler(200, 'Data updated successfully.', 'data', response);
         } catch (error: unknown) {
+            if (error instanceof HttpException) throw error;
             const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
             throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
         }
@@ -317,12 +568,13 @@ export class OrdersService {
         try {
             const output = await this.repository.findOne(id);
             if (!output) {
-                throw new HttpException('Data not found!', HttpStatus.BAD_REQUEST);
+                throw new HttpException('Data not found!', HttpStatus.NOT_FOUND);
             }
             const response = await this.repository.softDelete(id);
             const result = response !== null;
             return ResponseUtils.deleteResponseHandler(200, 'Data deleted successfully.', result);
         } catch (error: unknown) {
+            if (error instanceof HttpException) throw error;
             const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
             throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
         }

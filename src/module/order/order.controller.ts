@@ -3,10 +3,11 @@ import { CONFIG } from 'src/utils/config';
 import { ApiResponse } from 'src/utils/response.utils';
 import { CreateOrdersDto } from './dto/create-order.dto';
 import { OrdersInterface } from './type/order.type';
-import { UpdateOrdersDto } from './dto/update.order.dto';
 import { Orders } from './entity/order.entity';
 import { OrdersFilterDto } from './dto/order-filter.dto';
 import { OrdersService } from './order.service';
+import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
+import { UpdateCourierDto } from './dto/update-courier.dto';
 import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/guards/role.guard';
 import { Roles } from 'src/decorators/role.decorator';
@@ -14,9 +15,9 @@ import { Role } from 'src/enums/role.enum';
 import { Public } from 'src/decorators/public.decorator';
 import { Request } from 'express';
 
-@Controller({ path: "orders", version: CONFIG.API_VERSION })
+@Controller({ path: 'orders', version: CONFIG.API_VERSION })
 export class OrdersController {
-	constructor(private readonly service: OrdersService) { }
+	constructor(private readonly service: OrdersService) {}
 
 	@UseGuards(JwtAuthGuard, RolesGuard)
 	@Roles(Role.CUSTOMER)
@@ -34,7 +35,7 @@ export class OrdersController {
 	@Get()
 	async findAll(
 		@Query() dto: OrdersFilterDto
-	): Promise<ApiResponse<{ data: OrdersInterface[]; total: number; page: number; limit: number, pageCount: number }>> {
+	): Promise<ApiResponse<{ data: OrdersInterface[]; total: number; page: number; limit: number; pageCount: number }>> {
 		return await this.service.findAll(dto);
 	}
 
@@ -44,7 +45,7 @@ export class OrdersController {
 	async findCustomerOrderList(
 		@Query() dto: OrdersFilterDto,
 		@Req() req: Request
-	): Promise<ApiResponse<{ data: OrdersInterface[]; total: number; page: number; limit: number, pageCount: number }>> {
+	): Promise<ApiResponse<{ data: OrdersInterface[]; total: number; page: number; limit: number; pageCount: number }>> {
 		return await this.service.findCustomerOrderList(dto, req?.user);
 	}
 
@@ -54,14 +55,37 @@ export class OrdersController {
 	async findVendorOrderList(
 		@Query() dto: OrdersFilterDto,
 		@Req() req: Request
-	): Promise<ApiResponse<{ data: OrdersInterface[]; total: number; page: number; limit: number, pageCount: number }>> {
+	): Promise<ApiResponse<{ data: OrdersInterface[]; total: number; page: number; limit: number; pageCount: number }>> {
 		return await this.service.findVendorOrderList(dto, req?.user);
+	}
+
+	@UseGuards(JwtAuthGuard, RolesGuard)
+	@Roles(Role.ADMIN)
+	@Patch(':id/status')
+	async updateOrderStatus(
+		@Param('id') id: string,
+		@Body() dto: UpdateOrderStatusDto,
+		@Req() req: Request
+	): Promise<ApiResponse<Orders>> {
+		// @ts-ignore
+		return await this.service.updateOrderStatus(id, dto, req?.user);
+	}
+
+	@UseGuards(JwtAuthGuard, RolesGuard)
+	@Roles(Role.ADMIN)
+	@Patch(':id/courier')
+	async updateCourierInfo(
+		@Param('id') id: string,
+		@Body() dto: UpdateCourierDto
+	): Promise<ApiResponse<Orders>> {
+		return await this.service.updateCourierInfo(id, dto);
 	}
 
 	@Public()
 	@Get(':id')
-	async findOne(@Param('id') id: string): Promise<ApiResponse<OrdersInterface>> {
-		return await this.service.findOne(id);
+	async findOne(@Param('id') id: string, @Req() req: Request): Promise<ApiResponse<OrdersInterface>> {
+		// @ts-ignore
+		return await this.service.findOne(id, req?.user);
 	}
 
 	@Public()
