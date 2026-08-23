@@ -529,7 +529,7 @@ export class SiteFrontendService {
             ]);
 
             const recentOrders = (recentOrdersRaw.data ?? []).map(order => {
-                const totalCommission = order.orderSummaries.reduce(
+                const totalCommission = (order.orderSummaries || []).reduce(
                     (sum, item) => sum + Number(item.commissionAmount ?? 0),
                     0
                 );

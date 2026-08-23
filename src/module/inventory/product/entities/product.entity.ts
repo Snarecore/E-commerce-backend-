@@ -102,6 +102,9 @@ export class Product extends AbstractEntity {
 	@Column({ type: 'varchar', nullable: true })
 	sizesString: string;
 
+	@Column({ type: 'json', nullable: true })
+	sizeStock: Record<string, number> | null;
+
 	@Column({ type: 'int', default: 0 })
 	quantity: number;
 

@@ -1,5 +1,4 @@
 import {
-    IsBoolean,
     IsNotEmpty,
     IsOptional,
     IsString,
@@ -9,6 +8,22 @@ import {
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { DiscountType } from 'src/enums/product.enum';
+
+function transformOptionalNumber({ value }: { value: any }) {
+    if (value === '' || value === 'undefined' || value === 'null' || value === null || value === undefined) {
+        return undefined;
+    }
+    const parsed = parseFloat(value);
+    return isNaN(parsed) ? undefined : parsed;
+}
+
+function transformOptionalInt({ value }: { value: any }) {
+    if (value === '' || value === 'undefined' || value === 'null' || value === null || value === undefined) {
+        return undefined;
+    }
+    const parsed = parseInt(value, 10);
+    return isNaN(parsed) ? undefined : parsed;
+}
 
 export class CreateProductDto {
     @IsNotEmpty()
@@ -33,7 +48,7 @@ export class CreateProductDto {
 
     @IsOptional()
     @IsNumber()
-    @Transform(({ value }) => parseFloat(value))
+    @Transform(transformOptionalNumber)
     cost?: number;
 
     @IsEnum(DiscountType)
@@ -41,7 +56,7 @@ export class CreateProductDto {
 
     @IsOptional()
     @IsNumber()
-    @Transform(({ value }) => parseFloat(value))
+    @Transform(transformOptionalNumber)
     discountAmount?: number;
 
     @IsOptional()
@@ -83,13 +98,25 @@ export class CreateProductDto {
     sizesString?: string;
 
     @IsOptional()
+    @Transform(({ value }) => {
+        if (!value || value === '[object Object]' || value === 'undefined' || value === 'null') {
+            return undefined;
+        }
+        if (typeof value === 'string') {
+            try { return JSON.parse(value); } catch { return undefined; }
+        }
+        return value;
+    })
+    sizeStock?: Record<string, number>;
+
+    @IsOptional()
     @IsNumber()
-    @Transform(({ value }) => parseInt(value, 10))
+    @Transform(transformOptionalInt)
     quantity?: number;
 
     @IsOptional()
     @IsNumber()
-    @Transform(({ value }) => parseInt(value, 10))
+    @Transform(transformOptionalInt)
     quantityAlert?: number;
 
     @IsOptional()

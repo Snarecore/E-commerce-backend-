@@ -42,6 +42,14 @@ export class ProductService {
                 dto.vendorName = userData?.name;
             }
 
+            if (dto.sizeStock && typeof dto.sizeStock === 'object') {
+                const totalQty = Object.values(dto.sizeStock).reduce((sum, q) => sum + (Number(q) || 0), 0);
+                dto.quantity = totalQty;
+                if (!dto.sizesString) {
+                    dto.sizesString = Object.keys(dto.sizeStock).join(',');
+                }
+            }
+
             if (files && files.featuredImage) {
                 const featuredImage = await this.spaceService.uploadFile(
                     files.featuredImage[0],
@@ -404,6 +412,14 @@ export class ProductService {
                 dto.slug = slug;
             }
 
+            if (dto.sizeStock && typeof dto.sizeStock === 'object') {
+                const totalQty = Object.values(dto.sizeStock).reduce((sum, q) => sum + (Number(q) || 0), 0);
+                dto.quantity = totalQty;
+                if (!dto.sizesString) {
+                    dto.sizesString = Object.keys(dto.sizeStock).join(',');
+                }
+            }
+
             dto.featuredImage = output.featuredImage;
             if (files?.featuredImage?.[0]) {
                 const imageUrl = await this.spaceService.uploadFile(
@@ -440,7 +456,13 @@ export class ProductService {
                 });
             }
 
-            const { existingProductImages, ...payload } = dto;
+            const { existingProductImages, sizes, productImages, ...payload } = dto as any;
+            if (!payload.vendorId || payload.vendorId === 'undefined' || payload.vendorId === 'null') {
+                delete payload.vendorId;
+            }
+            if (!payload.vendorName || payload.vendorName === 'undefined' || payload.vendorName === 'null') {
+                delete payload.vendorName;
+            }
             const response = await this.repository.update(id, payload);
             if (!response) {
                 throw new HttpException(
