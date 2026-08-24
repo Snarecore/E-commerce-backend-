@@ -25,6 +25,8 @@ export interface SafeProduct {
     status: boolean;
     isApprove: boolean;
     sizesString: string | null;
+    sizeStock: Record<string, number> | null;
+    quantity: number;
     isProductSectionOne: boolean;
     isProductSectionTwo: boolean;
     isProductSectionThree: boolean;
@@ -59,6 +61,8 @@ export function toSafeProduct(product: Product): SafeProduct {
         status,
         isApprove,
         sizesString,
+        sizeStock,
+        quantity,
         isProductSectionOne,
         isProductSectionTwo,
         isProductSectionThree,
@@ -92,6 +96,8 @@ export function toSafeProduct(product: Product): SafeProduct {
         status,
         isApprove,
         sizesString,
+        sizeStock,
+        quantity,
         isProductSectionOne,
         isProductSectionTwo,
         isProductSectionThree,
