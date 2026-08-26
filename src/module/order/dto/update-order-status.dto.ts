@@ -8,5 +8,13 @@ export class UpdateOrderStatusDto {
 
     @IsOptional()
     @IsString()
+    rejectionReason?: string;
+
+    @IsOptional()
+    @IsString()
+    rejectionMessage?: string;
+
+    @IsOptional()
+    @IsString()
     note?: string;
 }

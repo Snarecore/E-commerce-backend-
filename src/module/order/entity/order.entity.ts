@@ -53,6 +53,12 @@ export class Orders extends AbstractEntity {
     @Column({ type: 'varchar', nullable: true })
     idempotencyKey: string;
 
+    @Column({ type: 'varchar', nullable: true })
+    rejectionReason: string;
+
+    @Column({ type: 'text', nullable: true })
+    rejectionMessage: string;
+
     @Column({ type: 'json', nullable: true })
     statusHistory: Array<{
         status: string;
@@ -65,7 +71,7 @@ export class Orders extends AbstractEntity {
     @Column({
         type: 'enum',
         enum: OrderStatus,
-        default: OrderStatus.ORDER_PLACED
+        default: OrderStatus.PENDING
     })
     status: OrderStatus;
       

@@ -11,7 +11,8 @@ export enum OrderStatus {
     RETURNED = 'Returned',
     PENDING = 'Pending',
     COMPLETED = 'Completed',
-    FAILED = 'Failed'
+    FAILED = 'Failed',
+    REJECTED = 'Rejected'
 }
 
 export enum PaymentStatus {

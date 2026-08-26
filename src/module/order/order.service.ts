@@ -1,4 +1,4 @@
-import { HttpException, HttpStatus, Injectable, Optional } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, OnModuleInit, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ResponseUtils, ApiResponse } from 'src/utils/response.utils';
 import Stripe from 'stripe';
@@ -23,7 +23,7 @@ import { unitAfterDiscount } from 'src/utils/helper.utils';
 import { NotificationService } from '../notification/notification.service';
 
 @Injectable()
-export class OrdersService {
+export class OrdersService implements OnModuleInit {
     private stripe: Stripe;
 
     constructor(
@@ -35,6 +35,15 @@ export class OrdersService {
         @Optional() private readonly notificationService?: NotificationService,
         @Optional() private readonly configService?: ConfigService
     ) {}
+
+    async onModuleInit() {
+        try {
+            await (this.repository as any).query(`ALTER TABLE \`orders\` ADD COLUMN \`rejectionReason\` varchar(255) NULL`);
+        } catch (e) {}
+        try {
+            await (this.repository as any).query(`ALTER TABLE \`orders\` ADD COLUMN \`rejectionMessage\` text NULL`);
+        } catch (e) {}
+    }
 
     private getStripeClient(): Stripe {
         if (!this.stripe) {
@@ -209,9 +218,10 @@ export class OrdersService {
 
                 const initialStatusHistory = [
                     {
-                        status: OrderStatus.ORDER_PLACED,
+                        status: OrderStatus.PENDING,
                         timestamp: nowIso,
-                        updatedBy: 'system'
+                        updatedBy: 'system',
+                        note: 'Order submitted by customer - Pending Admin Approval'
                     }
                 ];
 
@@ -224,7 +234,7 @@ export class OrdersService {
                     subtotal,
                     deliveryCharge,
                     currency: dto.currency || 'BDT',
-                    status: OrderStatus.ORDER_PLACED,
+                    status: OrderStatus.PENDING,
                     paymentStatus: finalPaymentStatus,
                     shippingAddress: dto.shippingAddress || null,
                     specialNote: dto.specialNote || null,
@@ -288,6 +298,19 @@ export class OrdersService {
 
             order.status = dto.newStatus;
 
+            // Ensure rejection columns exist in MySQL schema
+            try {
+                await (this.repository as any).query(`ALTER TABLE \`orders\` ADD COLUMN \`rejectionReason\` varchar(255) NULL`);
+            } catch (e) {}
+            try {
+                await (this.repository as any).query(`ALTER TABLE \`orders\` ADD COLUMN \`rejectionMessage\` text NULL`);
+            } catch (e) {}
+
+            if (dto.newStatus === OrderStatus.REJECTED || (dto.newStatus as string) === 'Rejected') {
+                if (dto.rejectionReason) order.rejectionReason = dto.rejectionReason;
+                if (dto.rejectionMessage) order.rejectionMessage = dto.rejectionMessage;
+            }
+
             // COD Auto-Payment on Delivered
             if ((order.paymentMethod || '').toUpperCase() === 'COD' && dto.newStatus === OrderStatus.DELIVERED) {
                 order.paymentStatus = PaymentStatus.PAID;
@@ -295,23 +318,33 @@ export class OrdersService {
 
             const nowIso = new Date().toISOString();
             const history = Array.isArray(order.statusHistory) ? order.statusHistory : [];
+            const historyNote = dto.note || (
+                dto.newStatus === OrderStatus.REJECTED || (dto.newStatus as string) === 'Rejected'
+                    ? `Reason: ${dto.rejectionReason || 'Admin decision'}${dto.rejectionMessage ? ` - ${dto.rejectionMessage}` : ''}`
+                    : `Status updated to ${dto.newStatus}`
+            );
+
             history.push({
                 status: dto.newStatus,
                 timestamp: nowIso,
                 updatedBy: adminUser?.role || 'admin',
                 updatedByUserId: adminUser?.id || adminUser?.userId || '',
-                ...(dto.note ? { note: dto.note } : {})
+                note: historyNote
             });
             order.statusHistory = history;
 
             const updatedOrder = (await this.repository.save(order)) as Orders;
 
             if (this.notificationService && updatedOrder?.userId) {
+                const notifNote = dto.newStatus === OrderStatus.REJECTED || (dto.newStatus as string) === 'Rejected'
+                    ? `Your order #${updatedOrder.orderId || updatedOrder.id} was rejected. Reason: ${dto.rejectionReason || 'Admin Decision'}${dto.rejectionMessage ? ` (${dto.rejectionMessage})` : ''}`
+                    : dto.note || `Order status updated to "${dto.newStatus}"`;
+
                 await this.notificationService.createOrderNotification(
                     updatedOrder.userId,
                     updatedOrder.orderId || updatedOrder.id,
                     dto.newStatus,
-                    dto.note
+                    notifNote
                 );
             }
 
