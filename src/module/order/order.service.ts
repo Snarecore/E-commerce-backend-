@@ -20,6 +20,7 @@ import { ProductRepository } from '../inventory/product/product.repository';
 import { Product } from '../inventory/product/entities/product.entity';
 import { OrderSummary } from '../order-summary/entity/order-summary.entity';
 import { unitAfterDiscount } from 'src/utils/helper.utils';
+import { NotificationService } from '../notification/notification.service';
 import { CouponService } from '../coupon/coupon.service';
 
 @Injectable()
