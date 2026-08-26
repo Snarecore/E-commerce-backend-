@@ -1,13 +1,16 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Request, UseGuards } from '@nestjs/common';
+import { CONFIG } from 'src/utils/config';
+import { Public } from 'src/decorators/public.decorator';
 import { CouponService } from './coupon.service';
 import { CreateCouponDto } from './dto/create-coupon.dto';
 import { UpdateCouponDto } from './dto/update-coupon.dto';
 import { ValidateCouponDto } from './dto/validate-coupon.dto';
 
-@Controller('coupons')
+@Controller({ path: 'coupons', version: CONFIG.API_VERSION })
 export class CouponController {
     constructor(private readonly couponService: CouponService) {}
 
+    @Public()
     @Post('validate')
     async validateCoupon(@Body() dto: ValidateCouponDto, @Request() req: any) {
         const userId = req.user?.id || req.user?.userId || '';
