@@ -8,7 +8,7 @@ import { ProductInterface } from './type/product.type';
 import { Product } from './entities/product.entity';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ProductImageGalleryRepository } from '../product-image-gallery/product-image-gallery.repository';
-import { Between, FindOptionsOrder, ILike, LessThanOrEqual, MoreThanOrEqual } from 'typeorm';
+import { Between, FindOptionsOrder, ILike, In, LessThanOrEqual, MoreThanOrEqual } from 'typeorm';
 import { ProductFilter } from './type/product-filter.type';
 import { ProductFilterDto } from './dto/product-filter.dto';
 import { UpdateProductStatusDto } from './dto/update-product-status.dto';
@@ -142,17 +142,22 @@ export class ProductService {
                 order,
             });
 
-            const enrichedData = await Promise.all(
-                result?.data?.map(async (product) => {
-                    const productImages = await this.productImageGalleryRepository.findAll({
-                        productId: product.id,
-                    });
-                    return {
-                        ...product,
-                        productImages,
-                    };
-                })
-            );
+            const productIds = (result?.data ?? []).map((p) => p.id);
+            const allImages = productIds.length > 0
+                ? await this.productImageGalleryRepository.findAll({ productId: In(productIds) })
+                : [];
+
+            const imagesByProductMap = new Map<string, any[]>();
+            for (const img of allImages) {
+                const list = imagesByProductMap.get(img.productId) || [];
+                list.push(img);
+                imagesByProductMap.set(img.productId, list);
+            }
+
+            const enrichedData = (result?.data ?? []).map((product) => ({
+                ...product,
+                productImages: imagesByProductMap.get(product.id) || []
+            }));
 
             const payload = {
                 data: enrichedData,

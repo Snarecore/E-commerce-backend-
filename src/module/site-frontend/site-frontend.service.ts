@@ -430,49 +430,53 @@ export class SiteFrontendService {
 
     async getCommonData() {
         try {
-            const mainCategories = await this.mainCategoryRepository.findAll({ status: true });
-            const faqData = await this.faqRepository.findAll();
-            const headerFooterData = await this.headerFooterCmsRepository.findAll();
-            const socialLinkData = await this.socialLinkRepository.findAll();
-            const metaData = await this.pageMetaRepository.findAll();
+            const firstCategoryOrder: FindOptionsOrder<FirstCategory> = {
+                position: 'asc',
+                createdAt: 'desc'
+            };
+
+            const [
+                mainCategories,
+                allFirstCategories,
+                allSecondCategories,
+                faqData,
+                headerFooterData,
+                socialLinkData,
+                metaData
+            ] = await Promise.all([
+                this.mainCategoryRepository.findAll({ status: true }),
+                this.firstCategoryRepository.findAllWithOrder({ status: true }, firstCategoryOrder),
+                this.secondCategoryRepository.findAll({ status: true }),
+                this.faqRepository.findAll(),
+                this.headerFooterCmsRepository.findAll(),
+                this.socialLinkRepository.findAll(),
+                this.pageMetaRepository.findAll()
+            ]);
 
             const metaKeys = ['createdAt', 'updatedAt', 'isDeleted'] as const;
 
-            const nestedCategories = await Promise.all(
-                mainCategories.map(async (mainCategory) => {
-                    const firstCategoryOrder: FindOptionsOrder<FirstCategory> = {
-                        position: 'asc',
-                        createdAt: 'desc'
-                    };
-                    const firstCategories = await this.firstCategoryRepository.findAllWithOrder({
-                        status: true,
-                        mainCategoryId: mainCategory.id
-                    }, firstCategoryOrder);
+            const secondByFirstMap = new Map<string, any[]>();
+            for (const sc of allSecondCategories) {
+                const list = secondByFirstMap.get(sc.firstCategoryId) || [];
+                list.push(omit(sc, [...metaKeys]));
+                secondByFirstMap.set(sc.firstCategoryId, list);
+            }
 
-                    const firstCategoryData = await Promise.all(
-                        firstCategories.map(async (firstCategory) => {
-                            const secondCategories = await this.secondCategoryRepository.findAll({
-                                status: true,
-                                firstCategoryId: firstCategory.id
-                            });
+            const firstByMainMap = new Map<string, any[]>();
+            for (const fc of allFirstCategories) {
+                const secondCats = secondByFirstMap.get(fc.id) || [];
+                const list = firstByMainMap.get(fc.mainCategoryId) || [];
+                list.push({
+                    ...omit(fc, [...metaKeys]),
+                    secondCategories: secondCats
+                });
+                firstByMainMap.set(fc.mainCategoryId, list);
+            }
 
-                            const secondCategoryData = secondCategories.map((secondCategory) => {
-                                return omit(secondCategory, [...metaKeys]);
-                            });
-
-                            return {
-                                ...omit(firstCategory, [...metaKeys]),
-                                secondCategories: secondCategoryData
-                            };
-                        })
-                    );
-
-                    return {
-                        ...omit(mainCategory, [...metaKeys]),
-                        firstCategories: firstCategoryData
-                    };
-                })
-            );
+            const nestedCategories = mainCategories.map((mc) => ({
+                ...omit(mc, [...metaKeys]),
+                firstCategories: firstByMainMap.get(mc.id) || []
+            }));
 
             const data = {
                 mainCategory: omitMany(mainCategories, [...metaKeys]),
@@ -637,9 +641,10 @@ export class SiteFrontendService {
             }
 
             const vendorList = await this.userRepository.findAll(query);
+            const safeVendorList = (vendorList ?? []).map(toSafeUser);
 
             const data = {
-                vendorList: vendorList ?? []
+                vendorList: safeVendorList ?? []
             }
 
             return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', data);

@@ -58,7 +58,7 @@ import { join } from 'path';
 import { HandlebarsAdapter } from '@nestjs-modules/mailer/dist/adapters/handlebars.adapter';
 import { EmailServiceModule } from './module/email-service/email-sender.module';
 import { SesModule } from './common/ses/ses.module';
-import { ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 
 import { CouponModule } from './module/coupon/coupon.module';
 
@@ -152,6 +152,10 @@ import { CouponModule } from './module/coupon/coupon.module';
 		CouponModule
 	],
 	providers: [
+		{
+			provide: APP_GUARD,
+			useClass: ThrottlerGuard
+		},
 		{
 			provide: APP_GUARD,
 			useClass: JwtAuthGuard

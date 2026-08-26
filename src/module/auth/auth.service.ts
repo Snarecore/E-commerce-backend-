@@ -12,6 +12,8 @@ import { Response } from 'express';
 import { Request } from 'express';
 import { JwtPayload } from 'src/common/types';
 import { UserProfileRepository } from '../user-profile/user-profile.repository';
+import { UserProfile } from '../user-profile/entities/user-profile.entity';
+import { toSafeUser } from 'src/utils/safe-user.utils';
 import { VendorRegisterDto } from './dto/vendor-register.dto';
 import { UploadMulterFile } from '../space-module/space-service';
 import { SpaceService } from '../space-module/space-service/space.service';
@@ -33,7 +35,10 @@ export class AuthService {
 	) { }
 
 	async validateUser(dto: LoginDto): Promise<User> {
-		const user = await this.userRepository.findOneByQuery({ email: dto.email });
+		const user = await this.userRepository.findOneByQueryRelation(
+			{ email: dto.email },
+			{ select: ['id', 'name', 'email', 'password', 'role'] }
+		);
 		if (!user) {
 			throw new NotFoundException('User not found.');
 		}
@@ -49,7 +54,7 @@ export class AuthService {
 
 		const payload = { email: user.email, sub: user.id, role: user.role, name: user.name };
 
-		const accessToken = this.jwtService.sign(payload, { expiresIn: '15d' });
+		const accessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
 		const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
 
 		res.cookie('refreshToken', refreshToken, {
@@ -77,39 +82,6 @@ export class AuthService {
 		);
 	}
 
-	// async login(
-	//     dto: LoginDto,
-	//     @Res({ passthrough: true }) res: Response
-	// ): Promise<{ accessToken: string }> {
-	//     const user = await this.validateUser(dto);
-	//     const payload = { email: user.email, sub: user.id, role: user.role };
-
-	//     const accessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
-	//     const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
-
-	//     res.cookie('refreshToken', refreshToken, {
-	//         httpOnly: true,
-	//         secure: true,
-	//         sameSite: 'strict',
-	//     });
-
-	//     return { accessToken };
-	// }
-
-	// async findUserData(userData) {
-	// 	try {
-	// 		const response = await this.userRepository.findOneByQuery({ email: userData.email });
-	// 		if (!response) {
-	// 			throw new HttpException('Data not found!', HttpStatus.BAD_REQUEST);
-	// 		}
-
-	// 		return ResponseUtils.successResponseHandler(HttpStatus.OK, 'Data retrieved successfully.', 'data', response);
-	// 	} catch (error) {
-	// 		const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-	// 		throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
-	// 	}
-	// }
-
 	async register(dto: RegisterDto): Promise<ApiResponse<User>> {
 		const queryRunner = this.dataSource.createQueryRunner();
 		await queryRunner.connect();
@@ -126,20 +98,22 @@ export class AuthService {
 			}
 			const hashedPassword = await bcrypt.hash(password, 10);
 
-			const createdUser = await this.userRepository.create({
+			const userEntity = queryRunner.manager.create(User, {
 				...userData,
 				password: hashedPassword,
 				role: dto.role || Role.CUSTOMER
 			});
+			const createdUser = await queryRunner.manager.save(User, userEntity);
 
 			if (createdUser) {
-				await this.userProfileRepository.create({
+				const profileEntity = queryRunner.manager.create(UserProfile, {
 					user: createdUser
 				});
+				await queryRunner.manager.save(UserProfile, profileEntity);
 			}
 
 			await queryRunner.commitTransaction();
-			return ResponseUtils.successResponseHandler(HttpStatus.OK, 'Data saved successfully.', 'data', createdUser);
+			return ResponseUtils.successResponseHandler(HttpStatus.OK, 'Data saved successfully.', 'data', toSafeUser(createdUser) as unknown as User);
 		} catch (error) {
 			await queryRunner.rollbackTransaction();
 			if (error instanceof HttpException) {
@@ -178,24 +152,29 @@ export class AuthService {
 			}
 			const hashedPassword = await bcrypt.hash(password, 10);
 
-			const createdUser = await this.userRepository.create({
+			const userEntity = queryRunner.manager.create(User, {
 				...userData,
 				password: hashedPassword,
-				role: dto.role
+				role: dto.role || Role.VENDOR
 			});
+			const createdUser = await queryRunner.manager.save(User, userEntity);
 
 			if (createdUser) {
-				if (createdUser) {
-					await this.userProfileRepository.create({
-						user: createdUser,
-						shopName: shopName,
-						shopImage: shopImage
-					});
-				}
+				const profileEntity = queryRunner.manager.create(UserProfile, {
+					user: createdUser,
+					shopName: shopName,
+					shopImage: shopImage
+				});
+				await queryRunner.manager.save(UserProfile, profileEntity);
 			}
 
-			return ResponseUtils.successResponseHandler(HttpStatus.OK, 'Data saved successfully.', 'data', createdUser);
+			await queryRunner.commitTransaction();
+			return ResponseUtils.successResponseHandler(HttpStatus.OK, 'Data saved successfully.', 'data', toSafeUser(createdUser) as unknown as User);
 		} catch (error) {
+			await queryRunner.rollbackTransaction();
+			if (error instanceof HttpException) {
+				throw error;
+			}
 			const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
 			throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
 		} finally {
@@ -222,7 +201,7 @@ export class AuthService {
 		}
 
 		const payload = { email: user.email, sub: user.id, roles: user.role };
-		const newAccessToken = this.jwtService.sign(payload, { expiresIn: '15d' });
+		const newAccessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
 		const newRefreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
 
 		res.cookie('refreshToken', newRefreshToken, {
@@ -283,7 +262,10 @@ export class AuthService {
 	async resetPassword(dto: ResetPasswordDto) {
 		const { email, token, newPassword, confirmPassword } = dto;
 
-		const user = await this.userRepository.findOneByQuery({ email: email });
+		const user = await this.userRepository.findOneByQueryRelation(
+			{ email: email },
+			{ select: ['id', 'email', 'resetToken', 'resetTokenExpiry'] }
+		);
 		if (!user) {
 			throw new NotFoundException('User not found.');
 		}

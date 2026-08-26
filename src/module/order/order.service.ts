@@ -181,8 +181,8 @@ export class OrdersService implements OnModuleInit {
                         throw new HttpException(`Product with ID ${productId} not found.`, HttpStatus.NOT_FOUND);
                     }
 
-                    const availableStock = (product.quantity === null || product.quantity === undefined || product.quantity === 0)
-                        ? 100
+                    const availableStock = (product.quantity === null || product.quantity === undefined)
+                        ? Number.MAX_SAFE_INTEGER
                         : product.quantity;
 
                     if (availableStock < qty) {
@@ -283,12 +283,25 @@ export class OrdersService implements OnModuleInit {
                     } as any);
                     await queryRunner.manager.save(summaryEntity);
 
-                    // Deduct stock
-                    const currentStock = (prepItem.product.quantity === null || prepItem.product.quantity === undefined || prepItem.product.quantity === 0)
-                        ? 100
-                        : prepItem.product.quantity;
-                    prepItem.product.quantity = Math.max(0, currentStock - prepItem.quantity);
-                    await queryRunner.manager.save(prepItem.product);
+                    // Atomic Stock Deduct inside Transaction
+                    if (prepItem.product.quantity !== null && prepItem.product.quantity !== undefined) {
+                        const updateResult = await queryRunner.manager
+                            .createQueryBuilder()
+                            .update(Product)
+                            .set({ quantity: () => `quantity - ${prepItem.quantity}` })
+                            .where("id = :id AND quantity >= :qty AND isDeleted = false", {
+                                id: prepItem.product.id,
+                                qty: prepItem.quantity
+                            })
+                            .execute();
+
+                        if (updateResult.affected === 0) {
+                            throw new HttpException(
+                                `Insufficient stock to fulfill product "${prepItem.product.name}".`,
+                                HttpStatus.BAD_REQUEST
+                            );
+                        }
+                    }
                 }
 
                 await queryRunner.commitTransaction();

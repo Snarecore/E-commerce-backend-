@@ -13,6 +13,8 @@ import { UploadMulterFile } from '../space-module/space-service';
 import * as bcrypt from 'bcryptjs';
 import { UpdatePasswordDto } from './dto/update-password.dto';
 
+import { toSafeUser } from 'src/utils/safe-user.utils';
+
 @Injectable()
 export class UserService {
     constructor(
@@ -42,8 +44,10 @@ export class UserService {
                 order
             });
 
+            const safeData = (result?.data ?? []).map(toSafeUser);
+
             const payload = {
-                data: result?.data,
+                data: safeData as unknown as UserInterface[],
                 total: result.total,
                 page: result.page,
                 limit: result.limit,
@@ -67,7 +71,7 @@ export class UserService {
             const profile = await this.userProfileRepository.findOneByQuery({ user: { id: user.id } });
 
             const payload = {
-                ...user,
+                ...toSafeUser(user),
                 profile: profile || null
             };
 
@@ -88,7 +92,7 @@ export class UserService {
             const profile = await this.userProfileRepository.findOneByQuery({ user: { id: user.id } });
 
             const payload = {
-                ...user,
+                ...toSafeUser(user),
                 profile: profile || null
             };
 

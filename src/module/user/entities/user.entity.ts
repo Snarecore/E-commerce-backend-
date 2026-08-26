@@ -12,19 +12,19 @@ export class User extends AbstractEntity {
 	@Column({ type: 'varchar', nullable: false, unique: true })
 	email: string;
 
-	@Column({ type: 'varchar', nullable: false })
+	@Column({ type: 'varchar', nullable: false, select: false })
 	password: string;
 
 	@Column({ type: 'varchar', nullable: false })
 	phone: string;
 
-	@Column({ type: 'varchar', nullable: true })
+	@Column({ type: 'varchar', nullable: true, select: false })
 	refreshToken: string;
 
-	@Column({ nullable: true })
+	@Column({ nullable: true, select: false })
 	resetToken: string;
 
-	@Column({ nullable: true, type: 'timestamp' })
+	@Column({ nullable: true, type: 'timestamp', select: false })
 	resetTokenExpiry: Date;
 
 	@Column({ type: 'enum', enum: Role, nullable: false })

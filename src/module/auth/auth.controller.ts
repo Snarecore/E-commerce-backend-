@@ -18,17 +18,21 @@ import { UploadMulterFile } from '../space-module/space-service';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 
+import { Throttle } from '@nestjs/throttler';
+
 @Controller({ path: "auth", version: CONFIG.API_VERSION })
 export class AuthController {
 	constructor(private readonly authService: AuthService) { }
 
 	@Public()
+	@Throttle({ default: { limit: 5, ttl: 60000 } })
 	@Post('register')
 	async register(@Body() dto: RegisterDto): Promise<ApiResponse<User>> {
 		return await this.authService.register(dto);
 	}
 
 	@Public()
+	@Throttle({ default: { limit: 5, ttl: 60000 } })
 	@Post('vendor-register')
 	@UseInterceptors(FileFieldsInterceptor([{ name: 'shopImage', maxCount: 1 }]))
 	async vendorRegister(
@@ -42,6 +46,7 @@ export class AuthController {
 	}
 
 	@Public()
+	@Throttle({ default: { limit: 5, ttl: 60000 } })
 	@Post('login')
 	async login(
 		@Body() dto: LoginDto,
@@ -49,21 +54,6 @@ export class AuthController {
 	) {
 		return await this.authService.login(dto, res);
 	}
-
-	// @Public()
-	// @Post('login')
-	// async login(
-	//     @Body() dto: LoginDto,
-	//     @Res({ passthrough: true }) res: Response
-	// ): Promise<{ accessToken: string }> {
-	//     return await this.authService.login(dto, res);
-	// }
-
-	// @UseGuards(JwtAuthGuard, RolesGuard)
-	// @Get('/user-info')
-	// async findUserData(@Req() req: Request) {
-	// 	return await this.authService.findUserData(req.user);
-	// }
 
 	@Public()
 	@Post('refresh-token')
@@ -81,12 +71,14 @@ export class AuthController {
 	}
 
 	@Public()
+	@Throttle({ default: { limit: 5, ttl: 60000 } })
 	@Post('forgot-password')
 	async forgotPassword(@Body() dto: ForgotPasswordDto) {
 		return this.authService.forgotPassword(dto.email);
 	}
 
 	@Public()
+	@Throttle({ default: { limit: 5, ttl: 60000 } })
 	@Post('reset-password')
 	async resetPassword(@Body() dto: ResetPasswordDto) {
 		return this.authService.resetPassword(dto);
