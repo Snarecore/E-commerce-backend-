@@ -249,7 +249,8 @@ export class CouponService implements OnModuleInit {
             code: normalizedCode,
             minOrderAmount: dto.minOrderAmount || 0,
             discountValue: dto.discountValue || 0,
-            userUsageLimit: dto.userUsageLimit || 1,
+            usageLimit: dto.usageLimit ? dto.usageLimit : null,
+            userUsageLimit: dto.userUsageLimit ? dto.userUsageLimit : null,
             isActive: dto.isActive !== undefined ? dto.isActive : true
         } as any);
 
@@ -299,7 +300,15 @@ export class CouponService implements OnModuleInit {
             }
         }
 
-        const updated = await this.couponRepository.update(id, dto as any);
+        const updatePayload: any = { ...dto };
+        if ('usageLimit' in dto) {
+            updatePayload.usageLimit = dto.usageLimit ? dto.usageLimit : null;
+        }
+        if ('userUsageLimit' in dto) {
+            updatePayload.userUsageLimit = dto.userUsageLimit ? dto.userUsageLimit : null;
+        }
+
+        const updated = await this.couponRepository.update(id, updatePayload);
         return ResponseUtils.successResponseHandler(200, 'Coupon updated successfully.', 'data', updated!);
     }
 

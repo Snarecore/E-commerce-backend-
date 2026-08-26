@@ -43,12 +43,10 @@ export class CreateCouponDto {
 
     @IsOptional()
     @IsInt()
-    @Min(1)
     usageLimit?: number;
 
     @IsOptional()
     @IsInt()
-    @Min(1)
     userUsageLimit?: number;
 
     @IsOptional()
