@@ -37,7 +37,7 @@ export class Coupon extends AbstractEntity {
     @Column({ type: 'int', nullable: true })
     usageLimit: number;
 
-    @Column({ type: 'int', default: 1 })
+    @Column({ type: 'int', nullable: true })
     userUsageLimit: number;
 
     @Column({ type: 'int', default: 0 })

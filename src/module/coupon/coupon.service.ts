@@ -34,7 +34,7 @@ export class CouponService implements OnModuleInit {
                     \`startDate\` datetime NULL,
                     \`endDate\` datetime NULL,
                     \`usageLimit\` int NULL,
-                    \`userUsageLimit\` int NOT NULL DEFAULT '1',
+                    \`userUsageLimit\` int NULL DEFAULT NULL,
                     \`usageCount\` int NOT NULL DEFAULT '0',
                     \`isActive\` tinyint NOT NULL DEFAULT '1',
                     \`isDeleted\` tinyint NOT NULL DEFAULT '0',
@@ -44,6 +44,10 @@ export class CouponService implements OnModuleInit {
                     UNIQUE KEY \`UQ_coupon_code\` (\`code\`)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             `);
+        } catch (e) {}
+
+        try {
+            await (this.couponRepository as any).query(`ALTER TABLE \`coupon\` MODIFY COLUMN \`userUsageLimit\` int NULL DEFAULT NULL`);
         } catch (e) {}
 
         try {
