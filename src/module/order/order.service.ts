@@ -20,7 +20,7 @@ import { ProductRepository } from '../inventory/product/product.repository';
 import { Product } from '../inventory/product/entities/product.entity';
 import { OrderSummary } from '../order-summary/entity/order-summary.entity';
 import { unitAfterDiscount } from 'src/utils/helper.utils';
-import { NotificationService } from '../notification/notification.service';
+import { CouponService } from '../coupon/coupon.service';
 
 @Injectable()
 export class OrdersService implements OnModuleInit {
@@ -33,7 +33,8 @@ export class OrdersService implements OnModuleInit {
         private readonly orderSummaryRepository: OrderSummaryRepository,
         private readonly productRepository: ProductRepository,
         @Optional() private readonly notificationService?: NotificationService,
-        @Optional() private readonly configService?: ConfigService
+        @Optional() private readonly configService?: ConfigService,
+        @Optional() private readonly couponService?: CouponService
     ) {}
 
     async onModuleInit() {
@@ -212,8 +213,27 @@ export class OrdersService implements OnModuleInit {
                     deliveryCharge = 60;
                 }
 
-                const totalAmount = subtotal + deliveryCharge;
                 const uniqueOrderId = await this.uniqueCodeGeneratorService.getUniqueOrderId();
+
+                let discountAmount = 0;
+                let couponId: string | null = null;
+                let couponCode: string | null = null;
+
+                if (dto.couponCode && this.couponService) {
+                    const couponRes = await this.couponService.redeemCouponInTransaction(
+                        queryRunner,
+                        dto.couponCode,
+                        subtotal,
+                        deliveryCharge,
+                        userId,
+                        uniqueOrderId
+                    );
+                    couponId = couponRes.couponId;
+                    couponCode = couponRes.couponCode;
+                    discountAmount = couponRes.discountAmount;
+                }
+
+                const totalAmount = Math.max(0, subtotal + deliveryCharge - discountAmount);
                 const nowIso = new Date().toISOString();
 
                 const initialStatusHistory = [
@@ -221,7 +241,9 @@ export class OrdersService implements OnModuleInit {
                         status: OrderStatus.PENDING,
                         timestamp: nowIso,
                         updatedBy: 'system',
-                        note: 'Order submitted by customer - Pending Admin Approval'
+                        note: couponCode
+                            ? `Order submitted with coupon ${couponCode} (-৳${discountAmount}) - Pending Admin Approval`
+                            : 'Order submitted by customer - Pending Admin Approval'
                     }
                 ];
 
@@ -233,6 +255,9 @@ export class OrdersService implements OnModuleInit {
                     totalAmount,
                     subtotal,
                     deliveryCharge,
+                    couponId,
+                    couponCode,
+                    discountAmount,
                     currency: dto.currency || 'BDT',
                     status: OrderStatus.PENDING,
                     paymentStatus: finalPaymentStatus,

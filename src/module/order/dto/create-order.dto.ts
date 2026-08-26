@@ -144,4 +144,8 @@ export class CreateOrdersDto {
     @IsOptional()
     @IsString()
     idempotencyKey?: string;
+
+    @IsOptional()
+    @IsString()
+    couponCode?: string;
 }

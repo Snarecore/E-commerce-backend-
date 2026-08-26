@@ -56,8 +56,17 @@ export class Orders extends AbstractEntity {
     @Column({ type: 'varchar', nullable: true })
     rejectionReason: string;
 
-    @Column({ type: 'text', nullable: true })
+    @Column({ type: 'varchar', nullable: true })
     rejectionMessage: string;
+
+    @Column({ type: 'varchar', nullable: true })
+    couponId: string;
+
+    @Column({ type: 'varchar', nullable: true })
+    couponCode: string;
+
+    @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
+    discountAmount: number;
 
     @Column({ type: 'json', nullable: true })
     statusHistory: Array<{

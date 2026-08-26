@@ -60,6 +60,8 @@ import { EmailServiceModule } from './module/email-service/email-sender.module';
 import { SesModule } from './common/ses/ses.module';
 import { ThrottlerModule } from '@nestjs/throttler';
 
+import { CouponModule } from './module/coupon/coupon.module';
+
 @Module({
 	imports: [
 		ThrottlerModule.forRoot([{
@@ -146,7 +148,8 @@ import { ThrottlerModule } from '@nestjs/throttler';
 		PolicyTwelveCmsModule,
 		ProductCommentModule,
 		EmailServiceModule,
-		SesModule
+		SesModule,
+		CouponModule
 	],
 	providers: [
 		{
