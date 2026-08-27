@@ -1,5 +1,5 @@
 import { FilterDto } from "src/module/core/dto/filter.dto";
-import { IsBoolean, IsOptional } from 'class-validator';
+import { IsBoolean, IsNumber, IsOptional, IsString } from 'class-validator';
 import { Transform } from "class-transformer";
 
 export class ProductFilterDto extends FilterDto {
@@ -31,4 +31,31 @@ export class ProductFilterDto extends FilterDto {
     @Transform(({ value }) => value === 'true' || value === true)
     @IsBoolean()
     discountOnly?: boolean;
+
+    @IsOptional()
+    @Transform(({ value }) => value === 'true' || value === true)
+    @IsBoolean()
+    inStockOnly?: boolean;
+
+    @IsOptional()
+    @Transform(({ value }) => {
+        if (value === undefined || value === null || value === '') return undefined;
+        const val = parseFloat(value);
+        return isNaN(val) ? undefined : val;
+    })
+    @IsNumber()
+    minPrice?: number;
+
+    @IsOptional()
+    @Transform(({ value }) => {
+        if (value === undefined || value === null || value === '') return undefined;
+        const val = parseFloat(value);
+        return isNaN(val) ? undefined : val;
+    })
+    @IsNumber()
+    maxPrice?: number;
+
+    @IsOptional()
+    @IsString()
+    sortBy?: string;
 }

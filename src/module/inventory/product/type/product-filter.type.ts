@@ -11,5 +11,8 @@ export interface ProductFilter {
     secondCategoryId?: string;
     vendorId?: string;
     discountType?: DiscountType | FindOperator<DiscountType>;
+    discountAmount?: number | FindOperator<number>;
+    price?: number | FindOperator<number>;
+    quantity?: number | FindOperator<number>;
     createdAt?: Date | FindOperator<Date>;
 }

@@ -8,7 +8,7 @@ import { ProductInterface } from './type/product.type';
 import { Product } from './entities/product.entity';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ProductImageGalleryRepository } from '../product-image-gallery/product-image-gallery.repository';
-import { Between, FindOptionsOrder, ILike, In, LessThanOrEqual, MoreThanOrEqual } from 'typeorm';
+import { Between, FindOptionsOrder, ILike, In, LessThanOrEqual, MoreThan, MoreThanOrEqual } from 'typeorm';
 import { ProductFilter } from './type/product-filter.type';
 import { ProductFilterDto } from './dto/product-filter.dto';
 import { UpdateProductStatusDto } from './dto/update-product-status.dto';
@@ -91,56 +91,88 @@ export class ProductService {
         dto: ProductFilterDto
     ): Promise<ApiResponse<{ data: ProductInterface[]; total: number; page: number; limit: number; pageCount: number; }>> {
         try {
-            let query: ProductFilter = {};
+            const page = dto.page ? Number(dto.page) : 1;
+            const limit = dto.limit ? Number(dto.limit) : 10;
+            const skip = (page - 1) * limit;
+
+            const qb = this.repository.createQueryBuilder('product')
+                .where('product.isDeleted = false')
+                .andWhere('product.status = true')
+                .andWhere('product.isApprove = true');
+
             if (dto.searchKeyword) {
-                query.name = ILike(`%${dto.searchKeyword}%`);
-            }
-
-            if (typeof dto.isActive === 'boolean') {
-                query.status = dto.isActive;
-            }
-
-            if (dto.startDate && dto.endDate) {
-                query.createdAt = Between(
-                    new Date(`${dto.startDate.toISOString().split('T')[0]}T00:00:00.000Z`),
-                    new Date(`${dto.endDate.toISOString().split('T')[0]}T23:59:59.999Z`)
-                );
-            } else if (dto.startDate) {
-                query.createdAt = MoreThanOrEqual(
-                    new Date(`${dto.startDate.toISOString().split('T')[0]}T00:00:00.000Z`)
-                );
-            } else if (dto.endDate) {
-                query.createdAt = LessThanOrEqual(
-                    new Date(`${dto.endDate.toISOString().split('T')[0]}T23:59:59.999Z`)
-                );
+                qb.andWhere('product.name LIKE :searchKeyword', { searchKeyword: `%${dto.searchKeyword}%` });
             }
 
             if (dto.mainCategoryId) {
-                query.mainCategoryId = dto.mainCategoryId;
+                qb.andWhere('product.mainCategoryId = :mainCategoryId', { mainCategoryId: dto.mainCategoryId });
             }
 
             if (dto.firstCategoryId) {
-                query.firstCategoryId = dto.firstCategoryId;
+                qb.andWhere('product.firstCategoryId = :firstCategoryId', { firstCategoryId: dto.firstCategoryId });
             }
 
             if (dto.secondCategoryId) {
-                query.secondCategoryId = dto.secondCategoryId;
+                qb.andWhere('product.secondCategoryId = :secondCategoryId', { secondCategoryId: dto.secondCategoryId });
             }
 
             if (dto.vendorId) {
-                query.vendorId = dto.vendorId;
+                qb.andWhere('product.vendorId = :vendorId', { vendorId: dto.vendorId });
             }
 
-            const order: FindOptionsOrder<Product> = {
-                createdAt: 'desc',
-            };
+            if (dto.inStockOnly) {
+                qb.andWhere('product.quantity > 0');
+            }
 
-            const result = await this.repository.paginate({
-                page: dto.page ? dto?.page : 1,
-                limit: dto.limit ? dto?.limit : 10,
-                query,
-                order,
-            });
+            if (dto.discountOnly) {
+                qb.andWhere('product.discountAmount > 0');
+            }
+
+            const effectivePriceSql = `(
+                CASE 
+                    WHEN product.discountType = 'PERCENT' THEN (product.price * (1 - COALESCE(product.discountAmount, 0) / 100))
+                    WHEN product.discountType = 'FLAT' THEN GREATEST(0, product.price - COALESCE(product.discountAmount, 0))
+                    ELSE product.price
+                END
+            )`;
+
+            const minP = (dto.minPrice !== undefined && !isNaN(Number(dto.minPrice))) ? Number(dto.minPrice) : undefined;
+            const maxP = (dto.maxPrice !== undefined && !isNaN(Number(dto.maxPrice))) ? Number(dto.maxPrice) : undefined;
+
+            if (minP !== undefined && maxP !== undefined) {
+                qb.andWhere(`${effectivePriceSql} >= :minP AND ${effectivePriceSql} <= :maxP`, { minP, maxP });
+            } else if (minP !== undefined) {
+                qb.andWhere(`${effectivePriceSql} >= :minP`, { minP });
+            } else if (maxP !== undefined) {
+                qb.andWhere(`${effectivePriceSql} <= :maxP`, { maxP });
+            }
+
+            if (dto.sortBy === 'price_asc') {
+                qb.addSelect(effectivePriceSql, 'effective_price');
+                qb.orderBy('effective_price', 'ASC');
+            } else if (dto.sortBy === 'price_desc') {
+                qb.addSelect(effectivePriceSql, 'effective_price');
+                qb.orderBy('effective_price', 'DESC');
+            } else if (dto.sortBy === 'name_asc') {
+                qb.orderBy('product.name', 'ASC');
+            } else if (dto.sortBy === 'name_desc') {
+                qb.orderBy('product.name', 'DESC');
+            } else {
+                qb.orderBy('product.createdAt', 'DESC');
+            }
+
+            qb.skip(skip).take(limit);
+
+            const [products, total] = await qb.getManyAndCount();
+            const pageCount = Math.ceil(total / limit);
+
+            const result = {
+                data: products,
+                total,
+                page,
+                limit,
+                pageCount
+            };
 
             const productIds = (result?.data ?? []).map((p) => p.id);
             const allImages = productIds.length > 0

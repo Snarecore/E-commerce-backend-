@@ -9,6 +9,10 @@ export class ProductRepository extends AbstractRepository<Product> {
 		super(dataSource, Product);
 	}
 
+	createQueryBuilder(alias: string) {
+		return this.repository.createQueryBuilder(alias);
+	}
+
 	async getVendorCategoryAndProductStatistics(vendorId: string) {
 		const baseCondition = {
 			vendorId,

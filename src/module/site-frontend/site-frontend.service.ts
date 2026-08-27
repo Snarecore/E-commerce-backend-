@@ -258,51 +258,108 @@ export class SiteFrontendService {
     async findProductList(dto: ProductFilterDto) {
         try {
             const megaDiscount = await this.megaDiscountRepository.getSingleton();
-            let query: ProductFilter = {};
+            const page = dto.page ? Number(dto.page) : 1;
+            const limit = dto.limit ? Number(dto.limit) : 10;
+            const skip = (page - 1) * limit;
+
+            const qb = this.productRepository.createQueryBuilder('product')
+                .where('product.isDeleted = false')
+                .andWhere('product.status = true')
+                .andWhere('product.isApprove = true');
 
             if (dto.mainCategoryId) {
-                query.mainCategoryId = dto.mainCategoryId;
+                qb.andWhere('product.mainCategoryId = :mainCategoryId', { mainCategoryId: dto.mainCategoryId });
             }
 
             if (dto.firstCategoryId) {
-                query.firstCategoryId = dto.firstCategoryId;
+                qb.andWhere('product.firstCategoryId = :firstCategoryId', { firstCategoryId: dto.firstCategoryId });
             }
 
             if (dto.secondCategoryId) {
-                query.secondCategoryId = dto.secondCategoryId;
+                qb.andWhere('product.secondCategoryId = :secondCategoryId', { secondCategoryId: dto.secondCategoryId });
             }
 
             if (dto.searchKeyword) {
-                query.name = ILike(`%${dto.searchKeyword}%`);
+                qb.andWhere('product.name LIKE :searchKeyword', { searchKeyword: `%${dto.searchKeyword}%` });
+            }
+
+            if (dto.inStockOnly) {
+                qb.andWhere('product.quantity > 0');
             }
 
             if (dto.discountOnly) {
-                if (!megaDiscount.isActive) {
-                    query.discountType = Not(DiscountType.NONE);
+                if (!megaDiscount?.isActive) {
+                    qb.andWhere('product.discountType != :none', { none: DiscountType.NONE });
                 }
             }
 
-            query.status = true;
+            const isMegaActive = Boolean(megaDiscount?.isActive && Number(megaDiscount.discountPercentage) > 0);
+            const megaPct = isMegaActive ? Number(megaDiscount.discountPercentage) : 0;
 
-            const order: FindOptionsOrder<Product> = {
-                createdAt: 'desc'
-            };
+            const effectivePriceSql = isMegaActive
+                ? `(product.price * (1 - ${megaPct} / 100))`
+                : `(
+                    CASE 
+                        WHEN product.discountType = 'PERCENT' THEN (product.price * (1 - COALESCE(product.discountAmount, 0) / 100))
+                        WHEN product.discountType = 'FLAT' THEN GREATEST(0, product.price - COALESCE(product.discountAmount, 0))
+                        ELSE product.price
+                    END
+                )`;
 
-            const result = await this.productRepository.paginate({
-                page: dto.page ? dto?.page : 1,
-                limit: dto.limit ? dto?.limit : 10,
-                query,
-                order
+            const minP = (dto.minPrice !== undefined && !isNaN(Number(dto.minPrice))) ? Number(dto.minPrice) : undefined;
+            const maxP = (dto.maxPrice !== undefined && !isNaN(Number(dto.maxPrice))) ? Number(dto.maxPrice) : undefined;
+
+            if (minP !== undefined && maxP !== undefined) {
+                qb.andWhere(`${effectivePriceSql} >= :minP AND ${effectivePriceSql} <= :maxP`, { minP, maxP });
+            } else if (minP !== undefined) {
+                qb.andWhere(`${effectivePriceSql} >= :minP`, { minP });
+            } else if (maxP !== undefined) {
+                qb.andWhere(`${effectivePriceSql} <= :maxP`, { maxP });
+            }
+
+            if (dto.sortBy === 'price_asc') {
+                qb.addSelect(effectivePriceSql, 'effective_price');
+                qb.orderBy('effective_price', 'ASC');
+            } else if (dto.sortBy === 'price_desc') {
+                qb.addSelect(effectivePriceSql, 'effective_price');
+                qb.orderBy('effective_price', 'DESC');
+            } else if (dto.sortBy === 'name_asc') {
+                qb.orderBy('product.name', 'ASC');
+            } else if (dto.sortBy === 'name_desc') {
+                qb.orderBy('product.name', 'DESC');
+            } else {
+                qb.orderBy('product.createdAt', 'DESC');
+            }
+
+            qb.skip(skip).take(limit);
+
+            const [products, total] = await qb.getManyAndCount();
+            const pageCount = Math.ceil(total / limit);
+
+            const productIds = products.map((p) => p.id);
+            const allImages = productIds.length > 0
+                ? await this.productImageGalleryRepository.findAll({ productId: In(productIds) })
+                : [];
+
+            const imagesByProductMap = new Map<string, any[]>();
+            for (const img of allImages) {
+                const list = imagesByProductMap.get(img.productId) || [];
+                list.push(img);
+                imagesByProductMap.set(img.productId, list);
+            }
+
+            const safeData = products.map((p) => {
+                const pImages = imagesByProductMap.get(p.id) || [];
+                const safe = toSafeProduct(p, megaDiscount);
+                return { ...safe, productImages: pImages };
             });
-
-            const safeData = result.data.map((p) => toSafeProduct(p, megaDiscount));
 
             const payload = {
                 data: safeData,
-                total: result.total,
-                page: result.page,
-                limit: result.limit,
-                pageCount: result.pageCount
+                total,
+                page,
+                limit,
+                pageCount
             };
 
             return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', payload);
