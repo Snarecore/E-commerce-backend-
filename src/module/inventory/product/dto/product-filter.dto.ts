@@ -26,4 +26,9 @@ export class ProductFilterDto extends FilterDto {
     @IsOptional()
     @Transform(({ value }: { value: string }) => parseInt(value, 10))
     maxTotal?: number;
+
+    @IsOptional()
+    @Transform(({ value }) => value === 'true' || value === true)
+    @IsBoolean()
+    discountOnly?: boolean;
 }

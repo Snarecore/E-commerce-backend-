@@ -10,12 +10,14 @@ import { OrderSummaryRepository } from '../order-summary/order-summary.repositor
 import { ProductRepository } from '../inventory/product/product.repository';
 import { NotificationModule } from '../notification/notification.module';
 import { CouponModule } from '../coupon/coupon.module';
+import { MegaDiscountModule } from '../setting/mega-discount/mega-discount.module';
 
 @Module({
 	imports: [
 		TypeOrmModule.forFeature([Orders]),
 		NotificationModule,
-		CouponModule
+		CouponModule,
+		MegaDiscountModule
 	],
 	controllers: [OrdersController],
 	providers: [

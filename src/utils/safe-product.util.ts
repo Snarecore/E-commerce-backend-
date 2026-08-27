@@ -1,4 +1,5 @@
 import { Product } from "src/module/inventory/product/entities/product.entity";
+import { resolveEffectiveProductPrice, MegaDiscountState } from "./pricing-resolver.util";
 
 export interface SafeProduct {
     id: string;
@@ -35,7 +36,7 @@ export interface SafeProduct {
     isProductSectionSix: boolean;
 }
 
-export function toSafeProduct(product: Product): SafeProduct {
+export function toSafeProduct(product: Product, megaDiscount?: MegaDiscountState | null): SafeProduct {
     const {
         id,
         name,
@@ -71,6 +72,8 @@ export function toSafeProduct(product: Product): SafeProduct {
         isProductSectionSix
     } = product;
 
+    const resolved = resolveEffectiveProductPrice({ price, discountType, discountAmount }, megaDiscount);
+
     return {
         id,
         name,
@@ -82,8 +85,8 @@ export function toSafeProduct(product: Product): SafeProduct {
         summary,
         price,
         cost,
-        discountType,
-        discountAmount,
+        discountType: resolved.discountType,
+        discountAmount: resolved.discountAmount,
         mainCategoryId,
         mainCategoryName,
         firstCategoryId,

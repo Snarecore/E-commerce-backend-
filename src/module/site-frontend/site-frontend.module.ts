@@ -35,11 +35,14 @@ import { PageMetaRepository } from '../seo/page-meta/page-meta.repository';
 import { VendorMessageRepository } from '../setting/vendor-message/vendor-message.repository';
 import { ProductSeoRepository } from '../seo/product-meta/product-seo.repository';
 
+import { MegaDiscountModule } from '../setting/mega-discount/mega-discount.module';
+
 @Module({
     imports: [
         JwtModule.registerAsync({
             useClass: JwtConfigService
         }),
+        MegaDiscountModule,
         TypeOrmModule.forFeature([
             MainCategory, 
             FirstCategory, 

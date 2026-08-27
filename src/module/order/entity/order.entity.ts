@@ -68,6 +68,12 @@ export class Orders extends AbstractEntity {
     @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
     discountAmount: number;
 
+    @Column({ type: 'boolean', default: false })
+    megaDiscountApplied: boolean;
+
+    @Column({ type: 'decimal', precision: 5, scale: 2, nullable: true })
+    megaDiscountPercentage: number | null;
+
     @Column({ type: 'json', nullable: true })
     statusHistory: Array<{
         status: string;

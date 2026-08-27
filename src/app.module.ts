@@ -61,6 +61,7 @@ import { SesModule } from './common/ses/ses.module';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 
 import { CouponModule } from './module/coupon/coupon.module';
+import { MegaDiscountModule } from './module/setting/mega-discount/mega-discount.module';
 
 @Module({
 	imports: [
@@ -149,7 +150,8 @@ import { CouponModule } from './module/coupon/coupon.module';
 		ProductCommentModule,
 		EmailServiceModule,
 		SesModule,
-		CouponModule
+		CouponModule,
+		MegaDiscountModule
 	],
 	providers: [
 		{

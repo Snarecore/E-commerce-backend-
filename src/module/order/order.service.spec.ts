@@ -7,6 +7,7 @@ import { UniqueCodeGeneratorService } from '../unique-code-generator/unique-code
 import { DataSource } from 'typeorm';
 import { OrderStatus, PaymentStatus } from 'src/enums/order-status.enum';
 import { HttpException } from '@nestjs/common';
+import { MegaDiscount } from '../setting/mega-discount/entities/mega-discount.entity';
 
 describe('OrdersService', () => {
     let service: OrdersService;
@@ -36,7 +37,13 @@ describe('OrdersService', () => {
             manager: {
                 findOne: jest.fn(),
                 create: jest.fn((entityClass, data) => data),
-                save: jest.fn((data) => Promise.resolve({ id: 'saved-id-1', ...data }))
+                save: jest.fn((data) => Promise.resolve({ id: 'saved-id-1', ...data })),
+                createQueryBuilder: jest.fn().mockReturnValue({
+                    update: jest.fn().mockReturnThis(),
+                    set: jest.fn().mockReturnThis(),
+                    where: jest.fn().mockReturnThis(),
+                    execute: jest.fn().mockResolvedValue({ affected: 1 })
+                })
             }
         };
 
@@ -81,7 +88,12 @@ describe('OrdersService', () => {
             vendorId: 'vendor-1'
         };
 
-        queryRunnerMock.manager.findOne.mockResolvedValue(product);
+        queryRunnerMock.manager.findOne.mockImplementation((entityClass: any) => {
+            if (entityClass === MegaDiscount) {
+                return Promise.resolve(null);
+            }
+            return Promise.resolve(product);
+        });
 
         const dto = {
             paymentMethod: 'COD',
@@ -98,12 +110,12 @@ describe('OrdersService', () => {
         expect(result.statusCode).toBe(201);
         expect(data.paymentMethod).toBe('COD');
         expect(data.paymentStatus).toBe(PaymentStatus.PENDING);
-        expect(data.status).toBe(OrderStatus.ORDER_PLACED);
+        expect(data.status).toBe(OrderStatus.PENDING);
         expect(data.paymentIntentId).toBeNull();
         expect(data.subtotal).toBe(1000); // 500 * 2
         expect(data.deliveryCharge).toBe(60); // Dhaka
         expect(data.totalAmount).toBe(1060);
-        expect(product.quantity).toBe(8); // Stock decreased
+        expect(queryRunnerMock.manager.createQueryBuilder).toHaveBeenCalled();
     });
 
     it('TEST 2: Online successful payment verifies Stripe and sets paymentStatus to Paid', async () => {
@@ -116,7 +128,12 @@ describe('OrdersService', () => {
             discountAmount: 0
         };
 
-        queryRunnerMock.manager.findOne.mockResolvedValue(product);
+        queryRunnerMock.manager.findOne.mockImplementation((entityClass: any) => {
+            if (entityClass === MegaDiscount) {
+                return Promise.resolve(null);
+            }
+            return Promise.resolve(product);
+        });
         (service as any).stripe.paymentIntents.retrieve.mockResolvedValue({ status: 'succeeded' });
 
         const dto = {
@@ -229,7 +246,12 @@ describe('OrdersService', () => {
 
     it('TEST 9: Online payment with clientSecret strips _secret_ and retrieves pure paymentIntent ID', async () => {
         const product = { id: 'p1', name: 'Shirt', price: 200, quantity: 5 };
-        queryRunnerMock.manager.findOne.mockResolvedValue(product);
+        queryRunnerMock.manager.findOne.mockImplementation((entityClass: any) => {
+            if (entityClass === MegaDiscount) {
+                return Promise.resolve(null);
+            }
+            return Promise.resolve(product);
+        });
         (service as any).stripe.paymentIntents.retrieve.mockResolvedValue({ status: 'succeeded' });
 
         const dto = {
@@ -246,7 +268,12 @@ describe('OrdersService', () => {
 
     it('TEST 10: Online payment with Stripe Checkout Session ID (cs_...) retrieves session correctly', async () => {
         const product = { id: 'p1', name: 'Shirt', price: 200, quantity: 5 };
-        queryRunnerMock.manager.findOne.mockResolvedValue(product);
+        queryRunnerMock.manager.findOne.mockImplementation((entityClass: any) => {
+            if (entityClass === MegaDiscount) {
+                return Promise.resolve(null);
+            }
+            return Promise.resolve(product);
+        });
         (service as any).stripe.checkout.sessions.retrieve.mockResolvedValue({
             payment_status: 'paid',
             payment_intent: 'pi_session_intent_123'

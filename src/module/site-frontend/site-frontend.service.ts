@@ -6,7 +6,8 @@ import { SecondCategoryRepository } from "../inventory/second-category/second-ca
 import { HeroSliderRepository } from "../setting/hero-slider/hero-slider.repository";
 import { PromotionsRepository } from "../setting/promotions/promotions.repository";
 import { ProductRepository } from "../inventory/product/product.repository";
-import { FindOptionsOrder, In } from 'typeorm';
+import { FindOptionsOrder, In, Not } from 'typeorm';
+import { MegaDiscountRepository } from "../setting/mega-discount/mega-discount.repository";
 import { Product } from "../inventory/product/entities/product.entity";
 import { ProductFilter } from "../inventory/product/type/product-filter.type";
 import { ProductFilterDto } from "../inventory/product/dto/product-filter.dto";
@@ -19,6 +20,7 @@ import { HeaderFooterCmsRepository } from "../setting/header-footer-cms/header-f
 import { OrdersRepository } from "../order/order.repository";
 import { UserRepository } from "../user/user.repository";
 import { Role } from "src/enums/role.enum";
+import { DiscountType } from "src/enums/product.enum";
 import { Orders } from "../order/entity/order.entity";
 import { SocialLinkRepository } from "../setting/social-link/social-link.repository";
 import { HeroSlider } from "../setting/hero-slider/entities/hero-slider.entity";
@@ -58,7 +60,8 @@ export class SiteFrontendService {
         private readonly userProfileRepository: UserProfileRepository,
         private readonly pageMetaRepository: PageMetaRepository,
         private readonly vendorMessageRepository: VendorMessageRepository,
-        private readonly productSeoRepository: ProductSeoRepository
+        private readonly productSeoRepository: ProductSeoRepository,
+        private readonly megaDiscountRepository: MegaDiscountRepository
     ) { }
 
     async getMainCategoryData() {
@@ -144,7 +147,8 @@ export class SiteFrontendService {
                 sectionThreeProducts,
                 sectionFourProducts,
                 sectionFiveProducts,
-                sectionSixProducts
+                sectionSixProducts,
+                megaDiscount
             ] = await Promise.all([
                 this.homePageCmsRepository.findAll(),
                 this.heroSliderRepository.findAllWithOrder({ status: true }, order),
@@ -155,7 +159,8 @@ export class SiteFrontendService {
                 this.productRepository.findAll({ isProductSectionThree: true, status: true }),
                 this.productRepository.findAll({ isProductSectionFour: true, status: true }),
                 this.productRepository.findAll({ isProductSectionFive: true, status: true }),
-                this.productRepository.findAll({ isProductSectionSix: true, status: true })
+                this.productRepository.findAll({ isProductSectionSix: true, status: true }),
+                this.megaDiscountRepository.getSingleton()
             ]);
 
             const filteredContentData = omit(contentData[0] ?? {}, [
@@ -188,12 +193,12 @@ export class SiteFrontendService {
                 heroSlider: filteredHeroSlider,
                 promotions: filteredPromotions,
                 featuredCategories: filteredFeaturedCategories ?? [],
-                sectionOneProducts: sectionOneProducts.map(toSafeProduct) ?? [],
-                sectionTwoProducts: sectionTwoProducts.map(toSafeProduct) ?? [],
-                sectionThreeProducts: sectionThreeProducts.map(toSafeProduct) ?? [],
-                sectionFourProducts: sectionFourProducts.map(toSafeProduct) ?? [],
-                sectionFiveProducts: sectionFiveProducts.map(toSafeProduct) ?? [],
-                sectionSixProducts: sectionSixProducts.map(toSafeProduct) ?? []
+                sectionOneProducts: sectionOneProducts.map((p) => toSafeProduct(p, megaDiscount)) ?? [],
+                sectionTwoProducts: sectionTwoProducts.map((p) => toSafeProduct(p, megaDiscount)) ?? [],
+                sectionThreeProducts: sectionThreeProducts.map((p) => toSafeProduct(p, megaDiscount)) ?? [],
+                sectionFourProducts: sectionFourProducts.map((p) => toSafeProduct(p, megaDiscount)) ?? [],
+                sectionFiveProducts: sectionFiveProducts.map((p) => toSafeProduct(p, megaDiscount)) ?? [],
+                sectionSixProducts: sectionSixProducts.map((p) => toSafeProduct(p, megaDiscount)) ?? []
             }
 
             return ResponseUtils.successResponseHandler(200, 'Data fetched successfully', 'data', data);
@@ -206,14 +211,15 @@ export class SiteFrontendService {
 
     async getCartPageData() {
         try {
-            const [recommendedProductsRaw] = await Promise.all([
+            const [recommendedProductsRaw, megaDiscount] = await Promise.all([
                 this.productRepository.findAll({
                     isProductSectionTwo: true,
                     status: true
-                })
+                }),
+                this.megaDiscountRepository.getSingleton()
             ]);
 
-            const recommendedProducts = recommendedProductsRaw.map(toSafeProduct);
+            const recommendedProducts = recommendedProductsRaw.map((p) => toSafeProduct(p, megaDiscount));
 
             const data = {
                 recommendedProducts
@@ -251,6 +257,7 @@ export class SiteFrontendService {
 
     async findProductList(dto: ProductFilterDto) {
         try {
+            const megaDiscount = await this.megaDiscountRepository.getSingleton();
             let query: ProductFilter = {};
 
             if (dto.mainCategoryId) {
@@ -269,6 +276,12 @@ export class SiteFrontendService {
                 query.name = ILike(`%${dto.searchKeyword}%`);
             }
 
+            if (dto.discountOnly) {
+                if (!megaDiscount.isActive) {
+                    query.discountType = Not(DiscountType.NONE);
+                }
+            }
+
             query.status = true;
 
             const order: FindOptionsOrder<Product> = {
@@ -282,7 +295,7 @@ export class SiteFrontendService {
                 order
             });
 
-            const safeData = result.data.map(toSafeProduct);
+            const safeData = result.data.map((p) => toSafeProduct(p, megaDiscount));
 
             const payload = {
                 data: safeData,
@@ -302,7 +315,14 @@ export class SiteFrontendService {
 
     async findProductListWithHardLimit(dto: ProductFilterDto) {
         try {
+            const megaDiscount = await this.megaDiscountRepository.getSingleton();
             let query: ProductFilter = {};
+
+            if (dto.discountOnly) {
+                if (!megaDiscount.isActive) {
+                    query.discountType = Not(DiscountType.NONE);
+                }
+            }
 
             query.status = true;
 
@@ -318,7 +338,7 @@ export class SiteFrontendService {
                 order
             });
 
-            const safeData = result.data.map(toSafeProduct);
+            const safeData = result.data.map((p) => toSafeProduct(p, megaDiscount));
 
             const payload = {
                 data: safeData,
@@ -393,21 +413,22 @@ export class SiteFrontendService {
                 throw new HttpException('Product not found!', HttpStatus.BAD_REQUEST);
             }
 
-            const [productImages, relatedProductsRaw, productReview, vendor, vendorProfile, seoData] = await Promise.all([
+            const [productImages, relatedProductsRaw, productReview, vendor, vendorProfile, seoData, megaDiscount] = await Promise.all([
                 this.productImageGalleryRepository.findAll({ productId: product.id }),
                 this.productRepository.findByQueryWithHardLimit({ mainCategoryId: product.mainCategoryId, status: true }),
                 this.getProductReviewData(product.id),
                 this.userRepository.findOne(product.vendorId),
                 this.userProfileRepository.findOneByQuery({ user: { id: product.vendorId } }),
-                this.productSeoRepository.findOneByQuery({ productId: product.id })
+                this.productSeoRepository.findOneByQuery({ productId: product.id }),
+                this.megaDiscountRepository.getSingleton()
             ]);
 
-            const relatedProducts = relatedProductsRaw.filter(p => p.id !== product.id).map(toSafeProduct);
+            const relatedProducts = relatedProductsRaw.filter(p => p.id !== product.id).map((p) => toSafeProduct(p, megaDiscount));
 
             const metaKeys = ['createdAt', 'updatedAt', 'isDeleted'] as const;
 
             const payload = {
-                ...toSafeProduct(product),
+                ...toSafeProduct(product, megaDiscount),
                 productImages: omitMany(productImages, [...metaKeys]),
                 relatedProducts,
                 productReview,
@@ -442,7 +463,8 @@ export class SiteFrontendService {
                 faqData,
                 headerFooterData,
                 socialLinkData,
-                metaData
+                metaData,
+                megaDiscountRecord
             ] = await Promise.all([
                 this.mainCategoryRepository.findAll({ status: true }),
                 this.firstCategoryRepository.findAllWithOrder({ status: true }, firstCategoryOrder),
@@ -450,7 +472,8 @@ export class SiteFrontendService {
                 this.faqRepository.findAll(),
                 this.headerFooterCmsRepository.findAll(),
                 this.socialLinkRepository.findAll(),
-                this.pageMetaRepository.findAll()
+                this.pageMetaRepository.findAll(),
+                this.megaDiscountRepository.getSingleton()
             ]);
 
             const metaKeys = ['createdAt', 'updatedAt', 'isDeleted'] as const;
@@ -484,7 +507,12 @@ export class SiteFrontendService {
                 faqData: omitMany(faqData, [...metaKeys]),
                 headerFooterData: headerFooterData.length ? omit(headerFooterData[0], [...metaKeys]) : {},
                 socialLinkData: omitMany(socialLinkData, [...metaKeys]),
-                metaData: omitMany(metaData, [...metaKeys])
+                metaData: omitMany(metaData, [...metaKeys]),
+                megaDiscount: {
+                    isActive: megaDiscountRecord.isActive,
+                    discountPercentage: Number(megaDiscountRecord.discountPercentage || 0),
+                    menuText: megaDiscountRecord.menuText || 'Mega Sale'
+                }
             }
 
             return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', data);

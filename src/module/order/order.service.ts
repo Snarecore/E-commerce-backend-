@@ -22,6 +22,8 @@ import { OrderSummary } from '../order-summary/entity/order-summary.entity';
 import { unitAfterDiscount } from 'src/utils/helper.utils';
 import { NotificationService } from '../notification/notification.service';
 import { CouponService } from '../coupon/coupon.service';
+import { MegaDiscountRepository, SINGLETON_MEGA_DISCOUNT_ID } from '../setting/mega-discount/mega-discount.repository';
+import { MegaDiscount } from '../setting/mega-discount/entities/mega-discount.entity';
 
 @Injectable()
 export class OrdersService implements OnModuleInit {
@@ -35,7 +37,8 @@ export class OrdersService implements OnModuleInit {
         private readonly productRepository: ProductRepository,
         @Optional() private readonly notificationService?: NotificationService,
         @Optional() private readonly configService?: ConfigService,
-        @Optional() private readonly couponService?: CouponService
+        @Optional() private readonly couponService?: CouponService,
+        @Optional() private readonly megaDiscountRepository?: MegaDiscountRepository
     ) {}
 
     async onModuleInit() {
@@ -44,6 +47,12 @@ export class OrdersService implements OnModuleInit {
         } catch (e) {}
         try {
             await (this.repository as any).query(`ALTER TABLE \`orders\` ADD COLUMN \`rejectionMessage\` text NULL`);
+        } catch (e) {}
+        try {
+            await (this.repository as any).query(`ALTER TABLE \`orders\` ADD COLUMN \`megaDiscountApplied\` tinyint(1) NOT NULL DEFAULT 0`);
+        } catch (e) {}
+        try {
+            await (this.repository as any).query(`ALTER TABLE \`orders\` ADD COLUMN \`megaDiscountPercentage\` decimal(5,2) NULL`);
         } catch (e) {}
     }
 
@@ -150,6 +159,18 @@ export class OrdersService implements OnModuleInit {
             await queryRunner.startTransaction();
 
             try {
+                let megaDiscountRecord: MegaDiscount | null = null;
+                try {
+                    megaDiscountRecord = await queryRunner.manager.findOne(MegaDiscount, {
+                        where: { id: SINGLETON_MEGA_DISCOUNT_ID }
+                    });
+                } catch {
+                    megaDiscountRecord = null;
+                }
+
+                const isMegaDiscountApplied = Boolean(megaDiscountRecord?.isActive && Number(megaDiscountRecord?.discountPercentage) > 0);
+                const megaDiscountPercentage = isMegaDiscountApplied ? Number(megaDiscountRecord?.discountPercentage) : null;
+
                 let subtotal = 0;
                 const preparedItems: Array<{
                     product: Product;
@@ -196,7 +217,7 @@ export class OrdersService implements OnModuleInit {
                         price: Number(product.price) || 0,
                         discountType: product.discountType,
                         discountAmount: Number(product.discountAmount) || 0
-                    });
+                    }, megaDiscountRecord);
 
                     subtotal += unitPrice * qty;
 
@@ -259,6 +280,8 @@ export class OrdersService implements OnModuleInit {
                     couponId,
                     couponCode,
                     discountAmount,
+                    megaDiscountApplied: isMegaDiscountApplied,
+                    megaDiscountPercentage: megaDiscountPercentage,
                     currency: dto.currency || 'BDT',
                     status: OrderStatus.PENDING,
                     paymentStatus: finalPaymentStatus,

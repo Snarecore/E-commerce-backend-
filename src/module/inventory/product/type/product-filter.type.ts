@@ -1,4 +1,5 @@
 import { FindOperator } from "typeorm";
+import { DiscountType } from "src/enums/product.enum";
 
 export interface ProductFilter {
     name?: string | FindOperator<string>;
@@ -9,5 +10,6 @@ export interface ProductFilter {
     firstCategoryId?: string;
     secondCategoryId?: string;
     vendorId?: string;
+    discountType?: DiscountType | FindOperator<DiscountType>;
     createdAt?: Date | FindOperator<Date>;
 }
