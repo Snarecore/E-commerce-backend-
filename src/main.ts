@@ -1,11 +1,11 @@
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import * as cookieParser from 'cookie-parser';
+import cookieParser from 'cookie-parser';
 import * as dotenv from 'dotenv';
 import { AppModule } from './app.module';
 import { CONFIG } from './utils/config';
-import * as bodyParser from 'body-parser';
-import * as compression from 'compression';
+import bodyParser from 'body-parser';
+import compression from 'compression';
 
 async function bootstrap(): Promise<void> {
 	dotenv.config();
