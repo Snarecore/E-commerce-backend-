@@ -31,6 +31,7 @@ export class AuthService {
 		private readonly jwtService: JwtService,
 		@InjectDataSource() private readonly dataSource: DataSource,
 		private readonly spaceService: SpaceService,
+		private readonly emailService: EmailService,
 		private readonly sesEmailService: SesEmailService
 	) { }
 
@@ -266,15 +267,16 @@ export class AuthService {
 				resetTokenExpiry: resetTokenExpiresAt
 			});
 
-			await this.sesEmailService.sendResetPasswordEmail({
+			await this.emailService.sendResetPasswordEmail({
 				to: [user.email],
-				from: `"support" <support@bazaarbound.com>`,
+				from: process.env.EMAIL_SENDER_MAIL
+					? `"${process.env.EMAIL_SENDER_NAME || 'Support'}" <${process.env.EMAIL_SENDER_MAIL}>`
+					: `"support" <support@bazaarbound.com>`,
 				subject: 'Reset Your Password',
 				username: `${user.name}`,
 				token: resetToken,
 				email: user.email,
-				companyEmail: 'support@bazaarbound.com',
-				bcc: ['sabbir.qligence@gmail.com']
+				companyEmail: process.env.EMAIL_SENDER_MAIL || 'support@bazaarbound.com'
 			});
 
 			return ResponseUtils.successResponseHandler(
