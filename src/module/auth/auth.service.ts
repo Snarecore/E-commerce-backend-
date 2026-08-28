@@ -21,16 +21,16 @@ import { EmailService } from '../email-service/email-sender.service';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { SesEmailService } from 'src/common/ses/ses-email.service';
 import { Role } from 'src/enums/role.enum';
+import { COOKIE_NAMES, ACCESS_TOKEN_MAX_AGE, REFRESH_TOKEN_MAX_AGE, setAuthCookie, clearAuthCookie } from 'src/utils/cookie-config';
 
 @Injectable()
 export class AuthService {
 	constructor(
-		@InjectDataSource() private readonly dataSource: DataSource,
 		private readonly userRepository: UserRepository,
 		private readonly userProfileRepository: UserProfileRepository,
 		private readonly jwtService: JwtService,
+		@InjectDataSource() private readonly dataSource: DataSource,
 		private readonly spaceService: SpaceService,
-		private readonly emailService: EmailService,
 		private readonly sesEmailService: SesEmailService
 	) { }
 
@@ -57,18 +57,18 @@ export class AuthService {
 		const accessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
 		const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
 
-		res.cookie('refreshToken', refreshToken, {
-			httpOnly: true,
-			secure: true,
-			sameSite: 'strict'
-		});
+		const isAdmin = user.role === Role.ADMIN;
+		const accessCookieName = isAdmin ? COOKIE_NAMES.ADMIN_ACCESS : COOKIE_NAMES.CUSTOMER_ACCESS;
+		const refreshCookieName = isAdmin ? COOKIE_NAMES.ADMIN_REFRESH : COOKIE_NAMES.CUSTOMER_REFRESH;
+
+		setAuthCookie(res, accessCookieName, accessToken, ACCESS_TOKEN_MAX_AGE);
+		setAuthCookie(res, refreshCookieName, refreshToken, REFRESH_TOKEN_MAX_AGE);
 
 		const userData = {
 			id: user.id,
 			name: user.name,
 			email: user.email,
 			role: user.role,
-			token: accessToken
 		};
 
 		return ResponseUtils.successResponseHandler(
@@ -78,6 +78,33 @@ export class AuthService {
 			{
 				accessToken,
 				user: userData
+			}
+		);
+	}
+
+	async me(currentUser: any) {
+		if (!currentUser || !currentUser.id) {
+			throw new UnauthorizedException('Not authenticated.');
+		}
+
+		const user = await this.userRepository.findOneByQueryRelation(
+			{ id: currentUser.id },
+			{ select: ['id', 'name', 'email', 'role'] }
+		);
+
+		if (!user) {
+			throw new UnauthorizedException('User session not found.');
+		}
+
+		return ResponseUtils.successResponseHandler(
+			HttpStatus.OK,
+			'User session fetched successfully.',
+			'data',
+			{
+				id: user.id,
+				name: user.name,
+				email: user.email,
+				role: user.role
 			}
 		);
 	}
@@ -113,7 +140,7 @@ export class AuthService {
 			}
 
 			await queryRunner.commitTransaction();
-			return ResponseUtils.successResponseHandler(HttpStatus.OK, 'Data saved successfully.', 'data', toSafeUser(createdUser) as unknown as User);
+			return ResponseUtils.successResponseHandler(HttpStatus.OK, 'Registration successful.', 'data', toSafeUser(createdUser) as unknown as User);
 		} catch (error) {
 			await queryRunner.rollbackTransaction();
 			if (error instanceof HttpException) {
@@ -200,25 +227,27 @@ export class AuthService {
 			throw new UnauthorizedException('User not found for refresh token.');
 		}
 
-		const payload = { email: user.email, sub: user.id, roles: user.role };
+		const payload = { email: user.email, sub: user.id, role: user.role, name: user.name };
 		const newAccessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
 		const newRefreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
 
-		res.cookie('refreshToken', newRefreshToken, {
-			httpOnly: true,
-			secure: true,
-			sameSite: 'strict'
-		});
+		const isAdmin = user.role === Role.ADMIN;
+		const accessCookieName = isAdmin ? COOKIE_NAMES.ADMIN_ACCESS : COOKIE_NAMES.CUSTOMER_ACCESS;
+		const refreshCookieName = isAdmin ? COOKIE_NAMES.ADMIN_REFRESH : COOKIE_NAMES.CUSTOMER_REFRESH;
+
+		setAuthCookie(res, accessCookieName, newAccessToken, ACCESS_TOKEN_MAX_AGE);
+		setAuthCookie(res, refreshCookieName, newRefreshToken, REFRESH_TOKEN_MAX_AGE);
 
 		return { accessToken: newAccessToken };
 	}
 
 	logout(res: Response): void {
-		res.clearCookie('refreshToken', {
-			httpOnly: true,
-			secure: true,
-			sameSite: 'strict'
-		});
+		clearAuthCookie(res, COOKIE_NAMES.CUSTOMER_ACCESS);
+		clearAuthCookie(res, COOKIE_NAMES.CUSTOMER_REFRESH);
+		clearAuthCookie(res, COOKIE_NAMES.ADMIN_ACCESS);
+		clearAuthCookie(res, COOKIE_NAMES.ADMIN_REFRESH);
+		clearAuthCookie(res, 'accessToken');
+		clearAuthCookie(res, 'refreshToken');
 	}
 
 	async forgotPassword(email: string) {

@@ -55,6 +55,24 @@ export class AuthController {
 		return await this.authService.login(dto, res);
 	}
 
+	@UseGuards(JwtAuthGuard)
+	@Get('me')
+	async me(@Req() req: any) {
+		return await this.authService.me(req.user);
+	}
+
+	@UseGuards(JwtAuthGuard)
+	@Get('customer/me')
+	async customerMe(@Req() req: any) {
+		return await this.authService.me(req.user);
+	}
+
+	@UseGuards(JwtAuthGuard)
+	@Get('admin/me')
+	async adminMe(@Req() req: any) {
+		return await this.authService.me(req.user);
+	}
+
 	@Public()
 	@Post('refresh-token')
 	@UseGuards(RefreshAuthGuard)

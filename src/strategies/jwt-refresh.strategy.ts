@@ -3,6 +3,7 @@ import { PassportStrategy } from '@nestjs/passport';
 import { Request } from 'express';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { JwtPayload } from 'src/common/types';
+import { COOKIE_NAMES } from 'src/utils/cookie-config';
 
 @Injectable()
 export class JwtRefreshStrategy extends PassportStrategy(Strategy, 'jwt-refresh') {
@@ -10,11 +11,14 @@ export class JwtRefreshStrategy extends PassportStrategy(Strategy, 'jwt-refresh'
         super({
             jwtFromRequest: ExtractJwt.fromExtractors([
                 (req: Request): string | null => {
-                    const token = req?.cookies?.['refreshToken'] as string;
+                    if (!req?.cookies) return null;
+                    const token = req.cookies[COOKIE_NAMES.CUSTOMER_REFRESH] || 
+                                  req.cookies[COOKIE_NAMES.ADMIN_REFRESH] || 
+                                  req.cookies['refreshToken'];
                     return typeof token === 'string' ? token : null;
                 },
             ]),
-            secretOrKey: 'your_access_token_secret',
+            secretOrKey: process.env.JWT_SECRET || '0c1b10e6e5375d9a6fcd5cbf764f7ae83f9a6b91d0b77127c553b0aef4647d89',
         });
     }
 

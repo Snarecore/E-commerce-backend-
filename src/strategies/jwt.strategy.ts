@@ -74,13 +74,24 @@ import { Injectable } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { JwtPayload } from 'src/common/types';
+import { Request } from 'express';
+import { COOKIE_NAMES } from 'src/utils/cookie-config';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
     constructor() {
         super({
-            jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
-            secretOrKey: '0c1b10e6e5375d9a6fcd5cbf764f7ae83f9a6b91d0b77127c553b0aef4647d89',
+            jwtFromRequest: ExtractJwt.fromExtractors([
+                ExtractJwt.fromAuthHeaderAsBearerToken(),
+                (req: Request): string | null => {
+                    if (!req?.cookies) return null;
+                    const token = req.cookies[COOKIE_NAMES.CUSTOMER_ACCESS] || 
+                                  req.cookies[COOKIE_NAMES.ADMIN_ACCESS] || 
+                                  req.cookies['accessToken'];
+                    return typeof token === 'string' ? token : null;
+                },
+            ]),
+            secretOrKey: process.env.JWT_SECRET || '0c1b10e6e5375d9a6fcd5cbf764f7ae83f9a6b91d0b77127c553b0aef4647d89',
         });
     }
 
@@ -88,3 +99,4 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         return { id: payload.sub, email: payload.email, role: payload.role, name: payload.name };
     }
 }
+
