@@ -18,8 +18,9 @@ export class SpaceService {
     }
 
     async uploadFile(file: UploadMulterFile, uploadLocation?: string): Promise<string | undefined> {
-        const extension = extname(file.originalname);
-        const nameWithoutExt = file.originalname.substring(0, file.originalname.lastIndexOf('.')) || 'file';
+        if (!file || !file.buffer) return undefined;
+        const extension = extname(file.originalname || '');
+        const nameWithoutExt = file.originalname ? file.originalname.substring(0, file.originalname.lastIndexOf('.')) : 'file';
         const cleanName = nameWithoutExt.replace(/[^a-zA-Z0-9]/g, '_');
         const uniqueId = uuidv4();
         
@@ -28,12 +29,17 @@ export class SpaceService {
             folder = uploadLocation;
         }
 
+        const isImage = file.mimetype ? file.mimetype.startsWith('image/') : true;
+        const resourceType = isImage ? 'image' : 'auto';
+
         return new Promise<string | undefined>((resolve) => {
             const uploadStream = cloudinary.uploader.upload_stream(
                 {
                     folder: folder,
                     public_id: `${cleanName}_${uniqueId}`,
-                    resource_type: 'auto'
+                    resource_type: resourceType,
+                    quality: isImage ? 'auto:good' : undefined,
+                    fetch_format: isImage ? 'auto' : undefined,
                 },
                 (error, result) => {
                     if (error) {

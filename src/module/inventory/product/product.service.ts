@@ -50,18 +50,23 @@ export class ProductService {
                 }
             }
 
-            if (files && files.featuredImage) {
-                const featuredImage = await this.spaceService.uploadFile(
-                    files.featuredImage[0],
-                    'product'
-                );
-                dto.featuredImage = featuredImage;
+            let featuredImagePromise: Promise<string | undefined> = Promise.resolve(undefined);
+            if (files?.featuredImage?.[0]) {
+                featuredImagePromise = this.spaceService.uploadFile(files.featuredImage[0], 'product');
             }
 
-            if (files && files.fileUrl) {
-                const fileUrl = await this.spaceService.uploadFile(files.fileUrl[0], 'product');
-                dto.fileUrl = fileUrl;
+            let fileUrlPromise: Promise<string | undefined> = Promise.resolve(undefined);
+            if (files?.fileUrl?.[0]) {
+                fileUrlPromise = this.spaceService.uploadFile(files.fileUrl[0], 'product');
             }
+
+            const [uploadedFeaturedImage, uploadedFileUrl] = await Promise.all([
+                featuredImagePromise,
+                fileUrlPromise
+            ]);
+
+            if (uploadedFeaturedImage) dto.featuredImage = uploadedFeaturedImage;
+            if (uploadedFileUrl) dto.fileUrl = uploadedFileUrl;
 
             const output = (await this.repository.create({ ...dto, slug, isApprove: true, status: true })) as Product | null;
             if (!output) {
@@ -71,13 +76,22 @@ export class ProductService {
                 );
             }
 
-            if (files && files.productImages) {
-                for (const image of files.productImages) {
-                    const productImage = await this.spaceService.uploadFile(image, 'product');
-                    await this.productImageGalleryRepository.create({
+            if (files?.productImages?.length) {
+                const uploadedImages = await Promise.all(
+                    files.productImages.map((image) => this.spaceService.uploadFile(image, 'product'))
+                );
+
+                const galleryRecords = uploadedImages
+                    .filter((url): url is string => Boolean(url))
+                    .map((url) => ({
                         productId: output.id,
-                        imageUrl: productImage
-                    });
+                        imageUrl: url
+                    }));
+
+                if (galleryRecords.length > 0) {
+                    await Promise.all(
+                        galleryRecords.map((record) => this.productImageGalleryRepository.create(record))
+                    );
                 }
             }
             return ResponseUtils.successResponseHandler(201, 'Data saved successfully.', 'data', output);
@@ -457,41 +471,45 @@ export class ProductService {
                 }
             }
 
-            dto.featuredImage = output.featuredImage;
+            let featuredImagePromise: Promise<string | undefined> = Promise.resolve(output.featuredImage);
             if (files?.featuredImage?.[0]) {
-                const imageUrl = await this.spaceService.uploadFile(
-                    files.featuredImage[0],
-                    'product'
-                );
-                dto.featuredImage = imageUrl;
+                featuredImagePromise = this.spaceService.uploadFile(files.featuredImage[0], 'product');
             }
 
-			dto.fileUrl = output.fileUrl;
-            if (files && files.fileUrl) {
-                const fileUrl = await this.spaceService.uploadFile(files.fileUrl[0], 'product');
-                dto.fileUrl = fileUrl;
-            } else {
-                dto.fileUrl = output.fileUrl;
+            let fileUrlPromise: Promise<string | undefined> = Promise.resolve(output.fileUrl);
+            if (files?.fileUrl?.[0]) {
+                fileUrlPromise = this.spaceService.uploadFile(files.fileUrl[0], 'product');
             }
+
+            let newProductImagesPromise: Promise<(string | undefined)[]> = Promise.resolve([]);
+            if (files?.productImages?.length) {
+                newProductImagesPromise = Promise.all(
+                    files.productImages.map((file) => this.spaceService.uploadFile(file, 'product'))
+                );
+            }
+
+            const [uploadedFeaturedImage, uploadedFileUrl, uploadedProductImages] = await Promise.all([
+                featuredImagePromise,
+                fileUrlPromise,
+                newProductImagesPromise
+            ]);
+
+            dto.featuredImage = uploadedFeaturedImage || output.featuredImage;
+            dto.fileUrl = uploadedFileUrl || output.fileUrl;
 
             const existingImages = dto.existingProductImages || [];
-            const newProductImages: string[] = [];
-            if (files?.productImages?.length) {
-                for (const file of files.productImages) {
-                    const imageUrl = await this.spaceService.uploadFile(file, 'product');
-                    if (imageUrl) {
-                        newProductImages.push(imageUrl);
-                    }
-                }
-            }
-            const finalProductImages = [...existingImages, ...newProductImages];
+            const validNewProductImages = (uploadedProductImages || []).filter((url): url is string => Boolean(url));
+            const finalProductImages = [...existingImages, ...validNewProductImages];
+
             await this.productImageGalleryRepository.deleteByQuery({ productId: id });
-            for (const imageUrl of finalProductImages) {
-                await this.productImageGalleryRepository.create({
-                    productId: id,
-                    imageUrl
-                });
-            }
+            await Promise.all(
+                finalProductImages.map((imageUrl) =>
+                    this.productImageGalleryRepository.create({
+                        productId: id,
+                        imageUrl
+                    })
+                )
+            );
 
             const { existingProductImages, sizes, productImages, ...payload } = dto as any;
             if (!payload.vendorId || payload.vendorId === 'undefined' || payload.vendorId === 'null') {
