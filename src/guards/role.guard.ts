@@ -29,7 +29,12 @@ export class RolesGuard implements CanActivate {
       throw new ForbiddenException('User not found in request.');
     }
 
-    if (!requiredRoles.includes(user.role)) {
+    const userRole = typeof user.role === 'string' ? user.role.toLowerCase().trim() : user.role;
+    const hasRole = requiredRoles.some((r) =>
+      typeof r === 'string' ? r.toLowerCase() === userRole : r === userRole,
+    );
+
+    if (!hasRole) {
       throw new ForbiddenException('Access denied. Insufficient role.');
     }
 

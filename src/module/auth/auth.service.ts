@@ -58,7 +58,7 @@ export class AuthService {
 		const accessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
 		const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
 
-		const isAdmin = user.role === Role.ADMIN;
+		const isAdmin = user.role?.toLowerCase() === Role.ADMIN;
 		const accessCookieName = isAdmin ? COOKIE_NAMES.ADMIN_ACCESS : COOKIE_NAMES.CUSTOMER_ACCESS;
 		const refreshCookieName = isAdmin ? COOKIE_NAMES.ADMIN_REFRESH : COOKIE_NAMES.CUSTOMER_REFRESH;
 
@@ -232,7 +232,7 @@ export class AuthService {
 		const newAccessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
 		const newRefreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
 
-		const isAdmin = user.role === Role.ADMIN;
+		const isAdmin = user.role?.toLowerCase() === Role.ADMIN;
 		const accessCookieName = isAdmin ? COOKIE_NAMES.ADMIN_ACCESS : COOKIE_NAMES.CUSTOMER_ACCESS;
 		const refreshCookieName = isAdmin ? COOKIE_NAMES.ADMIN_REFRESH : COOKIE_NAMES.CUSTOMER_REFRESH;
 
