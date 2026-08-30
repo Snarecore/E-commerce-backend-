@@ -176,6 +176,7 @@ export class OrdersService implements OnModuleInit {
                     product: Product;
                     quantity: number;
                     unitPrice: number;
+                    selectedSize?: string;
                 }> = [];
 
                 for (const itemDto of rawItems) {
@@ -188,6 +189,8 @@ export class OrdersService implements OnModuleInit {
                     if (qty <= 0) {
                         throw new HttpException(`Invalid quantity for product ${productId}.`, HttpStatus.BAD_REQUEST);
                     }
+
+                    const selectedSize = ((itemDto as any).size || (itemDto as any).selectedSize || (itemDto as any).sizeName || (itemDto as any).colorSize || '').trim();
 
                     let product: Product | null = null;
                     try {
@@ -213,6 +216,16 @@ export class OrdersService implements OnModuleInit {
                         );
                     }
 
+                    if (selectedSize && product.sizeStock && typeof product.sizeStock === 'object') {
+                        const sizeStockQty = Number(product.sizeStock[selectedSize]) || 0;
+                        if (sizeStockQty < qty) {
+                            throw new HttpException(
+                                `Insufficient stock for size "${selectedSize}" of product "${product.name}". Requested: ${qty}, Available: ${sizeStockQty}.`,
+                                HttpStatus.BAD_REQUEST
+                            );
+                        }
+                    }
+
                     const unitPrice = unitAfterDiscount({
                         price: Number(product.price) || 0,
                         discountType: product.discountType,
@@ -224,7 +237,8 @@ export class OrdersService implements OnModuleInit {
                     preparedItems.push({
                         product,
                         quantity: qty,
-                        unitPrice
+                        unitPrice,
+                        selectedSize: selectedSize || undefined
                     });
                 }
 
@@ -308,10 +322,24 @@ export class OrdersService implements OnModuleInit {
 
                     // Atomic Stock Deduct inside Transaction
                     if (prepItem.product.quantity !== null && prepItem.product.quantity !== undefined) {
+                        let updatedSizeStock = prepItem.product.sizeStock;
+                        if (updatedSizeStock && typeof updatedSizeStock === 'object' && prepItem.selectedSize && updatedSizeStock[prepItem.selectedSize] !== undefined) {
+                            const currentSizeQty = Number(updatedSizeStock[prepItem.selectedSize]) || 0;
+                            updatedSizeStock = {
+                                ...updatedSizeStock,
+                                [prepItem.selectedSize]: Math.max(0, currentSizeQty - prepItem.quantity)
+                            };
+                        }
+
+                        const newTotalQty = Math.max(0, (prepItem.product.quantity || 0) - prepItem.quantity);
+
                         const updateResult = await queryRunner.manager
                             .createQueryBuilder()
                             .update(Product)
-                            .set({ quantity: () => `quantity - ${prepItem.quantity}` })
+                            .set({
+                                quantity: newTotalQty,
+                                sizeStock: updatedSizeStock
+                            })
                             .where("id = :id AND quantity >= :qty AND isDeleted = false", {
                                 id: prepItem.product.id,
                                 qty: prepItem.quantity

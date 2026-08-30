@@ -25,14 +25,14 @@ export class AuthController {
 	constructor(private readonly authService: AuthService) { }
 
 	@Public()
-	@Throttle({ default: { limit: 5, ttl: 60000 } })
+	@Throttle({ default: { limit: 30, ttl: 60000 } })
 	@Post('register')
 	async register(@Body() dto: RegisterDto): Promise<ApiResponse<User>> {
 		return await this.authService.register(dto);
 	}
 
 	@Public()
-	@Throttle({ default: { limit: 5, ttl: 60000 } })
+	@Throttle({ default: { limit: 30, ttl: 60000 } })
 	@Post('vendor-register')
 	@UseInterceptors(FileFieldsInterceptor([{ name: 'shopImage', maxCount: 1 }]))
 	async vendorRegister(
@@ -46,7 +46,7 @@ export class AuthController {
 	}
 
 	@Public()
-	@Throttle({ default: { limit: 5, ttl: 60000 } })
+	@Throttle({ default: { limit: 30, ttl: 60000 } })
 	@Post('login')
 	async login(
 		@Body() dto: LoginDto,
@@ -89,14 +89,14 @@ export class AuthController {
 	}
 
 	@Public()
-	@Throttle({ default: { limit: 5, ttl: 60000 } })
+	@Throttle({ default: { limit: 30, ttl: 60000 } })
 	@Post('forgot-password')
 	async forgotPassword(@Body() dto: ForgotPasswordDto) {
 		return this.authService.forgotPassword(dto.email);
 	}
 
 	@Public()
-	@Throttle({ default: { limit: 5, ttl: 60000 } })
+	@Throttle({ default: { limit: 30, ttl: 60000 } })
 	@Post('reset-password')
 	async resetPassword(@Body() dto: ResetPasswordDto) {
 		return this.authService.resetPassword(dto);

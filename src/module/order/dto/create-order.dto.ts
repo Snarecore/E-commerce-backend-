@@ -54,6 +54,14 @@ export class OrderItemDto {
     @IsOptional()
     @IsNumber()
     discountAmount?: number;
+
+    @IsOptional()
+    @IsString()
+    size?: string;
+
+    @IsOptional()
+    @IsString()
+    selectedSize?: string;
 }
 
 export class ShippingAddressDto {
