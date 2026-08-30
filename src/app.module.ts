@@ -58,7 +58,8 @@ import { join } from 'path';
 import { HandlebarsAdapter } from '@nestjs-modules/mailer/dist/adapters/handlebars.adapter';
 import { EmailServiceModule } from './module/email-service/email-sender.module';
 import { SesModule } from './common/ses/ses.module';
-import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { CustomThrottlerGuard } from './guards/custom-throttler.guard';
 
 import { CouponModule } from './module/coupon/coupon.module';
 import { MegaDiscountModule } from './module/setting/mega-discount/mega-discount.module';
@@ -67,10 +68,14 @@ import { AppController } from './app.controller';
 @Module({
 	controllers: [AppController],
 	imports: [
-		ThrottlerModule.forRoot([{
-			ttl: 60000,
-			limit: 100
-		}]),
+		ThrottlerModule.forRoot({
+			throttlers: [
+				{
+					ttl: 60000,
+					limit: 100,
+				},
+			],
+		}),
 		ConfigModule.forRoot({
 			isGlobal: true
 		}),
@@ -158,7 +163,7 @@ import { AppController } from './app.controller';
 	providers: [
 		{
 			provide: APP_GUARD,
-			useClass: ThrottlerGuard
+			useClass: CustomThrottlerGuard
 		},
 		{
 			provide: APP_GUARD,

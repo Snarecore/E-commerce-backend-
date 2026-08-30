@@ -19,7 +19,8 @@ import { JwtAuthGuard } from '../../../guards/jwt-auth.guard';
 import { RolesGuard } from '../../../guards/role.guard';
 import { Roles } from '../../../decorators/role.decorator';
 import { Role } from '../../../enums/role.enum';
-import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import { Throttle } from '@nestjs/throttler';
+import { CustomThrottlerGuard } from '../../../guards/custom-throttler.guard';
 import { MessageService } from './message.service';
 import { CustomerSendMessageDto } from './dto/customer-send-message.dto';
 import { AdminReplyDto } from './dto/admin-reply.dto';
@@ -53,7 +54,7 @@ export class MessageController {
      * Accessible by any authenticated user.
      * Rate limited to 10 messages per minute to prevent spamming.
      */
-    @UseGuards(JwtAuthGuard, ThrottlerGuard)
+    @UseGuards(JwtAuthGuard, CustomThrottlerGuard)
     @Throttle({ default: { limit: 10, ttl: 60000 } })
     @Post('send')
     async sendCustomerMessage(
