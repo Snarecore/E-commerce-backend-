@@ -42,7 +42,7 @@ async function bootstrap(): Promise<void> {
 	);
 	app.use(bodyParser.urlencoded({ limit: '5mb', extended: true }));
 	app.use(cookieParser());
-	app.setGlobalPrefix(CONFIG.API);
+	app.setGlobalPrefix(CONFIG.API, { exclude: ['/'] });
     app.enableVersioning({
         type: VersioningType.URI
     });
