@@ -62,8 +62,10 @@ import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 
 import { CouponModule } from './module/coupon/coupon.module';
 import { MegaDiscountModule } from './module/setting/mega-discount/mega-discount.module';
+import { AppController } from './app.controller';
 
 @Module({
+	controllers: [AppController],
 	imports: [
 		ThrottlerModule.forRoot([{
 			ttl: 60000,
