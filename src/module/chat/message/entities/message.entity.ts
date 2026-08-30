@@ -1,6 +1,6 @@
 import { Column, Entity, Index } from 'typeorm';
-import { AbstractEntity } from 'src/database/abstract.entity';
-import { Role } from 'src/enums/role.enum';
+import { AbstractEntity } from '../../../../database/abstract.entity';
+import { Role } from '../../../../enums/role.enum';
 
 @Entity('messages')
 @Index(['conversationId', 'createdAt', 'id'])

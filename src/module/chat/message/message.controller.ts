@@ -13,12 +13,12 @@ import {
     HttpStatus
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { CONFIG } from 'src/utils/config';
-import { ApiResponse, ResponseUtils } from 'src/utils/response.utils';
-import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
-import { RolesGuard } from 'src/guards/role.guard';
-import { Roles } from 'src/decorators/role.decorator';
-import { Role } from 'src/enums/role.enum';
+import { CONFIG } from '../../../utils/config';
+import { ApiResponse, ResponseUtils } from '../../../utils/response.utils';
+import { JwtAuthGuard } from '../../../guards/jwt-auth.guard';
+import { RolesGuard } from '../../../guards/role.guard';
+import { Roles } from '../../../decorators/role.decorator';
+import { Role } from '../../../enums/role.enum';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { MessageService } from './message.service';
 import { CustomerSendMessageDto } from './dto/customer-send-message.dto';
@@ -28,7 +28,7 @@ import { GetThreadDto } from './dto/get-thread.dto';
 import { Message } from './entities/message.entity';
 import { Conversation } from '../conversation/entities/conversation.entity';
 import { EnrichedConversation } from '../conversation/type/conversation.type';
-import { SpaceService } from 'src/module/space-module/space-service/space.service';
+import { SpaceService } from '../../space-module/space-service/space.service';
 
 interface AuthenticatedUser {
     id: string;

@@ -5,8 +5,8 @@ import { ProductReviewController } from './product-review.controller';
 import { ProductReviewRepository } from './product-review.repository';
 import { ProductReview } from './entities/product-review.entity';
 import { ProductRepository } from '../product/product.repository';
-import { UserRepository } from 'src/module/user/user.repository';
-import { UserProfileRepository } from 'src/module/user-profile/user-profile.repository';
+import { UserRepository } from '../../user/user.repository';
+import { UserProfileRepository } from '../../user-profile/user-profile.repository';
 
 @Module({
 	imports: [

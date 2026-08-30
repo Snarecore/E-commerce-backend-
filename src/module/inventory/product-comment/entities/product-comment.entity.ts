@@ -1,8 +1,8 @@
 import {
     Entity, Column, ManyToOne, OneToMany, JoinColumn, Index
 } from 'typeorm';
-import { AbstractEntity } from 'src/database/abstract.entity';
-import { User } from 'src/module/user/entities/user.entity';
+import { AbstractEntity } from '../../../../database/abstract.entity';
+import { User } from '../../../user/entities/user.entity';
 import { Product } from '../../product/entities/product.entity';
 
 @Entity('product_comments')

@@ -1,8 +1,8 @@
-import { AbstractEntity } from 'src/database/abstract.entity';
-import { ProductSeo } from 'src/module/seo/product-meta/entity/product-seo.entity';
+import { AbstractEntity } from '../../../../database/abstract.entity';
+import { ProductSeo } from '../../../seo/product-meta/entity/product-seo.entity';
 import { Column, Entity, Index, OneToMany, OneToOne } from 'typeorm';
 import { ProductComment } from '../../product-comment/entities/product-comment.entity';
-import { DiscountType } from 'src/enums/product.enum';
+import { DiscountType } from '../../../../enums/product.enum';
 
 @Entity('product')
 @Index('IDX_product_slug', ['slug'])

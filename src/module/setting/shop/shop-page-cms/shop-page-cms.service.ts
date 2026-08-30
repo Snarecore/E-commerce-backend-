@@ -1,11 +1,11 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
-import { ResponseUtils, ApiResponse } from 'src/utils/response.utils';
+import { ResponseUtils, ApiResponse } from '../../../../utils/response.utils';
 import { ShopPageCmsRepository } from './shop-page-cms.repository';
 import { UpdateShopPageCmsDto } from './dto/update-shop-page-cms.dto';
 import { ShopPageCmsInterface } from './type/shop-page-cms.type';
 import { ShopPageCms } from './entities/shop-page-cms.entity';
-import { SpaceService } from 'src/module/space-module/space-service/space.service';
-import { UploadMulterFile } from 'src/module/space-module/space-service';
+import { SpaceService } from '../../../space-module/space-service/space.service';
+import { UploadMulterFile } from '../../../space-module/space-service';
 
 @Injectable()
 export class ShopPageCmsService {

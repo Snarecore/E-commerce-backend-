@@ -1,6 +1,6 @@
-import { AbstractEntity } from 'src/database/abstract.entity';
+import { AbstractEntity } from '../../../database/abstract.entity';
 import { Column, Entity, Index, OneToMany } from 'typeorm';
-import { CouponDiscountType } from 'src/enums/coupon.enum';
+import { CouponDiscountType } from '../../../enums/coupon.enum';
 import { CouponUsage } from './coupon-usage.entity';
 
 @Entity('coupon')

@@ -9,8 +9,8 @@ import {
     BadRequestException,
 } from '@nestjs/common';
 import { Request } from 'express';
-import { Public } from 'src/decorators/public.decorator';
-import { CONFIG } from 'src/utils/config';
+import { Public } from '../../decorators/public.decorator';
+import { CONFIG } from '../../utils/config';
 import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';
 import { PaymentsService } from './payments.service';
 

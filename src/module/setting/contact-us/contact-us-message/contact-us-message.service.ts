@@ -1,5 +1,5 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
-import { ResponseUtils, ApiResponse } from 'src/utils/response.utils';
+import { ResponseUtils, ApiResponse } from '../../../../utils/response.utils';
 import { ContactUsMessageRepository } from './contact-us-message.repository';
 import { CreateContactUsMessageDto } from './dto/create-contact-us-message.dto';
 import { ContactUsMessage } from './entities/contact-us-message.entity';

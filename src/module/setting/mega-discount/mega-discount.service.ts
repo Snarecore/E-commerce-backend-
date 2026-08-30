@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, InternalServerErrorException } from '@nestjs/common';
-import { ResponseUtils } from 'src/utils/response.utils';
+import { ResponseUtils } from '../../../utils/response.utils';
 import { UpdateMegaDiscountDto } from './dto/update-mega-discount.dto';
 import { MegaDiscountRepository } from './mega-discount.repository';
 

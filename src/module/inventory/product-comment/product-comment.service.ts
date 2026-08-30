@@ -1,14 +1,14 @@
 import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
 import { ProductComment } from './entities/product-comment.entity';
-import { UserRepository } from 'src/module/user/user.repository';
-import { UserProfileRepository } from 'src/module/user-profile/user-profile.repository';
+import { UserRepository } from '../../user/user.repository';
+import { UserProfileRepository } from '../../user-profile/user-profile.repository';
 import { In } from 'typeorm';
 import { CreateProductCommentDto } from './dto/create-product-comment.dto';
 import { UpdateProductCommentDto } from './dto/update-product-comment.dto';
 import { CommentFilterDto } from './dto/comment-filter.dto';
 import { ProductCommentRepository } from './product-comment.repository';
-import { ApiResponse, ResponseUtils } from 'src/utils/response.utils';
-import { toSafeUser } from 'src/utils/safe-user.utils';
+import { ApiResponse, ResponseUtils } from '../../../utils/response.utils';
+import { toSafeUser } from '../../../utils/safe-user.utils';
 import { ProductRepository } from '../product/product.repository';
 import { CommentNode } from './types/comment-node.type';
 import { IsNull } from 'typeorm';

@@ -1,13 +1,13 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
-import { ResponseUtils, ApiResponse } from 'src/utils/response.utils';
+import { ResponseUtils, ApiResponse } from '../../../utils/response.utils';
 import { MessageRepository } from './message.repository';
 import { ConversationRepository } from '../conversation/conversation.repository';
-import { Role } from 'src/enums/role.enum';
+import { Role } from '../../../enums/role.enum';
 import { Message } from './entities/message.entity';
-import { UserRepository } from 'src/module/user/user.repository';
+import { UserRepository } from '../../user/user.repository';
 import { EnrichedConversation } from '../conversation/type/conversation.type';
-import { toSafeUser } from 'src/utils/safe-user.utils';
+import { toSafeUser } from '../../../utils/safe-user.utils';
 import { CustomerSendMessageDto } from './dto/customer-send-message.dto';
 import { AdminReplyDto } from './dto/admin-reply.dto';
 import { GetConversationsDto } from './dto/get-conversations.dto';

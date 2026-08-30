@@ -4,8 +4,8 @@ import { HeroSlider } from './entities/hero-slider.entity';
 import { HeroSliderController } from './hero-slider.controller';
 import { HeroSliderService } from './hero-slider.service';
 import { HeroSliderRepository } from './hero-slider.repository';
-import { SpaceService } from 'src/module/space-module/space-service/space.service';
-import { R2ServiceProvider } from 'src/module/space-module/space-service';
+import { SpaceService } from '../../space-module/space-service/space.service';
+import { R2ServiceProvider } from '../../space-module/space-service';
 
 @Module({
 	imports: [

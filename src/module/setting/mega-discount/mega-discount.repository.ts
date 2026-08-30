@@ -1,5 +1,5 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
-import { AbstractRepository } from 'src/database/abstract.repository';
+import { AbstractRepository } from '../../../database/abstract.repository';
 import { DataSource } from 'typeorm';
 import { MegaDiscount } from './entities/mega-discount.entity';
 

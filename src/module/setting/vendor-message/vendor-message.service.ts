@@ -1,5 +1,5 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
-import { ResponseUtils, ApiResponse } from 'src/utils/response.utils';
+import { ResponseUtils, ApiResponse } from '../../../utils/response.utils';
 import { FindOptionsOrder } from 'typeorm';
 import { VendorMessageRepository } from './vendor-message.repository';
 import { CreateVendorMessageDto } from './dto/create-vendor-message.dto';

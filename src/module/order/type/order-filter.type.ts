@@ -1,4 +1,4 @@
-import { OrderStatus, PaymentStatus } from "src/enums/order-status.enum";
+import { OrderStatus, PaymentStatus } from "../../../enums/order-status.enum";
 import { FindOperator } from "typeorm";
 
 export interface OrdersFilter {

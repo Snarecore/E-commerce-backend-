@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtModule } from "@nestjs/jwt";
-import { JwtConfigService } from "src/configs/jwt.config";
+import { JwtConfigService } from "../../configs/jwt.config";
 import { SiteFrontendController } from "./site-frontend.controller";
 import { SiteFrontendService } from "./site-frontend.service";
 import { MainCategory } from '../inventory/main-category/entities/main-category.entity';

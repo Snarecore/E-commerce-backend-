@@ -2,9 +2,9 @@ import { HttpException, HttpStatus, Injectable, NotFoundException } from '@nestj
 import { CreateOrUpdateProductSeoDto } from './dto/product-seo.dto';
 import { ProductSeoRepository } from './product-seo.repository';
 import { ProductSeo } from './entity/product-seo.entity';
-import { ProductRepository } from 'src/module/inventory/product/product.repository';
+import { ProductRepository } from '../../inventory/product/product.repository';
 import { ProductMetaFilterDto } from './dto/product-meta-filter.dto';
-import { ApiResponse, ResponseUtils } from 'src/utils/response.utils';
+import { ApiResponse, ResponseUtils } from '../../../utils/response.utils';
 import { FindOptionsOrder } from 'typeorm';
 
 @Injectable()

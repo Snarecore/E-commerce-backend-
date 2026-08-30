@@ -1,19 +1,19 @@
 import {
     Controller, Post, Get, Patch, Delete, Body, Param, Query, Req, UseGuards, ParseUUIDPipe
 } from '@nestjs/common';
-import { CONFIG } from 'src/utils/config';
-import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
-import { RolesGuard } from 'src/guards/role.guard';
-import { Roles } from 'src/decorators/role.decorator';
-import { Role } from 'src/enums/role.enum';
-import { Public } from 'src/decorators/public.decorator';
+import { CONFIG } from '../../../utils/config';
+import { JwtAuthGuard } from '../../../guards/jwt-auth.guard';
+import { RolesGuard } from '../../../guards/role.guard';
+import { Roles } from '../../../decorators/role.decorator';
+import { Role } from '../../../enums/role.enum';
+import { Public } from '../../../decorators/public.decorator';
 import { CreateProductCommentDto } from './dto/create-product-comment.dto';
 import { UpdateProductCommentDto } from './dto/update-product-comment.dto';
 import { CommentFilterDto } from './dto/comment-filter.dto';
 import { Request } from 'express';
 import { ProductCommentService } from './product-comment.service';
 import { CommentNode } from './types/comment-node.type';
-import { ApiResponse } from 'src/utils/response.utils';
+import { ApiResponse } from '../../../utils/response.utils';
 
 @Controller({ path: 'product-comment', version: CONFIG.API_VERSION })
 export class ProductCommentController {

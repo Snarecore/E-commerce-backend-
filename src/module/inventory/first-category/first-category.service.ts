@@ -4,9 +4,9 @@ import { CreateFirstCategoryDto } from './dto/create-first-category.dto';
 import { FirstCategoryInterface } from './type/first-category.type';
 import { FirstCategory } from './entities/first-category.entity';
 import { UpdateFirstCategoryDto } from './dto/update-first-category.dto';
-import { UploadMulterFile } from 'src/module/space-module/space-service';
-import { SpaceService } from 'src/module/space-module/space-service/space.service';
-import { ResponseUtils, ApiResponse } from 'src/utils/response.utils';
+import { UploadMulterFile } from '../../space-module/space-service';
+import { SpaceService } from '../../space-module/space-service/space.service';
+import { ResponseUtils, ApiResponse } from '../../../utils/response.utils';
 import { FirstCategoryFilterDto } from './dto/first-category-filter.dto';
 import { FindOptionsOrder } from 'typeorm';
 

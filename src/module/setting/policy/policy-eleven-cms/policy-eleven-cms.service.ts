@@ -1,10 +1,10 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
-import { ResponseUtils, ApiResponse } from 'src/utils/response.utils';
+import { ResponseUtils, ApiResponse } from '../../../../utils/response.utils';
 import { PolicyElevenCmsRepository } from './policy-eleven-cms.repository';
 import { UpdatePolicyElevenCmsDto } from './dto/update-policy-eleven-cms.dto';
 import { PolicyElevenCmsInterface } from './type/policy-eleven-cms.type';
 import { PolicyElevenCms } from './entities/policy-eleven-cms.entity';
-import { omit } from 'src/utils/helper.utils';
+import { omit } from '../../../../utils/helper.utils';
 
 @Injectable()
 export class PolicyElevenCmsService {

@@ -1,4 +1,4 @@
-import { SafeUser } from 'src/utils/safe-user.utils';
+import { SafeUser } from '../../../../utils/safe-user.utils';
 
 export interface EnrichedConversation {
     id: string;

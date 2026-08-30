@@ -1,17 +1,17 @@
 import { Controller, Get, Post, Body, UseInterceptors, UploadedFiles, UseGuards } from '@nestjs/common';
-import { CONFIG } from 'src/utils/config';
-import { ApiResponse } from 'src/utils/response.utils';
+import { CONFIG } from '../../../../utils/config';
+import { ApiResponse } from '../../../../utils/response.utils';
 import { HomePageCms } from './entities/home-page-cms.entity';
 import { HomePageCmsInterface } from './type/home-page-cms.type';
 import { HomePageCmsService } from './home-page-cms.service';
 import { UpdateHomePageCmsDto } from './dto/update-home-page-cms.dto';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
-import { UploadMulterFile } from 'src/module/space-module/space-service';
-import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
-import { RolesGuard } from 'src/guards/role.guard';
-import { Roles } from 'src/decorators/role.decorator';
-import { Role } from 'src/enums/role.enum';
-import { Public } from 'src/decorators/public.decorator';
+import { UploadMulterFile } from '../../../space-module/space-service';
+import { JwtAuthGuard } from '../../../../guards/jwt-auth.guard';
+import { RolesGuard } from '../../../../guards/role.guard';
+import { Roles } from '../../../../decorators/role.decorator';
+import { Role } from '../../../../enums/role.enum';
+import { Public } from '../../../../decorators/public.decorator';
 
 @Controller({ path: "home-page-cms", version: CONFIG.API_VERSION })
 export class HomePageCmsController {

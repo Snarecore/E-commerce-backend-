@@ -1,5 +1,5 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
-import { ResponseUtils, ApiResponse } from 'src/utils/response.utils';
+import { ResponseUtils, ApiResponse } from '../../../utils/response.utils';
 import { FindOptionsOrder } from 'typeorm';
 import { PageMetaRepository } from './page-meta.repository';
 import { CreatePageMetaDto } from './dto/create-page-meta.dto';

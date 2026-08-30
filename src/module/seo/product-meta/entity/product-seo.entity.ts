@@ -1,6 +1,6 @@
 import { Column, Entity, JoinColumn, OneToOne } from 'typeorm';
-import { AbstractEntity } from 'src/database/abstract.entity';
-import { Product } from 'src/module/inventory/product/entities/product.entity';
+import { AbstractEntity } from '../../../../database/abstract.entity';
+import { Product } from '../../../inventory/product/entities/product.entity';
 
 @Entity('product-seo')
 export class ProductSeo extends AbstractEntity {

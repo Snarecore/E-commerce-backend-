@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { SpaceService } from 'src/module/space-module/space-service/space.service';
-import { R2ServiceProvider } from 'src/module/space-module/space-service';
+import { SpaceService } from '../../../space-module/space-service/space.service';
+import { R2ServiceProvider } from '../../../space-module/space-service';
 import { PolicySevenCms } from './entities/policy-seven-cms.entity';
 import { PolicySevenCmsController } from './policy-seven-cms.controller';
 import { PolicySevenCmsService } from './policy-seven-cms.service';

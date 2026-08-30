@@ -1,10 +1,10 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
-import { ResponseUtils, ApiResponse } from 'src/utils/response.utils';
+import { ResponseUtils, ApiResponse } from '../../../../utils/response.utils';
 import { PolicyThreeCmsRepository } from './policy-three-cms.repository';
 import { UpdatePolicyThreeCmsDto } from './dto/update-policy-three-cms.dto';
 import { PolicyThreeCmsInterface } from './type/policy-three-cms.type';
 import { PolicyThreeCms } from './entities/policy-three-cms.entity';
-import { omit } from 'src/utils/helper.utils';
+import { omit } from '../../../../utils/helper.utils';
 
 @Injectable()
 export class PolicyThreeCmsService {

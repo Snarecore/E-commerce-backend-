@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, HttpException, HttpStatus, Injectable, NotFoundException, Res, UnauthorizedException } from '@nestjs/common';
 import { UserRepository } from '../user/user.repository';
 import { RegisterDto } from './dto/register.dto';
-import { ApiResponse, ResponseUtils } from 'src/utils/response.utils';
+import { ApiResponse, ResponseUtils } from '../../utils/response.utils';
 import { User } from '../user/entities/user.entity';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
@@ -10,18 +10,18 @@ import { LoginDto } from './dto/login.dto';
 import { JwtService } from '@nestjs/jwt';
 import { Response } from 'express';
 import { Request } from 'express';
-import { JwtPayload } from 'src/common/types';
+import { JwtPayload } from '../../common/types';
 import { UserProfileRepository } from '../user-profile/user-profile.repository';
 import { UserProfile } from '../user-profile/entities/user-profile.entity';
-import { toSafeUser } from 'src/utils/safe-user.utils';
+import { toSafeUser } from '../../utils/safe-user.utils';
 import { VendorRegisterDto } from './dto/vendor-register.dto';
 import { UploadMulterFile } from '../space-module/space-service';
 import { SpaceService } from '../space-module/space-service/space.service';
 import { EmailService } from '../email-service/email-sender.service';
 import { ResetPasswordDto } from './dto/reset-password.dto';
-import { SesEmailService } from 'src/common/ses/ses-email.service';
-import { Role } from 'src/enums/role.enum';
-import { COOKIE_NAMES, ACCESS_TOKEN_MAX_AGE, REFRESH_TOKEN_MAX_AGE, setAuthCookie, clearAuthCookie } from 'src/utils/cookie-config';
+import { SesEmailService } from '../../common/ses/ses-email.service';
+import { Role } from '../../enums/role.enum';
+import { COOKIE_NAMES, ACCESS_TOKEN_MAX_AGE, REFRESH_TOKEN_MAX_AGE, setAuthCookie, clearAuthCookie } from '../../utils/cookie-config';
 
 @Injectable()
 export class AuthService {

@@ -1,11 +1,11 @@
 import { Controller, Get, Post, Body, UseGuards } from '@nestjs/common';
-import { CONFIG } from 'src/utils/config';
-import { ApiResponse } from 'src/utils/response.utils';
-import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
-import { RolesGuard } from 'src/guards/role.guard';
-import { Roles } from 'src/decorators/role.decorator';
-import { Role } from 'src/enums/role.enum';
-import { Public } from 'src/decorators/public.decorator';
+import { CONFIG } from '../../../../utils/config';
+import { ApiResponse } from '../../../../utils/response.utils';
+import { JwtAuthGuard } from '../../../../guards/jwt-auth.guard';
+import { RolesGuard } from '../../../../guards/role.guard';
+import { Roles } from '../../../../decorators/role.decorator';
+import { Role } from '../../../../enums/role.enum';
+import { Public } from '../../../../decorators/public.decorator';
 import { PolicyTwoCmsService } from './policy-two-cms.service';
 import { UpdatePolicyTwoCmsDto } from './dto/update-policy-two-cms.dto';
 import { PolicyTwoCmsInterface } from './type/policy-two-cms.type';

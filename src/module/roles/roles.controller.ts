@@ -1,5 +1,5 @@
 import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
-import { DeleteInterface, RoleInterface } from 'src/common/types';
+import { DeleteInterface, RoleInterface } from '../../common/types';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { Roles } from './entities/role.entity';

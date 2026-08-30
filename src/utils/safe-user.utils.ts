@@ -1,5 +1,5 @@
-import { Role } from "src/enums/role.enum";
-import { User } from "src/module/user/entities/user.entity";
+import { Role } from "../enums/role.enum";
+import { User } from "../module/user/entities/user.entity";
 
 export interface SafeUser {
     id: string;

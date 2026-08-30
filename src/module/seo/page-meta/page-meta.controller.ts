@@ -10,12 +10,12 @@ import {
     Req,
     Query,
 } from '@nestjs/common';
-import { CONFIG } from 'src/utils/config';
-import { ApiResponse } from 'src/utils/response.utils';
-import { Roles } from 'src/decorators/role.decorator';
-import { Role } from 'src/enums/role.enum';
-import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
-import { RolesGuard } from 'src/guards/role.guard';
+import { CONFIG } from '../../../utils/config';
+import { ApiResponse } from '../../../utils/response.utils';
+import { Roles } from '../../../decorators/role.decorator';
+import { Role } from '../../../enums/role.enum';
+import { JwtAuthGuard } from '../../../guards/jwt-auth.guard';
+import { RolesGuard } from '../../../guards/role.guard';
 import { PageMetaService } from './page-meta.service';
 import { CreatePageMetaDto } from './dto/create-page-meta.dto';
 import { PageMetaInterface } from './type/page-meta.type';

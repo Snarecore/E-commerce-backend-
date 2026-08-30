@@ -1,7 +1,7 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
-import { UploadMulterFile } from 'src/module/space-module/space-service';
-import { SpaceService } from 'src/module/space-module/space-service/space.service';
-import { ResponseUtils, ApiResponse } from 'src/utils/response.utils';
+import { UploadMulterFile } from '../../space-module/space-service';
+import { SpaceService } from '../../space-module/space-service/space.service';
+import { ResponseUtils, ApiResponse } from '../../../utils/response.utils';
 import { FindOptionsOrder } from 'typeorm';
 import { SocialLinkRepository } from './social-link.repository';
 import { CreateSocialLinkDto } from './dto/create-social-link.dto';

@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { OrderStatus, PaymentStatus } from 'src/enums/order-status.enum';
+import { OrderStatus, PaymentStatus } from '../../enums/order-status.enum';
 import Stripe from 'stripe';
 import { Repository } from 'typeorm';
 import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';

@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { SpaceService } from 'src/module/space-module/space-service/space.service';
-import { R2ServiceProvider } from 'src/module/space-module/space-service';
+import { SpaceService } from '../../space-module/space-service/space.service';
+import { R2ServiceProvider } from '../../space-module/space-service';
 import { SocialLink } from './entities/social-link.entity';
 import { SocialLinkController } from './social-link.controller';
 import { SocialLinkService } from './social-link.service';

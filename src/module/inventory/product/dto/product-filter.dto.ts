@@ -1,4 +1,4 @@
-import { FilterDto } from "src/module/core/dto/filter.dto";
+import { FilterDto } from "../../../core/dto/filter.dto";
 import { IsBoolean, IsNumber, IsOptional, IsString } from 'class-validator';
 import { Transform } from "class-transformer";
 

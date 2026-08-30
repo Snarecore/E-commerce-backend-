@@ -1,6 +1,6 @@
 import { HttpException, HttpStatus, Injectable, OnModuleInit } from '@nestjs/common';
 import { QueryRunner } from 'typeorm';
-import { ResponseUtils, ApiResponse } from 'src/utils/response.utils';
+import { ResponseUtils, ApiResponse } from '../../utils/response.utils';
 import { CouponRepository } from './coupon.repository';
 import { CouponUsageRepository } from './coupon-usage.repository';
 import { ProductRepository } from '../inventory/product/product.repository';
@@ -9,7 +9,7 @@ import { CouponUsage } from './entity/coupon-usage.entity';
 import { CreateCouponDto } from './dto/create-coupon.dto';
 import { UpdateCouponDto } from './dto/update-coupon.dto';
 import { ValidateCouponDto } from './dto/validate-coupon.dto';
-import { CouponDiscountType } from 'src/enums/coupon.enum';
+import { CouponDiscountType } from '../../enums/coupon.enum';
 
 @Injectable()
 export class CouponService implements OnModuleInit {

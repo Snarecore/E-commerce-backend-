@@ -7,7 +7,7 @@ import {
     IsEnum
 } from 'class-validator';
 import { Transform } from 'class-transformer';
-import { DiscountType } from 'src/enums/product.enum';
+import { DiscountType } from '../../../../enums/product.enum';
 
 function transformOptionalNumber({ value }: { value: any }) {
     if (value === '' || value === 'undefined' || value === 'null' || value === null || value === undefined) {

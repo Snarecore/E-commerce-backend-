@@ -1,10 +1,10 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
-import { ResponseUtils, ApiResponse } from 'src/utils/response.utils';
+import { ResponseUtils, ApiResponse } from '../../../../utils/response.utils';
 import { ContactPageCmsRepository } from './contact-page-cms.repository';
 import { UpdateContactPageCmsDto } from './dto/update-contact-page-cms.dto';
 import { ContactPageCmsInterface } from './type/contact-page-cms.type';
 import { ContactPageCms } from './entities/contact-page-cms.entity';
-import { omit } from 'src/utils/helper.utils';
+import { omit } from '../../../../utils/helper.utils';
 
 @Injectable()
 export class ContactPageCmsService {

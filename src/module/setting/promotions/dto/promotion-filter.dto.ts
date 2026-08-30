@@ -1,3 +1,3 @@
-import { FilterDto } from "src/module/core/dto/filter.dto";
+import { FilterDto } from "../../../core/dto/filter.dto";
 
 export class PromotionFilterDto extends FilterDto {}

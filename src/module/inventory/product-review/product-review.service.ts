@@ -1,18 +1,18 @@
 import { HttpException, HttpStatus, Injectable, Query } from '@nestjs/common';
-import { ResponseUtils, ApiResponse } from 'src/utils/response.utils';
+import { ResponseUtils, ApiResponse } from '../../../utils/response.utils';
 import { ProductReviewRepository } from './product-review.repository';
 import { CreateProductReviewDto } from './dto/create-product-review.dto';
 import { ProductReviewInterface, ProductReviewResponse } from './type/product-review.type';
 import { ProductReview } from './entities/product-review.entity';
 import { ProductRepository } from '../product/product.repository';
-import { UserRepository } from 'src/module/user/user.repository';
+import { UserRepository } from '../../user/user.repository';
 import { FindOptionsOrder, In } from 'typeorm';
 import { ProductReviewFilterDto } from './dto/product-review-filter.dto';
 import { ProductReviewFilter } from './type/product-review-filter.type';
 import { UpdateProductReviewStatusDto } from './dto/update-product-review-status.dto';
-import { Role } from 'src/enums/role.enum';
-import { toSafeUser } from 'src/utils/safe-user.utils';
-import { UserProfileRepository } from 'src/module/user-profile/user-profile.repository';
+import { Role } from '../../../enums/role.enum';
+import { toSafeUser } from '../../../utils/safe-user.utils';
+import { UserProfileRepository } from '../../user-profile/user-profile.repository';
 
 @Injectable()
 export class ProductReviewService {

@@ -1,7 +1,7 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
-import { ResponseUtils, ApiResponse } from 'src/utils/response.utils';
-import { SpaceService } from 'src/module/space-module/space-service/space.service';
-import { UploadMulterFile } from 'src/module/space-module/space-service';
+import { ResponseUtils, ApiResponse } from '../../../utils/response.utils';
+import { SpaceService } from '../../space-module/space-service/space.service';
+import { UploadMulterFile } from '../../space-module/space-service';
 import { HeaderFooterCmsRepository } from './header-footer-cms.repository';
 import { UpdateHeaderFooterCmsDto } from './dto/update-header-footer-cms.dto';
 import { HeaderFooterCmsInterface } from './type/header-footer-cms.type';

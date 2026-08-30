@@ -1,6 +1,6 @@
 import { Transform, Type } from 'class-transformer';
 import { IsBoolean, IsDate, IsEnum, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
-import { CouponDiscountType } from 'src/enums/coupon.enum';
+import { CouponDiscountType } from '../../../enums/coupon.enum';
 
 export class CreateCouponDto {
     @IsNotEmpty()

@@ -1,7 +1,7 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
-import { UploadMulterFile } from 'src/module/space-module/space-service';
-import { SpaceService } from 'src/module/space-module/space-service/space.service';
-import { ResponseUtils, ApiResponse } from 'src/utils/response.utils';
+import { UploadMulterFile } from '../../space-module/space-service';
+import { SpaceService } from '../../space-module/space-service/space.service';
+import { ResponseUtils, ApiResponse } from '../../../utils/response.utils';
 import { ProductRepository } from './product.repository';
 import { CreateProductDto } from './dto/create-product.dto';
 import { ProductInterface } from './type/product.type';

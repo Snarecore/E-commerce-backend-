@@ -1,11 +1,11 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
-import { ResponseUtils, ApiResponse } from 'src/utils/response.utils';
+import { ResponseUtils, ApiResponse } from '../../../../utils/response.utils';
 import { HomePageCmsInterface } from './type/home-page-cms.type';
 import { HomePageCms } from './entities/home-page-cms.entity';
 import { UpdateHomePageCmsDto } from './dto/update-home-page-cms.dto';
 import { HomePageCmsRepository } from './home-page-cms.repository';
-import { SpaceService } from 'src/module/space-module/space-service/space.service';
-import { UploadMulterFile } from 'src/module/space-module/space-service';
+import { SpaceService } from '../../../space-module/space-service/space.service';
+import { UploadMulterFile } from '../../../space-module/space-service';
 
 @Injectable()
 export class HomePageCmsService {

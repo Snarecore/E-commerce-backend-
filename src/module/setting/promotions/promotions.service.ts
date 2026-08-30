@@ -4,9 +4,9 @@ import { CreatePromotionsDto } from './dto/create-promotions.dto';
 import { PromotionsInterface } from './type/promotions.type';
 import { Promotions } from './entities/promotions.entity';
 import { UpdatePromotionsDto } from './dto/update-promotions.dto';
-import { UploadMulterFile } from 'src/module/space-module/space-service';
-import { SpaceService } from 'src/module/space-module/space-service/space.service';
-import { ResponseUtils, ApiResponse } from 'src/utils/response.utils';
+import { UploadMulterFile } from '../../space-module/space-service';
+import { SpaceService } from '../../space-module/space-service/space.service';
+import { ResponseUtils, ApiResponse } from '../../../utils/response.utils';
 import { PromotionFilterDto } from './dto/promotion-filter.dto';
 import { FindOptionsOrder } from 'typeorm';
 

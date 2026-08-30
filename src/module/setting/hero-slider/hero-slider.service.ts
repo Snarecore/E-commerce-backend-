@@ -4,9 +4,9 @@ import { CreateHeroSliderDto } from './dto/create-hero-slider.dto';
 import { HeroSliderInterface } from './type/hero-slider.type';
 import { HeroSlider } from './entities/hero-slider.entity';
 import { UpdateHeroSliderDto } from './dto/update-hero-slider.dto';
-import { UploadMulterFile } from 'src/module/space-module/space-service';
-import { SpaceService } from 'src/module/space-module/space-service/space.service';
-import { ResponseUtils, ApiResponse } from 'src/utils/response.utils';
+import { UploadMulterFile } from '../../space-module/space-service';
+import { SpaceService } from '../../space-module/space-service/space.service';
+import { ResponseUtils, ApiResponse } from '../../../utils/response.utils';
 import { HeroSliderFilterDto } from './dto/hero-slider-filter.dto';
 import { FindOptionsOrder } from 'typeorm';
 

@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { SpaceService } from 'src/module/space-module/space-service/space.service';
-import { R2ServiceProvider } from 'src/module/space-module/space-service';
+import { SpaceService } from '../../space-module/space-service/space.service';
+import { R2ServiceProvider } from '../../space-module/space-service';
 import { VendorMessage } from './entities/vendor-message.entity';
 import { VendorMessageController } from './vendor-message.controller';
 import { VendorMessageService } from './vendor-message.service';

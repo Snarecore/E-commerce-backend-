@@ -1,5 +1,5 @@
-import { AbstractEntity } from 'src/database/abstract.entity';
-import { User } from 'src/module/user/entities/user.entity';
+import { AbstractEntity } from '../../../database/abstract.entity';
+import { User } from '../../user/entities/user.entity';
 import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
 
 @Entity('user-profile')

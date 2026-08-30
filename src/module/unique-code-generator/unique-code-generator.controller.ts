@@ -1,7 +1,7 @@
 import { Controller, Get } from '@nestjs/common';
-import { CONFIG } from 'src/utils/config';
+import { CONFIG } from '../../utils/config';
 import { UniqueCodeGeneratorService } from './unique-code-generator.service';
-import { Public } from 'src/decorators/public.decorator';
+import { Public } from '../../decorators/public.decorator';
 
 @Controller({ path: "unique-code", version: CONFIG.API_VERSION })
 export class UniqueCodeGeneratorController {

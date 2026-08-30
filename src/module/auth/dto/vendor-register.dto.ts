@@ -8,8 +8,8 @@ import {
     IsString,
     MinLength
 } from 'class-validator';
-import { Match } from 'src/decorators/match.decorator';
-import { Role } from 'src/enums/role.enum';
+import { Match } from '../../../decorators/match.decorator';
+import { Role } from '../../../enums/role.enum';
 
 export class VendorRegisterDto {
     @IsNotEmpty()

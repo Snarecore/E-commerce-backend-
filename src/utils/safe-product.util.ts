@@ -1,4 +1,4 @@
-import { Product } from "src/module/inventory/product/entities/product.entity";
+import { Product } from "../module/inventory/product/entities/product.entity";
 import { resolveEffectiveProductPrice, MegaDiscountState } from "./pricing-resolver.util";
 
 export interface SafeProduct {

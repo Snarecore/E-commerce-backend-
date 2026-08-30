@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Request, UseGuards } from '@nestjs/common';
-import { CONFIG } from 'src/utils/config';
-import { Public } from 'src/decorators/public.decorator';
+import { CONFIG } from '../../utils/config';
+import { Public } from '../../decorators/public.decorator';
 import { CouponService } from './coupon.service';
 import { CreateCouponDto } from './dto/create-coupon.dto';
 import { UpdateCouponDto } from './dto/update-coupon.dto';

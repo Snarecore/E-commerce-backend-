@@ -1,12 +1,12 @@
 import { BadRequestException, Controller, Get, Param, Query, Req, UseGuards } from '@nestjs/common';
-import { CONFIG } from 'src/utils/config';
+import { CONFIG } from '../../utils/config';
 import { SiteFrontendService } from './site-frontend.service';
 import { ProductFilterDto } from '../inventory/product/dto/product-filter.dto';
-import { Public } from 'src/decorators/public.decorator';
-import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
-import { RolesGuard } from 'src/guards/role.guard';
-import { Roles } from 'src/decorators/role.decorator';
-import { Role } from 'src/enums/role.enum';
+import { Public } from '../../decorators/public.decorator';
+import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
+import { RolesGuard } from '../../guards/role.guard';
+import { Roles } from '../../decorators/role.decorator';
+import { Role } from '../../enums/role.enum';
 import { Request } from 'express';
 import { UserFilterDto } from '../user/dto/user-filter.dto';
 

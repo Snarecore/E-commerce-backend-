@@ -9,7 +9,7 @@ import {
     ValidateNested
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { DiscountType } from 'src/enums/product.enum';
+import { DiscountType } from '../../../enums/product.enum';
 
 export class OrderItemDto {
     @IsOptional()

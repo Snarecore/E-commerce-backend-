@@ -1,5 +1,5 @@
 import { Column, Entity } from 'typeorm';
-import { AbstractEntity } from 'src/database/abstract.entity';
+import { AbstractEntity } from '../../../database/abstract.entity';
 
 export type NotificationType =
   | 'ORDER_PROCESSING'

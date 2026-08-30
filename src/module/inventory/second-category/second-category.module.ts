@@ -4,8 +4,8 @@ import { SecondCategory } from './entities/second-category.entity';
 import { SecondCategoryController } from './second-category.controller';
 import { SecondCategoryService } from './second-category.service';
 import { SecondCategoryRepository } from './second-category.repository';
-import { SpaceService } from 'src/module/space-module/space-service/space.service';
-import { R2ServiceProvider } from 'src/module/space-module/space-service';
+import { SpaceService } from '../../space-module/space-service/space.service';
+import { R2ServiceProvider } from '../../space-module/space-service';
 
 @Module({
 	imports: [

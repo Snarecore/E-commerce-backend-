@@ -9,10 +9,10 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { Request } from 'express';
-import { CONFIG } from 'src/utils/config';
-import { ApiResponse } from 'src/utils/response.utils';
+import { CONFIG } from '../../utils/config';
+import { ApiResponse } from '../../utils/response.utils';
 import { NotificationService } from './notification.service';
-import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
+import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
 
 @Controller({
   path: 'site/notifications',

@@ -1,6 +1,6 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
-import { UploadMulterFile } from 'src/module/space-module/space-service';
-import { ResponseUtils, ApiResponse } from 'src/utils/response.utils';
+import { UploadMulterFile } from '../../space-module/space-service';
+import { ResponseUtils, ApiResponse } from '../../../utils/response.utils';
 import { FaqRepository } from './faq.repository';
 import { CreateFaqDto } from './dto/create-faq.dto';
 import { FaqInterface } from './type/faq.type';

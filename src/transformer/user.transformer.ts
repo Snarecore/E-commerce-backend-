@@ -1,5 +1,5 @@
-import { UserInterface } from 'src/common/types';
-import { User } from 'src/module/user/entities/user.entity';
+import { UserInterface } from '../common/types';
+import { User } from '../module/user/entities/user.entity';
 
 export function userTransformer({
 	password: _password,

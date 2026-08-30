@@ -1,6 +1,6 @@
-import { FilterDto } from "src/module/core/dto/filter.dto";
+import { FilterDto } from "../../core/dto/filter.dto";
 import { IsOptional } from 'class-validator';
-import { OrderStatus, PaymentStatus } from "src/enums/order-status.enum";
+import { OrderStatus, PaymentStatus } from "../../../enums/order-status.enum";
 
 export class OrdersFilterDto extends FilterDto {
     @IsOptional()

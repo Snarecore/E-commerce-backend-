@@ -1,8 +1,8 @@
-import { AbstractEntity } from 'src/database/abstract.entity';
+import { AbstractEntity } from '../../../database/abstract.entity';
 import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
 import { Coupon } from './coupon.entity';
-import { User } from 'src/module/user/entities/user.entity';
-import { Orders } from 'src/module/order/entity/order.entity';
+import { User } from '../../user/entities/user.entity';
+import { Orders } from '../../order/entity/order.entity';
 
 @Entity('coupon_usage')
 @Index('IDX_coupon_user', ['couponId', 'userId'])

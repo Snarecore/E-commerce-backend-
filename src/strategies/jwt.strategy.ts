@@ -24,10 +24,10 @@
 // import { ConfigService } from '@nestjs/config';
 // import { InjectRepository } from '@nestjs/typeorm';
 // import { Repository } from 'typeorm';
-// import { User } from 'src/module/user/entities/user.entity';
-// import { UserRepository } from 'src/module/user/user.repository';
+// import { User } from '../module/user/entities/user.entity';
+// import { UserRepository } from '../module/user/user.repository';
 // import { JwtPayload } from 'jsonwebtoken';
-// import { Role } from 'src/enums/role.enum';
+// import { Role } from '../enums/role.enum';
 
 // @Injectable()
 // export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
@@ -73,9 +73,9 @@
 import { Injectable } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
-import { JwtPayload } from 'src/common/types';
+import { JwtPayload } from '../common/types';
 import { Request } from 'express';
-import { COOKIE_NAMES } from 'src/utils/cookie-config';
+import { COOKIE_NAMES } from '../utils/cookie-config';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {

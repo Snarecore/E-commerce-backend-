@@ -1,5 +1,5 @@
 import { Controller } from '@nestjs/common';
-import { CONFIG } from 'src/utils/config';
+import { CONFIG } from '../../utils/config';
 import { UserProfileService } from './user-profile.service';
 
 @Controller({ path: 'user-profile', version: CONFIG.API_VERSION })

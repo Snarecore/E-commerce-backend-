@@ -1,7 +1,7 @@
 import { HttpException, HttpStatus, Injectable, OnModuleInit } from '@nestjs/common';
 import { NotificationRepository } from './notification.repository';
 import { Notifications, NotificationType } from './entity/notification.entity';
-import { ApiResponse, ResponseUtils } from 'src/utils/response.utils';
+import { ApiResponse, ResponseUtils } from '../../utils/response.utils';
 
 @Injectable()
 export class NotificationService implements OnModuleInit {

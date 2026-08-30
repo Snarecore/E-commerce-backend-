@@ -1,19 +1,19 @@
 import { Controller, Get, Post, Body, Patch, Param, Delete, UseInterceptors, UploadedFiles, Query, UseGuards, Req } from '@nestjs/common';
 import { FileFieldsInterceptor } from "@nestjs/platform-express";
-import { CONFIG } from 'src/utils/config';
-import { UploadMulterFile } from 'src/module/space-module/space-service';
-import { ApiResponse } from 'src/utils/response.utils';
+import { CONFIG } from '../../../utils/config';
+import { UploadMulterFile } from '../../space-module/space-service';
+import { ApiResponse } from '../../../utils/response.utils';
 import { ProductService } from './product.service';
 import { ProductInterface } from './type/product.type';
 import { CreateProductDto } from './dto/create-product.dto';
 import { Product } from './entities/product.entity';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ProductFilterDto } from './dto/product-filter.dto';
-import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
-import { RolesGuard } from 'src/guards/role.guard';
-import { Roles } from 'src/decorators/role.decorator';
-import { Role } from 'src/enums/role.enum';
-import { Public } from 'src/decorators/public.decorator';
+import { JwtAuthGuard } from '../../../guards/jwt-auth.guard';
+import { RolesGuard } from '../../../guards/role.guard';
+import { Roles } from '../../../decorators/role.decorator';
+import { Role } from '../../../enums/role.enum';
+import { Public } from '../../../decorators/public.decorator';
 import { Request } from 'express';
 import { UpdateProductStatusDto } from './dto/update-product-status.dto';
 

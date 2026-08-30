@@ -1,7 +1,7 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { UserRepository } from './user.repository';
 import { UserFilterDto } from './dto/user-filter.dto';
-import { ApiResponse, ResponseUtils } from 'src/utils/response.utils';
+import { ApiResponse, ResponseUtils } from '../../utils/response.utils';
 import { UserInterface } from './type/user.type';
 import { FindOptionsOrder } from 'typeorm';
 import { User } from './entities/user.entity';
@@ -13,7 +13,7 @@ import { UploadMulterFile } from '../space-module/space-service';
 import * as bcrypt from 'bcryptjs';
 import { UpdatePasswordDto } from './dto/update-password.dto';
 
-import { toSafeUser } from 'src/utils/safe-user.utils';
+import { toSafeUser } from '../../utils/safe-user.utils';
 
 @Injectable()
 export class UserService {

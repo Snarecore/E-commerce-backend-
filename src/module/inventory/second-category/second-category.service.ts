@@ -4,9 +4,9 @@ import { CreateSecondCategoryDto } from './dto/create-second-category.dto';
 import { SecondCategoryInterface } from './type/second-category.type';
 import { SecondCategory } from './entities/second-category.entity';
 import { UpdateSecondCategoryDto } from './dto/update-second-category.dto';
-import { UploadMulterFile } from 'src/module/space-module/space-service';
-import { SpaceService } from 'src/module/space-module/space-service/space.service';
-import { ResponseUtils, ApiResponse } from 'src/utils/response.utils';
+import { UploadMulterFile } from '../../space-module/space-service';
+import { SpaceService } from '../../space-module/space-service/space.service';
+import { ResponseUtils, ApiResponse } from '../../../utils/response.utils';
 import { SecondCategoryFilterDto } from './dto/second-category-filter.dto';
 import { FindOptionsOrder } from 'typeorm';
 

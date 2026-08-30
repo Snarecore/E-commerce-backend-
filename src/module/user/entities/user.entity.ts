@@ -1,7 +1,7 @@
-import { AbstractEntity } from 'src/database/abstract.entity';
-import { Role } from 'src/enums/role.enum';
-import { ProductComment } from 'src/module/inventory/product-comment/entities/product-comment.entity';
-import { Orders } from 'src/module/order/entity/order.entity';
+import { AbstractEntity } from '../../../database/abstract.entity';
+import { Role } from '../../../enums/role.enum';
+import { ProductComment } from '../../inventory/product-comment/entities/product-comment.entity';
+import { Orders } from '../../order/entity/order.entity';
 import { Column, Entity, Index, OneToMany } from 'typeorm';
 
 @Entity('user')

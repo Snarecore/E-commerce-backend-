@@ -1,7 +1,7 @@
 import { Injectable, ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Observable } from 'rxjs';
-import { User } from 'src/module/user/entities/user.entity';
+import { User } from '../module/user/entities/user.entity';
 
 @Injectable()
 export class RefreshAuthGuard extends AuthGuard('jwt-refresh') {

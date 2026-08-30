@@ -1,18 +1,18 @@
 import { Controller, Get, Post, Body, Patch, Param, Delete, UseInterceptors, UploadedFiles, Query, UseGuards, Req } from '@nestjs/common';
 import { FileFieldsInterceptor } from "@nestjs/platform-express";
-import { CONFIG } from 'src/utils/config';
+import { CONFIG } from '../../../utils/config';
 import { MainCategoryService } from './main-category.service';
 import { CreateMainCategoryDto } from './dto/create-main-category.dto';
 import { MainCategoryInterface } from './type/main-category.type';
 import { MainCategory } from './entities/main-category.entity';
 import { UpdateMainCategoryDto } from './dto/update-main-category.dto';
-import { UploadMulterFile } from 'src/module/space-module/space-service';
-import { ApiResponse } from 'src/utils/response.utils';
+import { UploadMulterFile } from '../../space-module/space-service';
+import { ApiResponse } from '../../../utils/response.utils';
 import { MainCategoryFilterDto } from './dto/main-category-filter.dto';
-import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
-import { RolesGuard } from 'src/guards/role.guard';
-import { Roles } from 'src/decorators/role.decorator';
-import { Role } from 'src/enums/role.enum';
+import { JwtAuthGuard } from '../../../guards/jwt-auth.guard';
+import { RolesGuard } from '../../../guards/role.guard';
+import { Roles } from '../../../decorators/role.decorator';
+import { Role } from '../../../enums/role.enum';
 
 @Controller({ path: "main-category", version: CONFIG.API_VERSION })
 export class MainCategoryController {

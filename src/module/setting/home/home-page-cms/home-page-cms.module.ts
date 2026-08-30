@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { SpaceService } from 'src/module/space-module/space-service/space.service';
-import { R2ServiceProvider } from 'src/module/space-module/space-service';
+import { SpaceService } from '../../../space-module/space-service/space.service';
+import { R2ServiceProvider } from '../../../space-module/space-service';
 import { HomePageCms } from './entities/home-page-cms.entity';
 import { HomePageCmsController } from './home-page-cms.controller';
 import { HomePageCmsService } from './home-page-cms.service';

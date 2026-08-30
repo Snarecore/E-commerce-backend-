@@ -6,14 +6,14 @@ import { UserRepository } from '../user/user.repository';
 import { User } from '../user/entities/user.entity';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { JwtStrategy } from 'src/strategies/jwt.strategy';
-import { JwtRefreshStrategy } from 'src/strategies/jwt-refresh.strategy';
+import { JwtStrategy } from '../../strategies/jwt.strategy';
+import { JwtRefreshStrategy } from '../../strategies/jwt-refresh.strategy';
 import { UserProfile } from '../user-profile/entities/user-profile.entity';
 import { UserProfileRepository } from '../user-profile/user-profile.repository';
 import { SpaceService } from '../space-module/space-service/space.service';
 import { R2ServiceProvider } from '../space-module/space-service';
 import { EmailService } from '../email-service/email-sender.service';
-import { SesEmailService } from 'src/common/ses/ses-email.service';
+import { SesEmailService } from '../../common/ses/ses-email.service';
 
 @Module({
 	imports: [

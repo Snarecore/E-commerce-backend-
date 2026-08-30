@@ -5,7 +5,7 @@ import { OrderSummaryRepository } from '../order-summary/order-summary.repositor
 import { ProductRepository } from '../inventory/product/product.repository';
 import { UniqueCodeGeneratorService } from '../unique-code-generator/unique-code-generator.service';
 import { DataSource } from 'typeorm';
-import { OrderStatus, PaymentStatus } from 'src/enums/order-status.enum';
+import { OrderStatus, PaymentStatus } from '../../enums/order-status.enum';
 import { HttpException } from '@nestjs/common';
 import { MegaDiscount } from '../setting/mega-discount/entities/mega-discount.entity';
 

@@ -1,4 +1,4 @@
-import { AbstractEntity } from 'src/database/abstract.entity';
+import { AbstractEntity } from '../../../../../database/abstract.entity';
 import { Column, Entity } from 'typeorm';
 
 @Entity('policy-six-cms')
