@@ -31,6 +31,7 @@ async function bootstrap() {
 				if (
 					!origin ||
 					allowedOrigins.includes(origin) ||
+					/\.vercel\.app$/.test(origin) ||
 					/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
 				) {
 					callback(null, true);

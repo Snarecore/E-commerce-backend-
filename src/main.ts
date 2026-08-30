@@ -12,7 +12,7 @@ async function bootstrap(): Promise<void> {
 	const app = await NestFactory.create(AppModule, { rawBody: true });
 	app.use(compression());
 	app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
-	const defaultOrigins = ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173'];
+	const defaultOrigins = ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173', 'http://localhost:5174'];
 	const allowedOrigins = process.env.ALLOWED_ORIGINS
 		? process.env.ALLOWED_ORIGINS.split(',').map((url) => url.trim())
 		: defaultOrigins;
@@ -23,14 +23,15 @@ async function bootstrap(): Promise<void> {
 			if (
 				!origin ||
 				allowedOrigins.includes(origin) ||
+				/\.vercel\.app$/.test(origin) ||
 				/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
 			) {
 				callback(null, true);
 			} else {
-				callback(new Error('CORS policy rejection: Origin not allowed'));
+				callback(null, false);
 			}
 		},
-		methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS'
+		methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
 	});
 	app.use(
 		bodyParser.json({
