@@ -18,6 +18,7 @@ let app: any;
 async function bootstrap() {
 	if (!app) {
 		app = await NestFactory.create(AppModule, new ExpressAdapter(server), { rawBody: true });
+		app.getHttpAdapter().getInstance().set('trust proxy', 1);
 		app.use(compression());
 		app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
 		const defaultOrigins = ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173', 'http://localhost:5174'];
