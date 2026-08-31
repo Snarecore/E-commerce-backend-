@@ -63,6 +63,7 @@ import { CustomThrottlerGuard } from './guards/custom-throttler.guard';
 
 import { CouponModule } from './module/coupon/coupon.module';
 import { MegaDiscountModule } from './module/setting/mega-discount/mega-discount.module';
+import { AuditLogModule } from './module/audit-log/audit-log.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -158,7 +159,8 @@ import { AppController } from './app.controller';
 		EmailServiceModule,
 		SesModule,
 		CouponModule,
-		MegaDiscountModule
+		MegaDiscountModule,
+		AuditLogModule
 	],
 	providers: [
 		{

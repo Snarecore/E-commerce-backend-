@@ -23,6 +23,11 @@ import { SesEmailService } from '../../common/ses/ses-email.service';
 import { Role } from '../../enums/role.enum';
 import { COOKIE_NAMES, ACCESS_TOKEN_MAX_AGE, REFRESH_TOKEN_MAX_AGE, setAuthCookie, clearAuthCookie } from '../../utils/cookie-config';
 
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { AuditAction } from '../audit-log/constants/audit-action.enum';
+import { AuditModule } from '../audit-log/constants/audit-module.enum';
+import { AuditTargetType } from '../audit-log/constants/audit-target-type.enum';
+
 @Injectable()
 export class AuthService {
 	constructor(
@@ -32,7 +37,8 @@ export class AuthService {
 		@InjectDataSource() private readonly dataSource: DataSource,
 		private readonly spaceService: SpaceService,
 		private readonly emailService: EmailService,
-		private readonly sesEmailService: SesEmailService
+		private readonly sesEmailService: SesEmailService,
+		private readonly auditLogService: AuditLogService
 	) { }
 
 	async validateUser(dto: LoginDto): Promise<User> {
@@ -41,12 +47,57 @@ export class AuthService {
 			{ select: ['id', 'name', 'email', 'password', 'role'] }
 		);
 		if (!user) {
+			this.auditLogService.createAsyncLog({
+				actorId: null,
+				actorName: null,
+				actorEmail: dto.email,
+				actorRole: null,
+				action: AuditAction.AUTH_LOGIN_FAILED,
+				module: AuditModule.AUTH,
+				targetId: null,
+				targetType: AuditTargetType.USER,
+				status: 'FAILED',
+				changes: {
+					type: 'SNAPSHOT',
+					before: null,
+					after: { attemptedEmail: dto.email }
+				}
+			});
 			throw new NotFoundException('User not found.');
 		}
 		const isPasswordValid = await bcrypt.compare(dto.password, user.password);
 		if (!isPasswordValid) {
+			this.auditLogService.createAsyncLog({
+				actorId: user.id,
+				actorName: user.name,
+				actorEmail: user.email,
+				actorRole: user.role,
+				action: AuditAction.AUTH_LOGIN_FAILED,
+				module: AuditModule.AUTH,
+				targetId: user.id,
+				targetType: AuditTargetType.USER,
+				status: 'FAILED',
+				changes: {
+					type: 'SNAPSHOT',
+					before: null,
+					after: { attemptedEmail: dto.email }
+				}
+			});
 			throw new UnauthorizedException('Incorrect password.');
 		}
+
+		this.auditLogService.createAsyncLog({
+			actorId: user.id,
+			actorName: user.name,
+			actorEmail: user.email,
+			actorRole: user.role,
+			action: AuditAction.AUTH_LOGIN_SUCCESS,
+			module: AuditModule.AUTH,
+			targetId: user.id,
+			targetType: AuditTargetType.USER,
+			status: 'SUCCESS'
+		});
+
 		return user;
 	}
 

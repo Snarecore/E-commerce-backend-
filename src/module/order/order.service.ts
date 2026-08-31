@@ -25,6 +25,11 @@ import { CouponService } from '../coupon/coupon.service';
 import { MegaDiscountRepository, SINGLETON_MEGA_DISCOUNT_ID } from '../setting/mega-discount/mega-discount.repository';
 import { MegaDiscount } from '../setting/mega-discount/entities/mega-discount.entity';
 
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { AuditAction } from '../audit-log/constants/audit-action.enum';
+import { AuditModule } from '../audit-log/constants/audit-module.enum';
+import { AuditTargetType } from '../audit-log/constants/audit-target-type.enum';
+
 @Injectable()
 export class OrdersService implements OnModuleInit {
     private stripe: Stripe;
@@ -38,7 +43,8 @@ export class OrdersService implements OnModuleInit {
         @Optional() private readonly notificationService?: NotificationService,
         @Optional() private readonly configService?: ConfigService,
         @Optional() private readonly couponService?: CouponService,
-        @Optional() private readonly megaDiscountRepository?: MegaDiscountRepository
+        @Optional() private readonly megaDiscountRepository?: MegaDiscountRepository,
+        @Optional() private readonly auditLogService?: AuditLogService
     ) {}
 
     async onModuleInit() {
@@ -424,6 +430,26 @@ export class OrdersService implements OnModuleInit {
             order.statusHistory = history;
 
             const updatedOrder = (await this.repository.save(order)) as Orders;
+
+            if (this.auditLogService) {
+                this.auditLogService.createAsyncLog({
+                    actorId: adminUser?.id || adminUser?.userId || null,
+                    actorName: adminUser?.name || null,
+                    actorEmail: adminUser?.email || null,
+                    actorRole: adminUser?.role || 'admin',
+                    action: AuditAction.ORDER_STATUS_UPDATED,
+                    module: AuditModule.ORDER,
+                    targetId: updatedOrder.id,
+                    targetType: AuditTargetType.ORDER,
+                    status: 'SUCCESS',
+                    changes: {
+                        type: 'FIELD_DIFF',
+                        changedFields: {
+                            status: { from: order.status, to: dto.newStatus }
+                        }
+                    }
+                });
+            }
 
             if (this.notificationService && updatedOrder?.userId) {
                 const notifNote = dto.newStatus === OrderStatus.REJECTED || (dto.newStatus as string) === 'Rejected'

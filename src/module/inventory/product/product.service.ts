@@ -12,13 +12,19 @@ import { Between, FindOptionsOrder, ILike, In, LessThanOrEqual, MoreThan, MoreTh
 import { ProductFilter } from './type/product-filter.type';
 import { ProductFilterDto } from './dto/product-filter.dto';
 import { UpdateProductStatusDto } from './dto/update-product-status.dto';
+import { Optional } from '@nestjs/common';
+import { AuditLogService } from '../../audit-log/audit-log.service';
+import { AuditAction } from '../../audit-log/constants/audit-action.enum';
+import { AuditModule } from '../../audit-log/constants/audit-module.enum';
+import { AuditTargetType } from '../../audit-log/constants/audit-target-type.enum';
 
 @Injectable()
 export class ProductService {
     constructor(
         private readonly spaceService: SpaceService,
         private readonly repository: ProductRepository,
-        private readonly productImageGalleryRepository: ProductImageGalleryRepository
+        private readonly productImageGalleryRepository: ProductImageGalleryRepository,
+        @Optional() private readonly auditLogService?: AuditLogService
     ) {}
 
     async create(
@@ -94,6 +100,31 @@ export class ProductService {
                     );
                 }
             }
+
+            if (this.auditLogService && output) {
+                this.auditLogService.createAsyncLog({
+                    actorId: userData?.id || null,
+                    actorName: userData?.name || null,
+                    actorEmail: userData?.email || null,
+                    actorRole: userData?.role || 'admin',
+                    action: AuditAction.PRODUCT_CREATED,
+                    module: AuditModule.PRODUCT,
+                    targetId: output.id,
+                    targetType: AuditTargetType.PRODUCT,
+                    status: 'SUCCESS',
+                    changes: {
+                        type: 'SNAPSHOT',
+                        before: null,
+                        after: {
+                            name: output.name,
+                            price: output.price,
+                            quantity: output.quantity,
+                            sku: output.sku
+                        }
+                    }
+                });
+            }
+
             return ResponseUtils.successResponseHandler(201, 'Data saved successfully.', 'data', output);
         } catch (error: unknown) {
             const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
@@ -524,6 +555,31 @@ export class ProductService {
                     'Something went wrong! Please try again.',
                     HttpStatus.INTERNAL_SERVER_ERROR
                 );
+            }
+
+            if (this.auditLogService && response) {
+                const changedFields: Record<string, { from: any; to: any }> = {};
+                if (output.name !== response.name) changedFields['name'] = { from: output.name, to: response.name };
+                if (output.price !== response.price) changedFields['price'] = { from: output.price, to: response.price };
+                if (output.quantity !== response.quantity) changedFields['quantity'] = { from: output.quantity, to: response.quantity };
+
+                this.auditLogService.createAsyncLog({
+                    actorId: null,
+                    actorName: null,
+                    actorEmail: null,
+                    actorRole: 'admin',
+                    action: AuditAction.PRODUCT_UPDATED,
+                    module: AuditModule.PRODUCT,
+                    targetId: response.id,
+                    targetType: AuditTargetType.PRODUCT,
+                    status: 'SUCCESS',
+                    changes: {
+                        type: 'FIELD_DIFF',
+                        changedFields: Object.keys(changedFields).length > 0 ? changedFields : {
+                            updatedAt: { from: output.updatedAt, to: response.updatedAt }
+                        }
+                    }
+                });
             }
 
             return ResponseUtils.successResponseHandler(200, 'Data updated successfully.', 'data', response);
