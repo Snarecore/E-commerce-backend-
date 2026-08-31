@@ -24,13 +24,18 @@ export class ProductReviewService {
 	) { }
 
 	private async updateProductAverageRating(productId: string): Promise<void> {
-		const reviews = await this.repository.findAll({ productId });
+		// Fix: Use SQL AVG() aggregate instead of loading all reviews into RAM
+		const result = await this.repository.getRepository().createQueryBuilder('review')
+			.select('AVG(review.rating)', 'average')
+			.addSelect('COUNT(review.id)', 'count')
+			.where('review.productId = :productId', { productId })
+			.andWhere('review.isDeleted = false')
+			.getRawOne();
 
-		if (!reviews.length) return;
+		const count = parseInt(result?.count ?? '0', 10);
+		if (count === 0) return;
 
-		const totalRating = reviews.reduce((sum, review) => sum + review.rating, 0);
-		const averageRating = parseFloat((totalRating / reviews.length).toFixed(2));
-
+		const averageRating = parseFloat(parseFloat(result?.average ?? '0').toFixed(2));
 		await this.productRepository.update(productId, { rating: averageRating });
 	}
 

@@ -2,7 +2,7 @@ import { HttpException, HttpStatus, Injectable, OnModuleInit, Optional } from '@
 import { ConfigService } from '@nestjs/config';
 import { ResponseUtils, ApiResponse } from '../../utils/response.utils';
 import Stripe from 'stripe';
-import { Between, DataSource, FindOptionsOrder, LessThanOrEqual, MoreThanOrEqual } from 'typeorm';
+import { Between, DataSource, FindOptionsOrder, In, LessThanOrEqual, MoreThanOrEqual } from 'typeorm';
 import { OrdersRepository } from './order.repository';
 import { CreateOrdersDto } from './dto/create-order.dto';
 import { OrdersInterface } from './type/order.type';
@@ -185,6 +185,18 @@ export class OrdersService implements OnModuleInit {
                     selectedSize?: string;
                 }> = [];
 
+                // Fix: Bulk fetch all products in one IN query instead of N+1
+                const productIds = rawItems
+                    .map(itemDto => itemDto.productId || itemDto.id || itemDto.product)
+                    .filter(Boolean);
+
+                const fetchedProducts = await queryRunner.manager.find(Product, {
+                    where: { id: In(productIds), isDeleted: false }
+                });
+                const productMap = new Map<string, Product>(
+                    fetchedProducts.map(p => [p.id, p])
+                );
+
                 for (const itemDto of rawItems) {
                     const productId = itemDto.productId || itemDto.id || itemDto.product;
                     if (!productId) {
@@ -198,14 +210,7 @@ export class OrdersService implements OnModuleInit {
 
                     const selectedSize = ((itemDto as any).size || (itemDto as any).selectedSize || (itemDto as any).sizeName || (itemDto as any).colorSize || '').trim();
 
-                    let product: Product | null = null;
-                    try {
-                        product = await queryRunner.manager.findOne(Product, {
-                            where: { id: productId, isDeleted: false }
-                        });
-                    } catch {
-                        product = null;
-                    }
+                    const product = productMap.get(productId) ?? null;
 
                     if (!product) {
                         throw new HttpException(`Product with ID ${productId} not found.`, HttpStatus.NOT_FOUND);
@@ -602,24 +607,30 @@ export class OrdersService implements OnModuleInit {
                 relations: ['orderSummaries', 'user']
             });
 
-            const enrichedData = await Promise.all(
-                result.data.map(async (order) => {
-                    const summariesWithFileUrl = await Promise.all(
-                        (order.orderSummaries || []).map(async (summary) => {
-                            const product = await this.productRepository.findOne(summary.productId);
-                            return {
-                                ...summary,
-                                productFileUrl: product?.fileUrl || null
-                            };
-                        })
-                    );
-
-                    return {
-                        ...order,
-                        orderSummaries: summariesWithFileUrl
-                    };
-                })
+            // Fix: Collect all productIds across all orders, fetch in one IN query
+            const allProductIds = result.data.flatMap(order =>
+                (order.orderSummaries || []).map(s => s.productId).filter(Boolean)
             );
+
+            const allProducts = allProductIds.length > 0
+                ? await this.productRepository.findByIds(allProductIds)
+                : [];
+
+            const productFileUrlMap = new Map<string, string | null>(
+                allProducts.map(p => [p.id, p.fileUrl ?? null])
+            );
+
+            const enrichedData = result.data.map((order) => {
+                const summariesWithFileUrl = (order.orderSummaries || []).map((summary) => ({
+                    ...summary,
+                    productFileUrl: productFileUrlMap.get(summary.productId) ?? null
+                }));
+
+                return {
+                    ...order,
+                    orderSummaries: summariesWithFileUrl
+                };
+            });
 
             const payload = {
                 data: enrichedData,

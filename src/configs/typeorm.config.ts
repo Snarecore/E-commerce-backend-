@@ -34,7 +34,7 @@ export const getTypeOrmConfig = (): TypeOrmModuleOptions => {
 		entities: [join(__dirname, '../**/*.entity{.ts,.js}')],
 		synchronize: false,
 		dropSchema: false,
-		logging: false,
+		logging: configService.get<string>('DATABASE_LOGGING') === 'true' || configService.get<string>('DB_LOGGING') === 'true',
 		migrations: [join(__dirname, '../database/migrations/*{.ts,.js}')],
 		migrationsTableName: 'migrations'
 	};

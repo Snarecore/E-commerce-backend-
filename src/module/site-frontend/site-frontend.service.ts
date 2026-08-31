@@ -523,9 +523,22 @@ export class SiteFrontendService {
                 metaData,
                 megaDiscountRecord
             ] = await Promise.all([
-                this.mainCategoryRepository.findAll({ status: true }),
-                this.firstCategoryRepository.findAllWithOrder({ status: true }, firstCategoryOrder),
-                this.secondCategoryRepository.findAll({ status: true }),
+                // Fix: limit categories to prevent huge data load and memory consumption
+                this.mainCategoryRepository.getRepository().find({
+                    where: { status: true, isDeleted: false },
+                    order: { createdAt: 'desc' } as any,
+                    take: 50
+                }),
+                this.firstCategoryRepository.getRepository().find({
+                    where: { status: true, isDeleted: false },
+                    order: { position: 'asc', createdAt: 'desc' } as any,
+                    take: 200
+                }),
+                this.secondCategoryRepository.getRepository().find({
+                    where: { status: true, isDeleted: false },
+                    order: { createdAt: 'desc' } as any,
+                    take: 500
+                }),
                 this.faqRepository.findAll(),
                 this.headerFooterCmsRepository.findAll(),
                 this.socialLinkRepository.findAll(),

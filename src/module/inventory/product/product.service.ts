@@ -319,17 +319,23 @@ export class ProductService {
                 order
             });
 
-            const enrichedData = await Promise.all(
-                result?.data?.map(async (product) => {
-                    const productImages = await this.productImageGalleryRepository.findAll({
-                        productId: product.id
-                    });
-                    return {
-                        ...product,
-                        productImages
-                    };
-                })
-            );
+            // Fix: Batch fetch all product images in one IN query (Option B)
+            const productIds = result?.data?.map(p => p.id) ?? [];
+            const allImages = productIds.length > 0
+                ? await this.productImageGalleryRepository.findAll({ productId: In(productIds) as any })
+                : [];
+
+            const imagesByProductId = new Map<string, typeof allImages>();
+            for (const img of allImages) {
+                const list = imagesByProductId.get(img.productId) ?? [];
+                list.push(img);
+                imagesByProductId.set(img.productId, list);
+            }
+
+            const enrichedData = result?.data?.map((product) => ({
+                ...product,
+                productImages: imagesByProductId.get(product.id) ?? []
+            }));
 
             const payload = {
                 data: enrichedData,
@@ -415,17 +421,23 @@ export class ProductService {
                 order
             });
 
-            const enrichedData = await Promise.all(
-                result?.data?.map(async (product) => {
-                    const productImages = await this.productImageGalleryRepository.findAll({
-                        productId: product.id
-                    });
-                    return {
-                        ...product,
-                        productImages
-                    };
-                })
-            );
+            // Fix: Batch fetch all product images in one IN query (Option B)
+            const vendorProductIds = result?.data?.map(p => p.id) ?? [];
+            const vendorAllImages = vendorProductIds.length > 0
+                ? await this.productImageGalleryRepository.findAll({ productId: In(vendorProductIds) as any })
+                : [];
+
+            const vendorImagesByProductId = new Map<string, typeof vendorAllImages>();
+            for (const img of vendorAllImages) {
+                const list = vendorImagesByProductId.get(img.productId) ?? [];
+                list.push(img);
+                vendorImagesByProductId.set(img.productId, list);
+            }
+
+            const enrichedData = result?.data?.map((product) => ({
+                ...product,
+                productImages: vendorImagesByProductId.get(product.id) ?? []
+            }));
 
             const payload = {
                 data: enrichedData,
