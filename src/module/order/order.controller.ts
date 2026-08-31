@@ -20,7 +20,7 @@ export class OrdersController {
 	constructor(private readonly service: OrdersService) {}
 
 	@UseGuards(JwtAuthGuard, RolesGuard)
-	@Roles(Role.CUSTOMER)
+	@Roles(Role.CUSTOMER, Role.VENDOR, Role.ADMIN)
 	@Post()
 	async create(
 		@Body() dto: CreateOrdersDto,
