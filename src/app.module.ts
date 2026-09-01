@@ -11,6 +11,7 @@ import { UserModule } from './module/user/user.module';
 import { HeroSliderModule } from './module/setting/hero-slider/hero-slider.module';
 import { SpaceModule } from './module/space-module/space.module';
 import { PromotionsModule } from './module/setting/promotions/promotions.module';
+import { PopupModule } from './module/setting/popup/popup.module';
 import { MainCategoryModule } from './module/inventory/main-category/main-category.module';
 import { FirstCategoryModule } from './module/inventory/first-category/first-category.module';
 import { SecondCategoryModule } from './module/inventory/second-category/second-category.module';
@@ -160,7 +161,8 @@ import { AppController } from './app.controller';
 		SesModule,
 		CouponModule,
 		MegaDiscountModule,
-		AuditLogModule
+		AuditLogModule,
+		PopupModule
 	],
 	providers: [
 		{
