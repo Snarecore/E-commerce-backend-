@@ -15,6 +15,7 @@ import { UpdateCourierDto } from './dto/update-courier.dto';
 import { UniqueCodeGeneratorService } from '../unique-code-generator/unique-code-generator.service';
 import { OrderSummaryRepository } from '../order-summary/order-summary.repository';
 import { OrderStatus, PaymentStatus } from '../../enums/order-status.enum';
+import { CostSource } from '../../enums/profit-report.enum';
 import { toSafeUser } from '../../utils/safe-user.utils';
 import { ProductRepository } from '../inventory/product/product.repository';
 import { Product } from '../inventory/product/entities/product.entity';
@@ -319,6 +320,10 @@ export class OrdersService implements OnModuleInit {
                 const savedOrder = await queryRunner.manager.save(orderEntity);
 
                 for (const prepItem of preparedItems) {
+                    const unitCostPrice = Number(prepItem.product.cost) > 0 ? Number(prepItem.product.cost) : 0;
+                    const totalCost = Number((unitCostPrice * prepItem.quantity).toFixed(2));
+                    const costSource = Number(prepItem.product.cost) > 0 ? CostSource.SNAPSHOT : CostSource.UNKNOWN;
+
                     const summaryEntity = queryRunner.manager.create(OrderSummary, {
                         orderId: savedOrder.id,
                         productId: prepItem.product.id,
@@ -326,6 +331,12 @@ export class OrdersService implements OnModuleInit {
                         productImage: prepItem.product.featuredImage || '',
                         price: prepItem.unitPrice,
                         quantity: prepItem.quantity,
+                        unitCostPrice,
+                        totalCost,
+                        costSource,
+                        snapshotMainCategoryId: prepItem.product.mainCategoryId || null,
+                        snapshotFirstCategoryId: prepItem.product.firstCategoryId || null,
+                        snapshotSecondCategoryId: prepItem.product.secondCategoryId || null,
                         vendorId: prepItem.product.vendorId || '',
                         commissionAmount: 0
                     } as any);

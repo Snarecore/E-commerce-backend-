@@ -1,11 +1,13 @@
 import { Column, Entity, Index, ManyToOne, JoinColumn } from 'typeorm';
 import { AbstractEntity } from '../../../database/abstract.entity';
 import { Orders } from '../../order/entity/order.entity';
-import { Product } from '../../inventory/product/entities/product.entity';
+import { CostSource } from '../../../enums/profit-report.enum';
 
 @Entity('order-summary')
 @Index('IDX_order_summary_vendor_created', ['vendorId', 'createdAt'])
 @Index('IDX_order_summary_order', ['orderId'])
+@Index('IDX_order_summary_costSource', ['costSource'])
+@Index('IDX_order_summary_categories', ['snapshotMainCategoryId', 'snapshotFirstCategoryId'])
 export class OrderSummary extends AbstractEntity {
     @Column({ type: 'varchar', nullable: false })
     productId: string;
@@ -21,6 +23,24 @@ export class OrderSummary extends AbstractEntity {
 
     @Column({ type: 'int', nullable: false })
     quantity: number;
+
+    @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
+    unitCostPrice: number;
+
+    @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
+    totalCost: number;
+
+    @Column({ type: 'enum', enum: CostSource, default: CostSource.SNAPSHOT })
+    costSource: CostSource;
+
+    @Column({ type: 'uuid', nullable: true })
+    snapshotMainCategoryId: string;
+
+    @Column({ type: 'uuid', nullable: true })
+    snapshotFirstCategoryId: string;
+
+    @Column({ type: 'uuid', nullable: true })
+    snapshotSecondCategoryId: string;
 
     @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
     commissionAmount: number;
