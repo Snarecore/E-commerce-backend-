@@ -39,4 +39,27 @@ export class ProductRepository extends AbstractRepository<Product> {
 			totalCategories: Number(count ?? 0)
 		};
 	}
+
+	async findHomeSectionProducts(sectionFlag: string, limit = 10): Promise<Product[]> {
+		return this.repository.createQueryBuilder('product')
+			.select([
+				'product.id',
+				'product.name',
+				'product.slug',
+				'product.price',
+				'product.discountType',
+				'product.discountAmount',
+				'product.featuredImage',
+				'product.mainCategoryName',
+				'product.status',
+				'product.quantity',
+				'product.createdAt'
+			])
+			.where(`product.${sectionFlag} = :isSection`, { isSection: true })
+			.andWhere('product.status = :status', { status: true })
+			.andWhere('product.isDeleted = :isDeleted', { isDeleted: false })
+			.orderBy('product.createdAt', 'DESC')
+			.take(limit)
+			.getMany();
+	}
 }

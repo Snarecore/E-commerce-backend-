@@ -111,7 +111,7 @@ export class Product extends AbstractEntity {
 	@Column({ type: 'int', default: 0 })
 	quantityAlert: number;
 
-	@OneToOne(() => ProductSeo, (seo) => seo.product, { cascade: true, eager: true })
+	@OneToOne(() => ProductSeo, (seo) => seo.product, { cascade: true, eager: false })
 	seo: ProductSeo;
 
 	@OneToMany(() => ProductComment, (c) => c.product)

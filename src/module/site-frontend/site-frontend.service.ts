@@ -154,12 +154,12 @@ export class SiteFrontendService {
                 this.heroSliderRepository.findAllWithOrder({ status: true }, order),
                 this.promotionsRepository.findAllWithOrder({ status: true }, sort),
                 this.firstCategoryRepository.findAllWithOrder({ showOnHome: true, status: true }, firstCategoryOrder),
-                this.productRepository.findAll({ isProductSectionOne: true, status: true }),
-                this.productRepository.findAll({ isProductSectionTwo: true, status: true }),
-                this.productRepository.findAll({ isProductSectionThree: true, status: true }),
-                this.productRepository.findAll({ isProductSectionFour: true, status: true }),
-                this.productRepository.findAll({ isProductSectionFive: true, status: true }),
-                this.productRepository.findAll({ isProductSectionSix: true, status: true }),
+                this.productRepository.findHomeSectionProducts('isProductSectionOne', 10),
+                this.productRepository.findHomeSectionProducts('isProductSectionTwo', 10),
+                this.productRepository.findHomeSectionProducts('isProductSectionThree', 10),
+                this.productRepository.findHomeSectionProducts('isProductSectionFour', 10),
+                this.productRepository.findHomeSectionProducts('isProductSectionFive', 10),
+                this.productRepository.findHomeSectionProducts('isProductSectionSix', 10),
                 this.megaDiscountRepository.getSingleton()
             ]);
 
