@@ -231,10 +231,14 @@ export class ProductService {
                 imagesByProductMap.set(img.productId, list);
             }
 
-            const enrichedData = (result?.data ?? []).map((product) => ({
-                ...product,
-                productImages: imagesByProductMap.get(product.id) || []
-            }));
+            const enrichedData = (result?.data ?? []).map((product) => {
+                const item = {
+                    ...product,
+                    productImages: imagesByProductMap.get(product.id) || []
+                };
+                delete (item as any).cost;
+                return item;
+            });
 
             const payload = {
                 data: enrichedData,
@@ -455,6 +459,35 @@ export class ProductService {
     }
 
     async findOne(id: string): Promise<ApiResponse<ProductInterface>> {
+        try {
+            let data = await this.repository.findOne(id);
+            if (!data) {
+                throw new HttpException('Data not found!', HttpStatus.BAD_REQUEST);
+            }
+
+            const productImages = await this.productImageGalleryRepository.findAll({
+                productId: id,
+            });
+
+            const payload: ProductInterface = {
+                ...data,
+                productImages,
+            };
+            delete (payload as any).cost;
+
+            return ResponseUtils.successResponseHandler(
+                200,
+                'Data retrieved successfully.',
+                'data',
+                payload
+            );
+        } catch (error: unknown) {
+            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
+            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    async findOneForAdmin(id: string): Promise<ApiResponse<ProductInterface>> {
         try {
             let data = await this.repository.findOne(id);
             if (!data) {

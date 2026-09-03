@@ -70,6 +70,13 @@ export class ProductController {
 		return await this.service.findAllForVendor(dto, req?.user);
 	}
 
+	@UseGuards(JwtAuthGuard, RolesGuard)
+	@Roles(Role.ADMIN, Role.VENDOR)
+	@Get('/admin-product/:id')
+	async findOneForAdmin(@Param('id') id: string): Promise<ApiResponse<ProductInterface>> {
+		return await this.service.findOneForAdmin(id);
+	}
+
 	@Public()
 	@Get(':id')
 	async findOne(@Param('id') id: string): Promise<ApiResponse<ProductInterface>> {

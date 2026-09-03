@@ -26,9 +26,12 @@ export const getTypeOrmConfig = (): TypeOrmModuleOptions => {
 		ssl: isSslRequired ? { rejectUnauthorized: true, minVersion: 'TLSv1.2' } : false,
 		extra: {
 			connectionLimit: 10,
+			maxIdle: 10,
+			idleTimeout: 60000,
 			waitForConnections: true,
 			enableKeepAlive: true,
-			keepAliveInitialDelay: 0,
+			keepAliveInitialDelay: 10000,
+			connectTimeout: 30000,
 		},
 		autoLoadEntities: true,
 		entities: [join(__dirname, '../**/*.entity{.ts,.js}')],
