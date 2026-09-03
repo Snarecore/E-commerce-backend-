@@ -14,4 +14,12 @@ export class CreateMainCategoryDto {
     @IsBoolean()
     @Transform(({ value }) => value === 'true' || value === true)
     status: boolean;
+
+    @IsOptional()
+    @Transform(({ value }) => {
+        if (value === undefined || value === null || value === '') return 9999;
+        const val = Number(value);
+        return isNaN(val) ? 9999 : val;
+    })
+    position?: number;
 }

@@ -66,7 +66,10 @@ export class SiteFrontendService {
 
     async getMainCategoryData() {
         try {
-            const mainCategory = await this.mainCategoryRepository.findAll({ status: true });
+            const mainCategory = await this.mainCategoryRepository.findAllWithOrder(
+                { status: true },
+                { position: 'asc', createdAt: 'desc' }
+            );
 
             const data = {
                 mainCategory: mainCategory ?? []
@@ -105,10 +108,10 @@ export class SiteFrontendService {
 
     async getSecondCategoryByFirstCategoryId(firstCategoryId: string) {
         try {
-            const secondCategories = await this.secondCategoryRepository.findAll({
-                status: true,
-                firstCategoryId: firstCategoryId
-            });
+            const secondCategories = await this.secondCategoryRepository.findAllWithOrder(
+                { status: true, firstCategoryId: firstCategoryId },
+                { position: 'asc', createdAt: 'desc' }
+            );
 
             const data = {
                 secondCategories: secondCategories ?? []
@@ -558,7 +561,7 @@ export class SiteFrontendService {
                 // Fix: limit categories to prevent huge data load and memory consumption
                 this.mainCategoryRepository.getRepository().find({
                     where: { status: true, isDeleted: false },
-                    order: { createdAt: 'desc' } as any,
+                    order: { position: 'asc', createdAt: 'desc' } as any,
                     take: 50
                 }),
                 this.firstCategoryRepository.getRepository().find({
@@ -568,7 +571,7 @@ export class SiteFrontendService {
                 }),
                 this.secondCategoryRepository.getRepository().find({
                     where: { status: true, isDeleted: false },
-                    order: { createdAt: 'desc' } as any,
+                    order: { position: 'asc', createdAt: 'desc' } as any,
                     take: 500
                 }),
                 this.faqRepository.findAll(),

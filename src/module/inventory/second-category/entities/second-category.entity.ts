@@ -15,6 +15,9 @@ export class SecondCategory extends AbstractEntity {
 	@Column({ type: 'boolean', default: true })
     status: boolean;
 
+	@Column({ type: 'int', default: 9999 })
+	position: number;
+
 	@Column({ type: 'varchar' })
 	mainCategoryId: string;
 
