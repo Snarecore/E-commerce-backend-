@@ -46,17 +46,31 @@ export class ProductRepository extends AbstractRepository<Product> {
 				'product.id',
 				'product.name',
 				'product.slug',
+				'product.sku',
 				'product.price',
+				'product.cost',
 				'product.discountType',
 				'product.discountAmount',
 				'product.featuredImage',
+				'product.mainCategoryId',
 				'product.mainCategoryName',
+				'product.firstCategoryId',
+				'product.firstCategoryName',
+				'product.secondCategoryId',
+				'product.secondCategoryName',
+				'product.vendorId',
+				'product.vendorName',
+				'product.rating',
 				'product.status',
+				'product.isApprove',
+				'product.sizesString',
+				'product.sizeStock',
 				'product.quantity',
 				'product.createdAt'
 			])
 			.where(`product.${sectionFlag} = :isSection`, { isSection: true })
 			.andWhere('product.status = :status', { status: true })
+			.andWhere('product.isApprove = :isApprove', { isApprove: true })
 			.andWhere('product.isDeleted = :isDeleted', { isDeleted: false })
 			.orderBy('product.createdAt', 'DESC')
 			.take(limit)
