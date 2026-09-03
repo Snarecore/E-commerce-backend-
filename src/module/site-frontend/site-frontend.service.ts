@@ -154,12 +154,12 @@ export class SiteFrontendService {
                 this.heroSliderRepository.findAllWithOrder({ status: true }, order),
                 this.promotionsRepository.findAllWithOrder({ status: true }, sort),
                 this.firstCategoryRepository.findAllWithOrder({ showOnHome: true, status: true }, firstCategoryOrder),
-                this.productRepository.findHomeSectionProducts('isProductSectionOne', 10),
-                this.productRepository.findHomeSectionProducts('isProductSectionTwo', 10),
-                this.productRepository.findHomeSectionProducts('isProductSectionThree', 10),
-                this.productRepository.findHomeSectionProducts('isProductSectionFour', 10),
-                this.productRepository.findHomeSectionProducts('isProductSectionFive', 10),
-                this.productRepository.findHomeSectionProducts('isProductSectionSix', 10),
+                this.productRepository.findByQueryWithHardLimit({ isProductSectionOne: true, status: true }, 10),
+                this.productRepository.findByQueryWithHardLimit({ isProductSectionTwo: true, status: true }, 10),
+                this.productRepository.findByQueryWithHardLimit({ isProductSectionThree: true, status: true }, 10),
+                this.productRepository.findByQueryWithHardLimit({ isProductSectionFour: true, status: true }, 10),
+                this.productRepository.findByQueryWithHardLimit({ isProductSectionFive: true, status: true }, 10),
+                this.productRepository.findByQueryWithHardLimit({ isProductSectionSix: true, status: true }, 10),
                 this.megaDiscountRepository.getSingleton()
             ]);
 
@@ -188,49 +188,17 @@ export class SiteFrontendService {
                 'isDeleted'
             ]);
 
-            const allSectionProducts = [
-                ...(sectionOneProducts ?? []),
-                ...(sectionTwoProducts ?? []),
-                ...(sectionThreeProducts ?? []),
-                ...(sectionFourProducts ?? []),
-                ...(sectionFiveProducts ?? []),
-                ...(sectionSixProducts ?? [])
-            ];
-
-            const productIds = Array.from(new Set(allSectionProducts.map((p) => p?.id).filter(Boolean)));
-            const allGalleryImages = productIds.length > 0
-                ? await this.productImageGalleryRepository.findAll({ productId: In(productIds) })
-                : [];
-
-            const imagesByProductMap = new Map<string, any[]>();
-            for (const img of allGalleryImages) {
-                const list = imagesByProductMap.get(img.productId) || [];
-                list.push(img);
-                imagesByProductMap.set(img.productId, list);
-            }
-
-            const formatProduct = (p: Product) => {
-                const pImages = imagesByProductMap.get(p.id) || [];
-                const safe = toSafeProduct(p, megaDiscount);
-                const featured = safe.featuredImage || pImages[0]?.imageUrl || null;
-                return {
-                    ...safe,
-                    featuredImage: featured,
-                    productImages: pImages
-                };
-            };
-
             const data = {
                 contentData: filteredContentData,
                 heroSlider: filteredHeroSlider,
                 promotions: filteredPromotions,
                 featuredCategories: filteredFeaturedCategories ?? [],
-                sectionOneProducts: sectionOneProducts.map(formatProduct) ?? [],
-                sectionTwoProducts: sectionTwoProducts.map(formatProduct) ?? [],
-                sectionThreeProducts: sectionThreeProducts.map(formatProduct) ?? [],
-                sectionFourProducts: sectionFourProducts.map(formatProduct) ?? [],
-                sectionFiveProducts: sectionFiveProducts.map(formatProduct) ?? [],
-                sectionSixProducts: sectionSixProducts.map(formatProduct) ?? []
+                sectionOneProducts: sectionOneProducts.map((p) => toSafeProduct(p, megaDiscount)) ?? [],
+                sectionTwoProducts: sectionTwoProducts.map((p) => toSafeProduct(p, megaDiscount)) ?? [],
+                sectionThreeProducts: sectionThreeProducts.map((p) => toSafeProduct(p, megaDiscount)) ?? [],
+                sectionFourProducts: sectionFourProducts.map((p) => toSafeProduct(p, megaDiscount)) ?? [],
+                sectionFiveProducts: sectionFiveProducts.map((p) => toSafeProduct(p, megaDiscount)) ?? [],
+                sectionSixProducts: sectionSixProducts.map((p) => toSafeProduct(p, megaDiscount)) ?? []
             }
 
             return ResponseUtils.successResponseHandler(200, 'Data fetched successfully', 'data', data);
