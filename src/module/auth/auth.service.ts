@@ -106,7 +106,7 @@ export class AuthService {
 
 		const payload = { email: user.email, sub: user.id, role: user.role, name: user.name };
 
-		const accessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
+		const accessToken = this.jwtService.sign(payload, { expiresIn: '2h' });
 		const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
 
 		const isAdmin = user.role?.toLowerCase() === Role.ADMIN;
@@ -115,6 +115,8 @@ export class AuthService {
 
 		setAuthCookie(res, accessCookieName, accessToken, ACCESS_TOKEN_MAX_AGE);
 		setAuthCookie(res, refreshCookieName, refreshToken, REFRESH_TOKEN_MAX_AGE);
+		setAuthCookie(res, 'accessToken', accessToken, ACCESS_TOKEN_MAX_AGE);
+		setAuthCookie(res, 'refreshToken', refreshToken, REFRESH_TOKEN_MAX_AGE);
 
 		const userData = {
 			id: user.id,
@@ -262,7 +264,11 @@ export class AuthService {
 	}
 
 	async refreshToken(req: Request, res: Response): Promise<{ accessToken: string }> {
-		const refreshToken = req.cookies['refreshToken'];
+		const refreshToken =
+			req.cookies?.[COOKIE_NAMES.ADMIN_REFRESH] ||
+			req.cookies?.[COOKIE_NAMES.CUSTOMER_REFRESH] ||
+			req.cookies?.['refreshToken'] ||
+			(req.headers?.authorization?.startsWith('Bearer ') ? req.headers.authorization.split(' ')[1] : null);
 		if (!refreshToken) {
 			throw new UnauthorizedException('Refresh token not found.');
 		}
@@ -280,7 +286,7 @@ export class AuthService {
 		}
 
 		const payload = { email: user.email, sub: user.id, role: user.role, name: user.name };
-		const newAccessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
+		const newAccessToken = this.jwtService.sign(payload, { expiresIn: '2h' });
 		const newRefreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
 
 		const isAdmin = user.role?.toLowerCase() === Role.ADMIN;
@@ -289,6 +295,8 @@ export class AuthService {
 
 		setAuthCookie(res, accessCookieName, newAccessToken, ACCESS_TOKEN_MAX_AGE);
 		setAuthCookie(res, refreshCookieName, newRefreshToken, REFRESH_TOKEN_MAX_AGE);
+		setAuthCookie(res, 'accessToken', newAccessToken, ACCESS_TOKEN_MAX_AGE);
+		setAuthCookie(res, 'refreshToken', newRefreshToken, REFRESH_TOKEN_MAX_AGE);
 
 		return { accessToken: newAccessToken };
 	}
