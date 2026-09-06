@@ -7,6 +7,7 @@ export type NotificationType =
   | 'ORDER_SHIPPED'
   | 'ORDER_DELIVERED'
   | 'ORDER_CANCELLED'
+  | 'NEW_ORDER'
   | 'GENERAL';
 
 @Entity('notifications')

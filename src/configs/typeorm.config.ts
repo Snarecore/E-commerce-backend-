@@ -18,12 +18,12 @@ export const getTypeOrmConfig = (): TypeOrmModuleOptions => {
 
 	return {
 		type: 'mysql',
+		timezone: 'Z',
 		host,
 		port,
 		username,
 		password,
 		database,
-		timezone: 'Z',
 		ssl: isSslRequired ? { rejectUnauthorized: true, minVersion: 'TLSv1.2' } : false,
 		extra: {
 			connectionLimit: 10,
