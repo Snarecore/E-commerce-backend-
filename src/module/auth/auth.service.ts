@@ -136,6 +136,54 @@ export class AuthService {
 		);
 	}
 
+	async firebaseLogin(
+		dto: { idToken: string; email?: string; name?: string; photoURL?: string; firebaseUid?: string },
+		res: Response
+	) {
+		const email = dto.email || `${dto.firebaseUid || Date.now()}@google.user`;
+		const name = dto.name || email.split('@')[0] || "User";
+
+		let user = await this.userRepository.findOneByQueryRelation({ email });
+		if (!user) {
+			user = await this.userRepository.create({
+				email,
+				name,
+				password: await bcrypt.hash(Math.random().toString(36), 10),
+				phone: 'N/A',
+				role: Role.CUSTOMER
+			});
+		}
+
+		const payload = { email: user.email, sub: user.id, role: user.role, name: user.name };
+		const accessToken = this.jwtService.sign(payload, { expiresIn: '2h' });
+		const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
+
+		const accessCookieName = COOKIE_NAMES.CUSTOMER_ACCESS;
+		const refreshCookieName = COOKIE_NAMES.CUSTOMER_REFRESH;
+
+		setAuthCookie(res, accessCookieName, accessToken, ACCESS_TOKEN_MAX_AGE);
+		setAuthCookie(res, refreshCookieName, refreshToken, REFRESH_TOKEN_MAX_AGE);
+		setAuthCookie(res, 'accessToken', accessToken, ACCESS_TOKEN_MAX_AGE);
+		setAuthCookie(res, 'refreshToken', refreshToken, REFRESH_TOKEN_MAX_AGE);
+
+		const userData = {
+			id: user.id,
+			name: user.name,
+			email: user.email,
+			role: user.role,
+		};
+
+		return ResponseUtils.successResponseHandler(
+			HttpStatus.OK,
+			'Google login successful.',
+			'data',
+			{
+				accessToken,
+				user: userData
+			}
+		);
+	}
+
 	async me(currentUser: any) {
 		if (!currentUser || !currentUser.id) {
 			throw new UnauthorizedException('Not authenticated.');

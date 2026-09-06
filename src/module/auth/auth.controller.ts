@@ -55,6 +55,16 @@ export class AuthController {
 		return await this.authService.login(dto, res);
 	}
 
+	@Public()
+	@Throttle({ default: { limit: 30, ttl: 60000 } })
+	@Post('firebase-login')
+	async firebaseLogin(
+		@Body() dto: { idToken: string; email?: string; name?: string; photoURL?: string; firebaseUid?: string },
+		@Res({ passthrough: true }) res: Response
+	) {
+		return await this.authService.firebaseLogin(dto, res);
+	}
+
 	@UseGuards(JwtAuthGuard)
 	@Get('me')
 	async me(@Req() req: any) {
