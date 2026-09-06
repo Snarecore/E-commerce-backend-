@@ -6,5 +6,6 @@ export interface OrdersFilter {
     vendorId?: string;
     status?: OrderStatus;
     paymentStatus?: PaymentStatus;
+    orderId?: string | FindOperator<string>;
     createdAt?: FindOperator<Date>;
 }

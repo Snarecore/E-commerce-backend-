@@ -11,7 +11,7 @@ export class Orders extends AbstractEntity {
     @Column({ type: 'varchar', nullable: false })
     orderId: string;
 
-    @Column({ type: 'varchar', nullable: false })
+    @Column({ type: 'varchar', nullable: true })
     userId: string;
 
     @Column({ type: 'varchar', nullable: true })
@@ -100,7 +100,7 @@ export class Orders extends AbstractEntity {
     @OneToMany(() => OrderSummary, summary => summary.order)
     orderSummaries: OrderSummary[];
 
-    @ManyToOne(() => User, (user) => user.orders)
+    @ManyToOne(() => User, (user) => user.orders, { nullable: true })
     @JoinColumn({ name: 'userId' })
     user: User;
 }

@@ -2,7 +2,7 @@ import { HttpException, HttpStatus, Injectable, OnModuleInit } from '@nestjs/com
 import { NotificationRepository } from './notification.repository';
 import { Notifications, NotificationType } from './entity/notification.entity';
 import { ApiResponse, ResponseUtils } from '../../utils/response.utils';
-import { EntityManager } from 'typeorm';
+import { EntityManager, In } from 'typeorm';
 import { Role } from '../../enums/role.enum';
 
 @Injectable()
@@ -35,6 +35,18 @@ export class NotificationService implements OnModuleInit {
     } catch (err) {
       console.error('Auto table creation error for notifications:', err);
     }
+
+    try {
+      await this.repository.query(`ALTER TABLE \`notifications\` MODIFY COLUMN \`userId\` varchar(255) NULL`);
+    } catch (e) {}
+
+    try {
+      await this.repository.query(`ALTER TABLE \`notifications\` ADD COLUMN \`role\` varchar(50) NOT NULL DEFAULT 'CUSTOMER'`);
+    } catch (e) {}
+
+    try {
+      await this.repository.query(`ALTER TABLE \`notifications\` ADD COLUMN \`metadata\` json NULL`);
+    } catch (e) {}
   }
 
   async findUserNotifications(userId: string): Promise<
@@ -53,6 +65,7 @@ export class NotificationService implements OnModuleInit {
         title: item.title,
         message: item.message,
         type: item.type,
+        role: item.role || 'user',
         isRead: item.isRead,
         createdAt: item.createdAt ? item.createdAt.toISOString() : new Date().toISOString(),
       }));
@@ -71,39 +84,54 @@ export class NotificationService implements OnModuleInit {
     }
   }
 
-  async findAdminNotifications(after?: string, limit: number = 20): Promise<
-    ApiResponse<{ items: any[]; unreadCount: number; nextCursor: string | null }>
+  async findAdminNotifications(after?: string | number, limit: number = 20): Promise<
+    ApiResponse<{ items: any[]; unreadCount: number; nextCursor?: string | null }>
   > {
     try {
+      let limitNum = typeof after === 'number' ? after : limit;
+      let afterCursor = typeof after === 'string' ? after : undefined;
+      const take = Math.max(1, Math.min(Number(limitNum) || 20, 100));
+
       const list = await this.repository.findAllWithOrder(
-        { role: Role.ADMIN, isDeleted: false },
+        { role: In([Role.ADMIN, 'admin', 'ADMIN']), isDeleted: false },
         { createdAt: 'DESC' }
       );
 
       let filtered = list;
-      if (after) {
-        const afterIdx = list.findIndex((item) => item.id === after);
+      if (afterCursor) {
+        const afterIdx = list.findIndex((item) => item.id === afterCursor);
         if (afterIdx !== -1) {
           filtered = list.slice(afterIdx + 1);
         }
       }
 
-      const paginated = filtered.slice(0, limit);
-      const mapped = paginated.map((item) => ({
-        id: item.id,
-        _id: item.id,
-        type: item.type,
-        orderId: item.orderId,
-        role: item.role || Role.ADMIN,
-        isRead: item.isRead,
-        title: item.title,
-        message: item.message,
-        metadata: item.metadata || {},
-        createdAt: item.createdAt ? item.createdAt.toISOString() : new Date().toISOString(),
-      }));
+      const paginated = filtered.slice(0, take);
+      const mapped = paginated.map((item) => {
+        let parsedMetadata = item.metadata;
+        if (typeof parsedMetadata === 'string') {
+          try {
+            parsedMetadata = JSON.parse(parsedMetadata);
+          } catch {
+            parsedMetadata = {};
+          }
+        }
+
+        return {
+          id: item.id,
+          _id: item.id,
+          type: item.type,
+          orderId: item.orderId,
+          role: item.role || Role.ADMIN,
+          isRead: item.isRead,
+          title: item.title,
+          message: item.message,
+          metadata: parsedMetadata || {},
+          createdAt: item.createdAt ? item.createdAt.toISOString() : new Date().toISOString(),
+        };
+      });
 
       const unreadCount = list.filter((n) => !n.isRead).length;
-      const nextCursor = paginated.length === limit ? paginated[paginated.length - 1].id : null;
+      const nextCursor = paginated.length === take ? paginated[paginated.length - 1].id : null;
 
       return ResponseUtils.successResponseHandler(
         200,
@@ -123,7 +151,7 @@ export class NotificationService implements OnModuleInit {
       if (!notif) {
         throw new HttpException('Notification not found', HttpStatus.NOT_FOUND);
       }
-      if (notif.userId !== userId) {
+      if (notif.userId && notif.userId !== userId) {
         throw new HttpException('Forbidden access', HttpStatus.FORBIDDEN);
       }
 
@@ -146,7 +174,7 @@ export class NotificationService implements OnModuleInit {
   async markAdminNotificationRead(id: string): Promise<ApiResponse<boolean>> {
     try {
       const notif = await this.repository.findOne(id);
-      if (notif && (notif.role === Role.ADMIN || notif.role === 'ADMIN')) {
+      if (notif) {
         notif.isRead = true;
         await this.repository.save(notif);
       }
@@ -157,9 +185,17 @@ export class NotificationService implements OnModuleInit {
     }
   }
 
+  async markAdminAsRead(id: string): Promise<ApiResponse<boolean>> {
+    return await this.markAdminNotificationRead(id);
+  }
+
   async markAllAdminNotificationsRead(): Promise<ApiResponse<boolean>> {
     try {
-      const unread = await this.repository.findAll({ role: Role.ADMIN, isRead: false, isDeleted: false });
+      const unread = await this.repository.findAll({
+        role: In([Role.ADMIN, 'admin', 'ADMIN']),
+        isRead: false,
+        isDeleted: false,
+      });
       if (unread.length > 0) {
         const updated = unread.map((item) => {
           item.isRead = true;
@@ -173,6 +209,10 @@ export class NotificationService implements OnModuleInit {
       const msg = error instanceof Error ? error.message : 'Internal Server Error';
       throw new HttpException(msg, HttpStatus.INTERNAL_SERVER_ERROR);
     }
+  }
+
+  async markAllAdminAsRead(): Promise<ApiResponse<boolean>> {
+    return await this.markAllAdminNotificationsRead();
   }
 
   async markAllAsRead(userId: string): Promise<ApiResponse<boolean>> {
@@ -199,35 +239,60 @@ export class NotificationService implements OnModuleInit {
   }
 
   async createAdminOrderNotification(
-    managerOrRepo: EntityManager | null,
-    data: {
+    managerOrData: EntityManager | {
       orderId: string;
-      orderNumber: string;
-      customerName: string;
-      totalAmount: number;
-      paymentMethod: string;
+      orderNumber?: string;
+      customerName?: string;
+      totalAmount?: number;
+      currency?: string;
+      paymentMethod?: string;
+    } | null,
+    maybeData?: {
+      orderId: string;
+      orderNumber?: string;
+      customerName?: string;
+      totalAmount?: number;
+      currency?: string;
+      paymentMethod?: string;
     }
   ): Promise<Notifications | null> {
     try {
+      let manager: EntityManager | null = null;
+      let data: any = {};
+
+      if (managerOrData && 'create' in (managerOrData as any)) {
+        manager = managerOrData as EntityManager;
+        data = maybeData || {};
+      } else {
+        data = (managerOrData as any) || {};
+      }
+
+      const orderNumber = data.orderNumber || data.orderId || '';
+      const displayId = orderNumber.startsWith('#') ? orderNumber : `#${orderNumber}`;
+      const customer = (data.customerName || '').trim() || 'A customer';
+      const amountStr = data.totalAmount ? `৳${data.totalAmount.toLocaleString()}` : '';
+      const title = '🎉 New Order Placed';
+      const message = `${customer} placed a new order ${displayId}${amountStr ? ` for ${amountStr}` : ''}.`;
+
       const notifData = {
         role: Role.ADMIN,
         type: 'ORDER_PLACED' as NotificationType,
-        orderId: data.orderId,
-        title: '🎉 New Order Placed',
-        message: `New order #${data.orderNumber} placed by ${data.customerName}`,
+        orderId: data.orderId || orderNumber,
+        title,
+        message,
         metadata: {
-          orderNumber: data.orderNumber,
-          customerName: data.customerName,
-          totalAmount: data.totalAmount,
-          currency: 'BDT',
-          paymentMethod: data.paymentMethod,
+          orderNumber,
+          customerName: customer,
+          totalAmount: data.totalAmount || 0,
+          currency: data.currency || 'BDT',
+          paymentMethod: data.paymentMethod || 'COD',
         },
         isRead: false,
       };
 
-      if (managerOrRepo && 'create' in managerOrRepo) {
-        const notifEntity = managerOrRepo.create(Notifications, notifData);
-        return await managerOrRepo.save(Notifications, notifEntity);
+      if (manager && 'create' in manager) {
+        const notifEntity = manager.create(Notifications, notifData);
+        return await manager.save(Notifications, notifEntity);
       } else {
         return await this.repository.create(notifData);
       }
@@ -282,3 +347,4 @@ export class NotificationService implements OnModuleInit {
     }
   }
 }
+

@@ -25,25 +25,13 @@ import { Role } from '../../enums/role.enum';
 export class NotificationController {
   constructor(private readonly service: NotificationService) {}
 
-  @UseGuards(JwtAuthGuard)
-  @Get()
-  async findUserNotifications(
-    @Req() req: Request
-  ): Promise<ApiResponse<{ notifications: any[]; unreadCount: number }>> {
-    const userId = (req as any)?.user?.id || (req as any)?.user?.userId;
-    if (!userId) {
-      throw new HttpException('User authentication required.', HttpStatus.UNAUTHORIZED);
-    }
-    return await this.service.findUserNotifications(userId);
-  }
-
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN)
   @Get('admin')
   async findAdminNotifications(
     @Query('after') after?: string,
     @Query('limit') limit?: string
-  ): Promise<ApiResponse<{ items: any[]; unreadCount: number; nextCursor: string | null }>> {
+  ): Promise<ApiResponse<{ items: any[]; unreadCount: number; nextCursor?: string | null }>> {
     const limitNum = limit ? parseInt(limit, 10) : 20;
     return await this.service.findAdminNotifications(after, limitNum);
   }
@@ -62,6 +50,18 @@ export class NotificationController {
     @Param('id') id: string
   ): Promise<ApiResponse<boolean>> {
     return await this.service.markAdminNotificationRead(id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get()
+  async findUserNotifications(
+    @Req() req: Request
+  ): Promise<ApiResponse<{ notifications: any[]; unreadCount: number }>> {
+    const userId = (req as any)?.user?.id || (req as any)?.user?.userId;
+    if (!userId) {
+      throw new HttpException('User authentication required.', HttpStatus.UNAUTHORIZED);
+    }
+    return await this.service.findUserNotifications(userId);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -87,3 +87,4 @@ export class NotificationController {
     return await this.service.markAsRead(id, userId);
   }
 }
+

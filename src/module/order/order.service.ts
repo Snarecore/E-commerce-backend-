@@ -2,7 +2,7 @@ import { HttpException, HttpStatus, Injectable, OnModuleInit, Optional } from '@
 import { ConfigService } from '@nestjs/config';
 import { ResponseUtils, ApiResponse } from '../../utils/response.utils';
 import Stripe from 'stripe';
-import { Between, DataSource, FindOptionsOrder, In, LessThanOrEqual, MoreThanOrEqual } from 'typeorm';
+import { Between, DataSource, FindOptionsOrder, In, LessThanOrEqual, MoreThanOrEqual, Like } from 'typeorm';
 import { OrdersRepository } from './order.repository';
 import { CreateOrdersDto } from './dto/create-order.dto';
 import { OrdersInterface } from './type/order.type';
@@ -49,6 +49,9 @@ export class OrdersService implements OnModuleInit {
     ) {}
 
     async onModuleInit() {
+        try {
+            await (this.repository as any).query(`ALTER TABLE \`orders\` MODIFY COLUMN \`userId\` varchar(255) NULL`);
+        } catch (e) {}
         try {
             await (this.repository as any).query(`ALTER TABLE \`orders\` ADD COLUMN \`rejectionReason\` varchar(255) NULL`);
         } catch (e) {}
@@ -555,6 +558,11 @@ export class OrdersService implements OnModuleInit {
 
             if (dto.paymentStatus) {
                 query.paymentStatus = dto.paymentStatus;
+            }
+
+            if (dto.orderId) {
+                const cleanOrderId = dto.orderId.replace(/^#/, '').trim();
+                query.orderId = Like(`%${cleanOrderId}%`);
             }
 
             if (dto.startDate && dto.endDate) {
