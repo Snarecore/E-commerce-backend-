@@ -1,8 +1,8 @@
-import { Body, Controller, Get, Post, Req, Res, UploadedFiles, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Get, HttpStatus, Post, Req, Res, UploadedFiles, UseGuards, UseInterceptors } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { CONFIG } from '../../utils/config';
 import { RegisterDto } from './dto/register.dto';
-import { ApiResponse } from '../../utils/response.utils';
+import { ApiResponse, ResponseUtils } from '../../utils/response.utils';
 import { User } from '../user/entities/user.entity';
 import { LoginDto } from './dto/login.dto';
 import { Request, Response } from 'express';
@@ -83,9 +83,12 @@ export class AuthController {
 	@Public()
 	@Post('logout')
 	@UseGuards(JwtAuthGuard)
-	logout(@Res({ passthrough: true }) res: Response): Response {
+	logout(@Res({ passthrough: true }) res: Response) {
 		this.authService.logout(res);
-		return res.json({ message: 'Logged out successfully.' });
+		return ResponseUtils.successResponseHandler(
+			HttpStatus.OK,
+			'Logged out successfully.'
+		);
 	}
 
 	@Public()
