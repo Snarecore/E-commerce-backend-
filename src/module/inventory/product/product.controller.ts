@@ -29,7 +29,8 @@ export class ProductController {
             { name: "featuredImage", maxCount: 1 },
 			{ name: 'productImages', maxCount: 5 },
 			{ name: 'fileUrl', maxCount: 1 }
-        ]
+        ],
+        { limits: { fileSize: 25 * 1024 * 1024 } }
     ))
 	async create(
 		@Body() dto: CreateProductDto,
@@ -89,8 +90,9 @@ export class ProductController {
         [
             { name: "featuredImage", maxCount: 1 },
 			{ name: 'productImages', maxCount: 5 },
-			{name: 'fileUrl', maxCount: 1}
-        ]
+			{ name: 'fileUrl', maxCount: 1 }
+        ],
+        { limits: { fileSize: 25 * 1024 * 1024 } }
     ))
 	async update(
 		@Param('id') id: string, 

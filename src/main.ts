@@ -36,13 +36,13 @@ async function bootstrap(): Promise<void> {
 	});
 	app.use(
 		bodyParser.json({
-			limit: '5mb',
+			limit: '50mb',
 			verify: (req: any, _res, buf) => {
 				req.rawBody = buf;
 			},
 		}),
 	);
-	app.use(bodyParser.urlencoded({ limit: '5mb', extended: true }));
+	app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 	app.use(cookieParser());
 	app.setGlobalPrefix(CONFIG.API, { exclude: ['/'] });
     app.enableVersioning({
