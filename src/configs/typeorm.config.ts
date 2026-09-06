@@ -23,6 +23,7 @@ export const getTypeOrmConfig = (): TypeOrmModuleOptions => {
 		username,
 		password,
 		database,
+		timezone: 'Z',
 		ssl: isSslRequired ? { rejectUnauthorized: true, minVersion: 'TLSv1.2' } : false,
 		extra: {
 			connectionLimit: 10,
