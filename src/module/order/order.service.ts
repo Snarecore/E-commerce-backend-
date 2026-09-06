@@ -377,6 +377,20 @@ export class OrdersService implements OnModuleInit {
                     }
                 }
 
+                if (this.notificationService) {
+                    const customerName = dto.shippingAddress?.name || 'Customer';
+                    await this.notificationService.createAdminOrderNotification(
+                        queryRunner.manager,
+                        {
+                            orderId: savedOrder.id,
+                            orderNumber: savedOrder.orderId,
+                            customerName,
+                            totalAmount: savedOrder.totalAmount,
+                            paymentMethod: finalPaymentMethod
+                        }
+                    );
+                }
+
                 await queryRunner.commitTransaction();
 
                 return ResponseUtils.successResponseHandler(201, 'Order created successfully.', 'data', savedOrder);

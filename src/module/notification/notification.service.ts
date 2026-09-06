@@ -2,6 +2,8 @@ import { HttpException, HttpStatus, Injectable, OnModuleInit } from '@nestjs/com
 import { NotificationRepository } from './notification.repository';
 import { Notifications, NotificationType } from './entity/notification.entity';
 import { ApiResponse, ResponseUtils } from '../../utils/response.utils';
+import { EntityManager } from 'typeorm';
+import { Role } from '../../enums/role.enum';
 
 @Injectable()
 export class NotificationService implements OnModuleInit {
@@ -15,14 +17,19 @@ export class NotificationService implements OnModuleInit {
           \`createdAt\` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
           \`updatedAt\` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
           \`isDeleted\` tinyint(4) NOT NULL DEFAULT 0,
-          \`userId\` varchar(255) NOT NULL,
+          \`userId\` varchar(255) DEFAULT NULL,
+          \`role\` varchar(50) DEFAULT 'CUSTOMER',
           \`title\` varchar(255) NOT NULL,
           \`message\` text NOT NULL,
           \`type\` varchar(100) NOT NULL DEFAULT 'GENERAL',
           \`orderId\` varchar(255) DEFAULT NULL,
+          \`metadata\` json DEFAULT NULL,
           \`isRead\` tinyint(4) NOT NULL DEFAULT 0,
           PRIMARY KEY (\`id\`),
-          KEY \`IDX_notifications_userId\` (\`userId\`)
+          KEY \`IDX_notifications_userId\` (\`userId\`),
+          KEY \`IDX_notifications_role_createdAt\` (\`role\`, \`createdAt\`),
+          KEY \`IDX_notifications_role_isRead_createdAt\` (\`role\`, \`isRead\`, \`createdAt\`),
+          UNIQUE KEY \`UNQ_notifications_type_orderId\` (\`type\`, \`orderId\`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
       `);
     } catch (err) {
@@ -64,6 +71,52 @@ export class NotificationService implements OnModuleInit {
     }
   }
 
+  async findAdminNotifications(after?: string, limit: number = 20): Promise<
+    ApiResponse<{ items: any[]; unreadCount: number; nextCursor: string | null }>
+  > {
+    try {
+      const list = await this.repository.findAllWithOrder(
+        { role: Role.ADMIN, isDeleted: false },
+        { createdAt: 'DESC' }
+      );
+
+      let filtered = list;
+      if (after) {
+        const afterIdx = list.findIndex((item) => item.id === after);
+        if (afterIdx !== -1) {
+          filtered = list.slice(afterIdx + 1);
+        }
+      }
+
+      const paginated = filtered.slice(0, limit);
+      const mapped = paginated.map((item) => ({
+        id: item.id,
+        _id: item.id,
+        type: item.type,
+        orderId: item.orderId,
+        role: item.role || Role.ADMIN,
+        isRead: item.isRead,
+        title: item.title,
+        message: item.message,
+        metadata: item.metadata || {},
+        createdAt: item.createdAt ? item.createdAt.toISOString() : new Date().toISOString(),
+      }));
+
+      const unreadCount = list.filter((n) => !n.isRead).length;
+      const nextCursor = paginated.length === limit ? paginated[paginated.length - 1].id : null;
+
+      return ResponseUtils.successResponseHandler(
+        200,
+        'Admin notifications fetched successfully.',
+        'data',
+        { items: mapped, unreadCount, nextCursor }
+      );
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'Internal Server Error';
+      throw new HttpException(msg, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
   async markAsRead(id: string, userId: string): Promise<ApiResponse<boolean>> {
     try {
       const notif = await this.repository.findOne(id);
@@ -90,6 +143,38 @@ export class NotificationService implements OnModuleInit {
     }
   }
 
+  async markAdminNotificationRead(id: string): Promise<ApiResponse<boolean>> {
+    try {
+      const notif = await this.repository.findOne(id);
+      if (notif && (notif.role === Role.ADMIN || notif.role === 'ADMIN')) {
+        notif.isRead = true;
+        await this.repository.save(notif);
+      }
+      return ResponseUtils.successResponseHandler(200, 'Admin notification marked as read.', 'data', true);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'Internal Server Error';
+      throw new HttpException(msg, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  async markAllAdminNotificationsRead(): Promise<ApiResponse<boolean>> {
+    try {
+      const unread = await this.repository.findAll({ role: Role.ADMIN, isRead: false, isDeleted: false });
+      if (unread.length > 0) {
+        const updated = unread.map((item) => {
+          item.isRead = true;
+          return item;
+        });
+        await this.repository.save(updated);
+      }
+
+      return ResponseUtils.successResponseHandler(200, 'All admin notifications marked as read.', 'data', true);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'Internal Server Error';
+      throw new HttpException(msg, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
   async markAllAsRead(userId: string): Promise<ApiResponse<boolean>> {
     try {
       const unread = await this.repository.findAll({ userId, isRead: false, isDeleted: false });
@@ -110,6 +195,45 @@ export class NotificationService implements OnModuleInit {
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : 'Internal Server Error';
       throw new HttpException(msg, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  async createAdminOrderNotification(
+    managerOrRepo: EntityManager | null,
+    data: {
+      orderId: string;
+      orderNumber: string;
+      customerName: string;
+      totalAmount: number;
+      paymentMethod: string;
+    }
+  ): Promise<Notifications | null> {
+    try {
+      const notifData = {
+        role: Role.ADMIN,
+        type: 'ORDER_PLACED' as NotificationType,
+        orderId: data.orderId,
+        title: '🎉 New Order Placed',
+        message: `New order #${data.orderNumber} placed by ${data.customerName}`,
+        metadata: {
+          orderNumber: data.orderNumber,
+          customerName: data.customerName,
+          totalAmount: data.totalAmount,
+          currency: 'BDT',
+          paymentMethod: data.paymentMethod,
+        },
+        isRead: false,
+      };
+
+      if (managerOrRepo && 'create' in managerOrRepo) {
+        const notifEntity = managerOrRepo.create(Notifications, notifData);
+        return await managerOrRepo.save(Notifications, notifEntity);
+      } else {
+        return await this.repository.create(notifData);
+      }
+    } catch (err) {
+      console.error('Error creating admin order notification in DB (Idempotency check / duplicate prevented):', err);
+      return null;
     }
   }
 
@@ -143,6 +267,7 @@ export class NotificationService implements OnModuleInit {
 
       const notification = await this.repository.create({
         userId,
+        role: Role.CUSTOMER,
         orderId,
         title,
         message,

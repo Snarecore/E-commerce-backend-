@@ -1,7 +1,8 @@
-import { Column, Entity } from 'typeorm';
+import { Column, Entity, Index } from 'typeorm';
 import { AbstractEntity } from '../../../database/abstract.entity';
 
 export type NotificationType =
+  | 'ORDER_PLACED'
   | 'ORDER_PROCESSING'
   | 'ORDER_SHIPPED'
   | 'ORDER_DELIVERED'
@@ -9,9 +10,15 @@ export type NotificationType =
   | 'GENERAL';
 
 @Entity('notifications')
+@Index(['role', 'createdAt'])
+@Index(['role', 'isRead', 'createdAt'])
+@Index(['type', 'orderId'], { unique: true })
 export class Notifications extends AbstractEntity {
-  @Column({ type: 'varchar', length: 255 })
+  @Column({ type: 'varchar', length: 255, nullable: true })
   userId: string;
+
+  @Column({ type: 'varchar', length: 50, nullable: true, default: 'CUSTOMER' })
+  role: string;
 
   @Column({ type: 'varchar', length: 255 })
   title: string;
@@ -24,6 +31,9 @@ export class Notifications extends AbstractEntity {
 
   @Column({ type: 'varchar', length: 255, nullable: true })
   orderId: string;
+
+  @Column({ type: 'json', nullable: true })
+  metadata: Record<string, any>;
 
   @Column({ type: 'boolean', default: false })
   isRead: boolean;

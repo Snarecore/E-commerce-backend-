@@ -3,6 +3,7 @@ import {
   Get,
   Patch,
   Param,
+  Query,
   Req,
   UseGuards,
   HttpException,
@@ -13,6 +14,9 @@ import { CONFIG } from '../../utils/config';
 import { ApiResponse } from '../../utils/response.utils';
 import { NotificationService } from './notification.service';
 import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
+import { RolesGuard } from '../../guards/role.guard';
+import { Roles } from '../../decorators/role.decorator';
+import { Role } from '../../enums/role.enum';
 
 @Controller({
   path: 'site/notifications',
@@ -31,6 +35,33 @@ export class NotificationController {
       throw new HttpException('User authentication required.', HttpStatus.UNAUTHORIZED);
     }
     return await this.service.findUserNotifications(userId);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  @Get('admin')
+  async findAdminNotifications(
+    @Query('after') after?: string,
+    @Query('limit') limit?: string
+  ): Promise<ApiResponse<{ items: any[]; unreadCount: number; nextCursor: string | null }>> {
+    const limitNum = limit ? parseInt(limit, 10) : 20;
+    return await this.service.findAdminNotifications(after, limitNum);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  @Patch('admin/read-all')
+  async markAllAdminNotificationsRead(): Promise<ApiResponse<boolean>> {
+    return await this.service.markAllAdminNotificationsRead();
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  @Patch('admin/:id/read')
+  async markAdminNotificationRead(
+    @Param('id') id: string
+  ): Promise<ApiResponse<boolean>> {
+    return await this.service.markAdminNotificationRead(id);
   }
 
   @UseGuards(JwtAuthGuard)
