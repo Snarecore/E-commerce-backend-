@@ -203,7 +203,7 @@ export class ProductService {
             } else if (dto.sortBy === 'name_desc') {
                 qb.orderBy('product.name', 'DESC');
             } else {
-                qb.orderBy('product.createdAt', 'DESC');
+                qb.orderBy('product.createdAt', 'DESC').addOrderBy('product.id', 'DESC');
             }
 
             qb.skip(skip).take(limit);
@@ -313,7 +313,8 @@ export class ProductService {
             }
 
             const order: FindOptionsOrder<Product> = {
-                createdAt: 'desc'
+                createdAt: 'desc',
+                id: 'desc'
             };
 
             const result = await this.repository.paginate({
@@ -415,7 +416,8 @@ export class ProductService {
             }
 
             const order: FindOptionsOrder<Product> = {
-                createdAt: 'desc'
+                createdAt: 'desc',
+                id: 'desc'
             };
 
             const result = await this.repository.paginate({
