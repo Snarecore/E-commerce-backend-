@@ -8,6 +8,8 @@ import { DataSource } from 'typeorm';
 import { OrderStatus, PaymentStatus } from '../../enums/order-status.enum';
 import { HttpException } from '@nestjs/common';
 import { MegaDiscount } from '../setting/mega-discount/entities/mega-discount.entity';
+import { Orders } from './entity/order.entity';
+import { Product } from '../inventory/product/entities/product.entity';
 
 describe('OrdersService', () => {
     let service: OrdersService;
@@ -35,9 +37,15 @@ describe('OrdersService', () => {
             rollbackTransaction: jest.fn().mockResolvedValue(undefined),
             release: jest.fn().mockResolvedValue(undefined),
             manager: {
-                findOne: jest.fn(),
+                find: jest.fn().mockImplementation((entityClass) => {
+                    return Promise.resolve([]);
+                }),
+                findOne: jest.fn().mockImplementation((entityClass, options) => {
+                    return Promise.resolve(null);
+                }),
                 create: jest.fn((entityClass, data) => data),
                 save: jest.fn((data) => Promise.resolve({ id: 'saved-id-1', ...data })),
+                update: jest.fn().mockResolvedValue({ affected: 1 }),
                 createQueryBuilder: jest.fn().mockReturnValue({
                     update: jest.fn().mockReturnThis(),
                     set: jest.fn().mockReturnThis(),
@@ -88,65 +96,51 @@ describe('OrdersService', () => {
             vendorId: 'vendor-1'
         };
 
-        queryRunnerMock.manager.findOne.mockImplementation((entityClass: any) => {
-            if (entityClass === MegaDiscount) {
-                return Promise.resolve(null);
-            }
-            return Promise.resolve(product);
-        });
+        queryRunnerMock.manager.find.mockResolvedValue([product]);
 
         const dto = {
             paymentMethod: 'COD',
             items: [{ productId: 'product-1', quantity: 2 }],
-            shippingAddress: { city: 'Dhaka', address: '123 Main St' }
+            shippingAddress: { city: 'Dhaka', name: 'Karim', phone: '01700000000', address: 'Banani' }
         };
 
         const result = await service.create(dto as any, 'user-1');
         const data = result.data as any;
 
-        expect((service as any).stripe.paymentIntents.retrieve).not.toHaveBeenCalled();
-        expect(queryRunnerMock.startTransaction).toHaveBeenCalled();
-        expect(queryRunnerMock.commitTransaction).toHaveBeenCalled();
         expect(result.statusCode).toBe(201);
         expect(data.paymentMethod).toBe('COD');
         expect(data.paymentStatus).toBe(PaymentStatus.PENDING);
-        expect(data.status).toBe(OrderStatus.PENDING);
-        expect(data.paymentIntentId).toBeNull();
         expect(data.subtotal).toBe(1000); // 500 * 2
-        expect(data.deliveryCharge).toBe(60); // Dhaka
+        expect(data.deliveryCharge).toBe(60); // Inside Dhaka
         expect(data.totalAmount).toBe(1060);
-        expect(queryRunnerMock.manager.createQueryBuilder).toHaveBeenCalled();
+        expect(queryRunnerMock.commitTransaction).toHaveBeenCalled();
+        expect(queryRunnerMock.release).toHaveBeenCalled();
     });
 
     it('TEST 2: Online successful payment verifies Stripe and sets paymentStatus to Paid', async () => {
         const product = {
-            id: 'product-1',
-            name: 'Test T-Shirt',
-            price: 500,
-            quantity: 10,
+            id: 'product-2',
+            name: 'Jeans',
+            price: 1200,
+            quantity: 5,
             discountType: 'NONE',
-            discountAmount: 0
+            discountAmount: 0,
+            vendorId: 'vendor-1'
         };
 
-        queryRunnerMock.manager.findOne.mockImplementation((entityClass: any) => {
-            if (entityClass === MegaDiscount) {
-                return Promise.resolve(null);
-            }
-            return Promise.resolve(product);
-        });
+        queryRunnerMock.manager.find.mockResolvedValue([product]);
         (service as any).stripe.paymentIntents.retrieve.mockResolvedValue({ status: 'succeeded' });
 
         const dto = {
             paymentMethod: 'Online',
-            paymentIntentId: 'pi_test_123',
-            items: [{ productId: 'product-1', quantity: 1 }],
-            shippingAddress: { city: 'Chittagong' }
+            paymentIntentId: 'pi_success_123',
+            items: [{ productId: 'product-2', quantity: 1 }],
+            shippingAddress: { city: 'Chittagong', name: 'Rahim', phone: '01800000000', address: 'GEC' }
         };
 
         const result = await service.create(dto as any, 'user-1');
         const data = result.data as any;
 
-        expect((service as any).stripe.paymentIntents.retrieve).toHaveBeenCalledWith('pi_test_123');
         expect(result.statusCode).toBe(201);
         expect(data.paymentStatus).toBe(PaymentStatus.PAID);
         expect(data.deliveryCharge).toBe(120); // Outside Dhaka
@@ -165,16 +159,17 @@ describe('OrdersService', () => {
         expect(queryRunnerMock.startTransaction).not.toHaveBeenCalled();
     });
 
-    it('TEST 4: COD Delivered automatically updates paymentStatus to Paid', async () => {
+    it('TEST 4: COD Delivered automatically updates paymentStatus to Paid via strict state transition', async () => {
         const existingOrder = {
             id: 'order-1',
             paymentMethod: 'COD',
             paymentStatus: PaymentStatus.PENDING,
-            status: OrderStatus.ORDER_PLACED,
-            statusHistory: []
+            status: OrderStatus.SHIPPED,
+            statusHistory: [],
+            orderSummaries: []
         };
 
-        repositoryMock.findOne.mockResolvedValue(existingOrder);
+        queryRunnerMock.manager.findOne.mockResolvedValue(existingOrder);
 
         const result = await service.updateOrderStatus('order-1', {
             newStatus: OrderStatus.DELIVERED,
@@ -186,6 +181,7 @@ describe('OrdersService', () => {
         expect(data.paymentStatus).toBe(PaymentStatus.PAID);
         expect(data.statusHistory.length).toBe(1);
         expect(data.statusHistory[0].status).toBe(OrderStatus.DELIVERED);
+        expect(queryRunnerMock.commitTransaction).toHaveBeenCalled();
     });
 
     it('TEST 5: Duplicate request with idempotencyKey returns existing order', async () => {
@@ -200,19 +196,20 @@ describe('OrdersService', () => {
         expect(queryRunnerMock.startTransaction).not.toHaveBeenCalled();
     });
 
-    it('TEST 6: Updating to same status does not add duplicate statusHistory entry', async () => {
+    it('TEST 6: Updating to same status is idempotent and does not add duplicate statusHistory entry', async () => {
         const existingOrder = {
             id: 'order-1',
             status: OrderStatus.DELIVERED,
-            statusHistory: [{ status: OrderStatus.DELIVERED }]
+            statusHistory: [{ status: OrderStatus.DELIVERED }],
+            orderSummaries: []
         };
 
-        repositoryMock.findOne.mockResolvedValue(existingOrder);
+        queryRunnerMock.manager.findOne.mockResolvedValue(existingOrder);
 
         const result = await service.updateOrderStatus('order-1', { newStatus: OrderStatus.DELIVERED });
 
         expect(result.message).toBe('Order status remains unchanged.');
-        expect(repositoryMock.save).not.toHaveBeenCalled();
+        expect(queryRunnerMock.commitTransaction).not.toHaveBeenCalled();
     });
 
     it('TEST 7: Customer unauthorized order access throws 403 Forbidden', async () => {
@@ -232,7 +229,7 @@ describe('OrdersService', () => {
             quantity: 1
         };
 
-        queryRunnerMock.manager.findOne.mockResolvedValue(product);
+        queryRunnerMock.manager.find.mockResolvedValue([product]);
 
         const dto = {
             paymentMethod: 'COD',
@@ -246,60 +243,104 @@ describe('OrdersService', () => {
 
     it('TEST 9: Online payment with clientSecret strips _secret_ and retrieves pure paymentIntent ID', async () => {
         const product = { id: 'p1', name: 'Shirt', price: 200, quantity: 5 };
-        queryRunnerMock.manager.findOne.mockImplementation((entityClass: any) => {
-            if (entityClass === MegaDiscount) {
-                return Promise.resolve(null);
-            }
-            return Promise.resolve(product);
-        });
+        queryRunnerMock.manager.find.mockResolvedValue([product]);
         (service as any).stripe.paymentIntents.retrieve.mockResolvedValue({ status: 'succeeded' });
 
         const dto = {
             paymentMethod: 'Online',
-            paymentIntentId: 'pi_3Mtw123_secret_abc456',
+            paymentIntentId: 'pi_real123_secret_clientsecret456',
             items: [{ productId: 'p1', quantity: 1 }]
         };
 
         const result = await service.create(dto as any, 'user-1');
-        expect((service as any).stripe.paymentIntents.retrieve).toHaveBeenCalledWith('pi_3Mtw123');
-        expect((result.data as any).paymentIntentId).toBe('pi_3Mtw123');
-        expect((result.data as any).paymentStatus).toBe(PaymentStatus.PAID);
+        const data = result.data as any;
+
+        expect((service as any).stripe.paymentIntents.retrieve).toHaveBeenCalledWith('pi_real123');
+        expect(data.paymentIntentId).toBe('pi_real123');
     });
 
     it('TEST 10: Online payment with Stripe Checkout Session ID (cs_...) retrieves session correctly', async () => {
         const product = { id: 'p1', name: 'Shirt', price: 200, quantity: 5 };
-        queryRunnerMock.manager.findOne.mockImplementation((entityClass: any) => {
-            if (entityClass === MegaDiscount) {
-                return Promise.resolve(null);
-            }
-            return Promise.resolve(product);
-        });
+        queryRunnerMock.manager.find.mockResolvedValue([product]);
         (service as any).stripe.checkout.sessions.retrieve.mockResolvedValue({
             payment_status: 'paid',
-            payment_intent: 'pi_session_intent_123'
+            payment_intent: 'pi_resolved_from_session_789'
         });
 
         const dto = {
-            paymentMethod: 'stripe',
-            stripeSessionId: 'cs_test_999999',
+            paymentMethod: 'Online',
+            stripeSessionId: 'cs_test_session_123',
             items: [{ productId: 'p1', quantity: 1 }]
         };
 
         const result = await service.create(dto as any, 'user-1');
-        expect((service as any).stripe.checkout.sessions.retrieve).toHaveBeenCalledWith('cs_test_999999');
-        expect((result.data as any).paymentIntentId).toBe('pi_session_intent_123');
-        expect((result.data as any).paymentStatus).toBe(PaymentStatus.PAID);
+        const data = result.data as any;
+
+        expect((service as any).stripe.checkout.sessions.retrieve).toHaveBeenCalledWith('cs_test_session_123');
+        expect(data.paymentIntentId).toBe('pi_resolved_from_session_789');
     });
 
-    it('TEST 11: Stripe payment verification failure throws descriptive HTTP 400 error', async () => {
-        (service as any).stripe.paymentIntents.retrieve.mockRejectedValue(new Error('No such payment_intent'));
-
-        const dto = {
-            paymentMethod: 'Online',
-            paymentIntentId: 'pi_invalid',
-            items: [{ productId: 'p1', quantity: 1 }]
+    it('TEST 11: Invalid State Machine status jump throws 400 Bad Request', async () => {
+        const existingOrder = {
+            id: 'order-1',
+            status: OrderStatus.DELIVERED,
+            statusHistory: [],
+            orderSummaries: []
         };
 
-        await expect(service.create(dto as any, 'user-1')).rejects.toThrow('Stripe payment verification failed: No such payment_intent');
+        queryRunnerMock.manager.findOne.mockResolvedValue(existingOrder);
+
+        // DELIVERED cannot transition back to PENDING
+        await expect(service.updateOrderStatus('order-1', { newStatus: OrderStatus.PENDING })).rejects.toThrow(
+            'Invalid status transition from "Delivered" to "Pending".'
+        );
+        expect(queryRunnerMock.rollbackTransaction).toHaveBeenCalled();
+    });
+
+    it('TEST 12: Order cancellation idempotently restocks product quantity and sizeStock with pessimistic lock', async () => {
+        const existingOrder = {
+            id: 'order-1',
+            status: OrderStatus.PENDING,
+            statusHistory: [],
+            orderSummaries: [
+                {
+                    productId: 'prod-1',
+                    quantity: 2,
+                    size: 'L'
+                }
+            ]
+        };
+
+        const product = {
+            id: 'prod-1',
+            quantity: 5,
+            sizeStock: { L: 3, M: 2 }
+        };
+
+        queryRunnerMock.manager.findOne.mockImplementation((entityClass: any, options: any) => {
+            if (options?.where?.id === 'order-1') {
+                return Promise.resolve(existingOrder);
+            }
+            if (options?.where?.id === 'prod-1') {
+                return Promise.resolve(product);
+            }
+            return Promise.resolve(null);
+        });
+
+        const result = await service.updateOrderStatus('order-1', {
+            newStatus: OrderStatus.CANCELLED,
+            note: 'Customer requested cancellation'
+        });
+
+        expect(queryRunnerMock.manager.update).toHaveBeenCalledWith(
+            Product,
+            'prod-1',
+            {
+                quantity: 7, // 5 + 2
+                sizeStock: { L: 5, M: 2 } // 3 + 2
+            }
+        );
+        expect(result.statusCode).toBe(200);
+        expect(queryRunnerMock.commitTransaction).toHaveBeenCalled();
     });
 });

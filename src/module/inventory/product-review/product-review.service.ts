@@ -91,7 +91,7 @@ export class ProductReviewService {
 		try {
 			const query: ProductReviewFilter = {};
 
-			if (userData?.id) {
+			if (userData?.role === 'vendor' && userData?.id) {
 				query.vendorId = userData.id;
 			}
 

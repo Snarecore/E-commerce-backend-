@@ -1,3 +1,8 @@
+import { ProductPricingResolver } from "../../utils/pricing.engine";
+import { MegaDiscount } from "../setting/mega-discount/entities/mega-discount.entity";
+import { SINGLETON_MEGA_DISCOUNT_ID } from "../setting/mega-discount/mega-discount.repository";
+import { InjectDataSource } from "@nestjs/typeorm";
+import { DataSource } from "typeorm";
 import { HttpException, HttpStatus, Injectable, OnModuleInit } from '@nestjs/common';
 import { QueryRunner } from 'typeorm';
 import { ResponseUtils, ApiResponse } from '../../utils/response.utils';
@@ -16,7 +21,8 @@ export class CouponService implements OnModuleInit {
     constructor(
         private readonly couponRepository: CouponRepository,
         private readonly couponUsageRepository: CouponUsageRepository,
-        private readonly productRepository: ProductRepository
+        private readonly productRepository: ProductRepository,
+        @InjectDataSource() private readonly dataSource: DataSource
     ) {}
 
     async onModuleInit() {
@@ -119,13 +125,27 @@ export class CouponService implements OnModuleInit {
             throw new HttpException('Coupon usage limit has been reached.', HttpStatus.BAD_REQUEST);
         }
 
-        // Calculate server subtotal & shipping
+        // Fetch active mega discount if available
+        let megaDiscountRecord: MegaDiscount | null = null;
+        try {
+            megaDiscountRecord = await this.dataSource.getRepository(MegaDiscount).findOne({
+                where: { id: SINGLETON_MEGA_DISCOUNT_ID }
+            });
+        } catch {
+            megaDiscountRecord = null;
+        }
+
+        // Calculate server subtotal with ProductPricingResolver
         let serverSubtotal = 0;
         for (const item of dto.items || []) {
             const product = await this.productRepository.findOne(item.productId);
             if (product) {
-                const price = Number(product.price || 0);
-                serverSubtotal += price * item.quantity;
+                const unitPrice = ProductPricingResolver.resolveUnitPrice({
+                    price: Number(product.price) || 0,
+                    discountType: product.discountType,
+                    discountAmount: Number(product.discountAmount) || 0
+                }, megaDiscountRecord);
+                serverSubtotal += unitPrice * (Number(item.quantity) || 1);
             }
         }
 

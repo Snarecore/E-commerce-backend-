@@ -105,8 +105,13 @@ export class ProfitReportService implements OnModuleInit {
             const dateCond = this.buildDateCondition(dto.startDate, dto.endDate);
             const categoryCond = dto.mainCategoryId ? `os.snapshotMainCategoryId = ?` : `1=1`;
 
-            const whereParams = [...statusCond.params, ...dateCond.params];
-            if (dto.mainCategoryId) whereParams.push(dto.mainCategoryId);
+            const orderParams = dto.mainCategoryId
+                ? [dto.mainCategoryId, ...statusCond.params, ...dateCond.params]
+                : [...statusCond.params, ...dateCond.params];
+
+            const summaryParams = dto.mainCategoryId
+                ? [...statusCond.params, ...dateCond.params, dto.mainCategoryId]
+                : [...statusCond.params, ...dateCond.params];
 
             const orderStatsQuery = dto.mainCategoryId ? `
                 SELECT 
@@ -147,8 +152,8 @@ export class ProfitReportService implements OnModuleInit {
             `;
 
             const [orderRes, summaryRes] = await Promise.all([
-                this.dataSource.query(orderStatsQuery, whereParams),
-                this.dataSource.query(summaryStatsQuery, whereParams)
+                this.dataSource.query(orderStatsQuery, orderParams),
+                this.dataSource.query(summaryStatsQuery, summaryParams)
             ]);
 
             const orderRow = orderRes[0] || {};

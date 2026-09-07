@@ -8,7 +8,7 @@ import { UploadMulterFile } from '../../space-module/space-service';
 import { SpaceService } from '../../space-module/space-service/space.service';
 import { ResponseUtils, ApiResponse } from '../../../utils/response.utils';
 import { FirstCategoryFilterDto } from './dto/first-category-filter.dto';
-import { FindOptionsOrder } from 'typeorm';
+import { FindOptionsOrder, Like } from 'typeorm';
 
 @Injectable()
 export class FirstCategoryService {
@@ -78,7 +78,13 @@ export class FirstCategoryService {
         }>
     > {
         try {
-            let query = {};
+            let query: any = {};
+            if (dto.mainCategoryId) {
+                query.mainCategoryId = dto.mainCategoryId;
+            }
+            if (dto.searchKeyword) {
+                query.name = Like(`%${dto.searchKeyword}%`);
+            }
 
             const order: FindOptionsOrder<FirstCategory> = {
                 position: 'asc',

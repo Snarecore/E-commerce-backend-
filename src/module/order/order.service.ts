@@ -1,3 +1,4 @@
+import { ProductPricingResolver } from "../../utils/pricing.engine";
 import { HttpException, HttpStatus, Injectable, OnModuleInit, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ResponseUtils, ApiResponse } from '../../utils/response.utils';
@@ -30,6 +31,36 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { AuditAction } from '../audit-log/constants/audit-action.enum';
 import { AuditModule } from '../audit-log/constants/audit-module.enum';
 import { AuditTargetType } from '../audit-log/constants/audit-target-type.enum';
+
+
+const ALLOWED_ORDER_TRANSITIONS: Record<string, string[]> = {
+    [OrderStatus.PENDING]: [OrderStatus.ORDER_PLACED, OrderStatus.PROCESSING, OrderStatus.REJECTED, OrderStatus.CANCELLED],
+    [OrderStatus.ORDER_PLACED]: [OrderStatus.PROCESSING, OrderStatus.SHIPPED, OrderStatus.CANCELLED],
+    [OrderStatus.PROCESSING]: [OrderStatus.SHIPPED, OrderStatus.CANCELLED],
+    [OrderStatus.SHIPPED]: [OrderStatus.DELIVERED, OrderStatus.RETURNED],
+    [OrderStatus.DELIVERED]: [OrderStatus.RETURNED],
+    [OrderStatus.COMPLETED]: [OrderStatus.RETURNED],
+    [OrderStatus.REJECTED]: [],
+    [OrderStatus.CANCELLED]: [],
+    [OrderStatus.RETURNED]: [],
+    [OrderStatus.FAILED]: [],
+};
+
+const DEDUCTED_STATUS_GROUP = new Set([
+    OrderStatus.PENDING,
+    OrderStatus.ORDER_PLACED,
+    OrderStatus.PROCESSING,
+    OrderStatus.SHIPPED,
+    OrderStatus.DELIVERED,
+    OrderStatus.COMPLETED
+]);
+
+const RESTOCKED_STATUS_GROUP = new Set([
+    OrderStatus.CANCELLED,
+    OrderStatus.REJECTED,
+    OrderStatus.RETURNED,
+    OrderStatus.FAILED
+]);
 
 @Injectable()
 export class OrdersService implements OnModuleInit {
@@ -241,7 +272,7 @@ export class OrdersService implements OnModuleInit {
                         }
                     }
 
-                    const unitPrice = unitAfterDiscount({
+                    const unitPrice = ProductPricingResolver.resolveUnitPrice({
                         price: Number(product.price) || 0,
                         discountType: product.discountType,
                         discountAmount: Number(product.discountAmount) || 0
@@ -341,7 +372,9 @@ export class OrdersService implements OnModuleInit {
                         snapshotFirstCategoryId: prepItem.product.firstCategoryId || null,
                         snapshotSecondCategoryId: prepItem.product.secondCategoryId || null,
                         vendorId: prepItem.product.vendorId || '',
-                        commissionAmount: 0
+                        commissionAmount: 0,
+                        size: prepItem.selectedSize || null,
+                        selectedSize: prepItem.selectedSize || null
                     } as any);
                     await queryRunner.manager.save(summaryEntity);
 
@@ -410,51 +443,106 @@ export class OrdersService implements OnModuleInit {
         }
     }
 
-    async updateOrderStatus(
+        async updateOrderStatus(
         id: string,
         dto: UpdateOrderStatusDto,
         adminUser?: any
     ): Promise<ApiResponse<Orders>> {
+        const queryRunner = this.dataSource.createQueryRunner();
+        await queryRunner.connect();
+        await queryRunner.startTransaction();
+
         try {
-            const order = await this.repository.findOne(id);
+            const order = await queryRunner.manager.findOne(Orders, {
+                where: { id },
+                relations: ['orderSummaries']
+            });
+
             if (!order) {
                 throw new HttpException('Order not found!', HttpStatus.NOT_FOUND);
             }
 
-            if (order.status === dto.newStatus) {
+            const currentStatus = order.status;
+            const targetStatus = dto.newStatus;
+
+            // 1. Idempotency Early Exit
+            if (currentStatus === targetStatus) {
+                await queryRunner.rollbackTransaction();
                 return ResponseUtils.successResponseHandler(200, 'Order status remains unchanged.', 'data', order);
             }
 
-            order.status = dto.newStatus;
+            // 2. State Machine Validation
+            const allowedNextStates = ALLOWED_ORDER_TRANSITIONS[currentStatus] || [];
+            if (!allowedNextStates.includes(targetStatus)) {
+                throw new HttpException(
+                    `Invalid status transition from "${currentStatus}" to "${targetStatus}".`,
+                    HttpStatus.BAD_REQUEST
+                );
+            }
 
-            // Ensure rejection columns exist in MySQL schema
-            try {
-                await (this.repository as any).query(`ALTER TABLE \`orders\` ADD COLUMN \`rejectionReason\` varchar(255) NULL`);
-            } catch (e) {}
-            try {
-                await (this.repository as any).query(`ALTER TABLE \`orders\` ADD COLUMN \`rejectionMessage\` text NULL`);
-            } catch (e) {}
+            // 3. Stock State Transition (Pessimistic Write Lock)
+            const wasDeducted = DEDUCTED_STATUS_GROUP.has(currentStatus);
+            const willBeRestocked = RESTOCKED_STATUS_GROUP.has(targetStatus);
 
-            if (dto.newStatus === OrderStatus.REJECTED || (dto.newStatus as string) === 'Rejected') {
+            if (wasDeducted && willBeRestocked) {
+                const summaries = order.orderSummaries || [];
+                for (const item of summaries) {
+                    if (!item.productId) continue;
+
+                    const product = await queryRunner.manager.findOne(Product, {
+                        where: { id: item.productId },
+                        lock: { mode: 'pessimistic_write' }
+                    });
+
+                    if (product) {
+                        const currentQty = Number(product.quantity) || 0;
+                        const restockQty = Number(item.quantity) || 1;
+                        let updatedSizeStock = product.sizeStock;
+
+                        const selectedSize = (item as any).size || (item as any).selectedSize || '';
+                        if (
+                            updatedSizeStock &&
+                            typeof updatedSizeStock === 'object' &&
+                            selectedSize &&
+                            updatedSizeStock[selectedSize] !== undefined
+                        ) {
+                            const curSizeQty = Number(updatedSizeStock[selectedSize]) || 0;
+                            updatedSizeStock = {
+                                ...updatedSizeStock,
+                                [selectedSize]: curSizeQty + restockQty
+                            };
+                        }
+
+                        await queryRunner.manager.update(Product, product.id, {
+                            quantity: currentQty + restockQty,
+                            sizeStock: updatedSizeStock
+                        });
+                    }
+                }
+            }
+
+            // 4. Update Order Fields
+            order.status = targetStatus;
+
+            if (targetStatus === OrderStatus.REJECTED || (targetStatus as string) === 'Rejected') {
                 if (dto.rejectionReason) order.rejectionReason = dto.rejectionReason;
                 if (dto.rejectionMessage) order.rejectionMessage = dto.rejectionMessage;
             }
 
-            // COD Auto-Payment on Delivered
-            if ((order.paymentMethod || '').toUpperCase() === 'COD' && dto.newStatus === OrderStatus.DELIVERED) {
+            if ((order.paymentMethod || '').toUpperCase() === 'COD' && targetStatus === OrderStatus.DELIVERED) {
                 order.paymentStatus = PaymentStatus.PAID;
             }
 
             const nowIso = new Date().toISOString();
             const history = Array.isArray(order.statusHistory) ? order.statusHistory : [];
             const historyNote = dto.note || (
-                dto.newStatus === OrderStatus.REJECTED || (dto.newStatus as string) === 'Rejected'
+                targetStatus === OrderStatus.REJECTED || (targetStatus as string) === 'Rejected'
                     ? `Reason: ${dto.rejectionReason || 'Admin decision'}${dto.rejectionMessage ? ` - ${dto.rejectionMessage}` : ''}`
-                    : `Status updated to ${dto.newStatus}`
+                    : `Status updated to ${targetStatus}`
             );
 
             history.push({
-                status: dto.newStatus,
+                status: targetStatus,
                 timestamp: nowIso,
                 updatedBy: adminUser?.role || 'admin',
                 updatedByUserId: adminUser?.id || adminUser?.userId || '',
@@ -462,7 +550,9 @@ export class OrdersService implements OnModuleInit {
             });
             order.statusHistory = history;
 
-            const updatedOrder = (await this.repository.save(order)) as Orders;
+            const updatedOrder = (await queryRunner.manager.save(order)) as Orders;
+
+            await queryRunner.commitTransaction();
 
             if (this.auditLogService) {
                 this.auditLogService.createAsyncLog({
@@ -478,30 +568,33 @@ export class OrdersService implements OnModuleInit {
                     changes: {
                         type: 'FIELD_DIFF',
                         changedFields: {
-                            status: { from: order.status, to: dto.newStatus }
+                            status: { from: currentStatus, to: targetStatus }
                         }
                     }
                 });
             }
 
             if (this.notificationService && updatedOrder?.userId) {
-                const notifNote = dto.newStatus === OrderStatus.REJECTED || (dto.newStatus as string) === 'Rejected'
+                const notifNote = targetStatus === OrderStatus.REJECTED || (targetStatus as string) === 'Rejected'
                     ? `Your order #${updatedOrder.orderId || updatedOrder.id} was rejected. Reason: ${dto.rejectionReason || 'Admin Decision'}${dto.rejectionMessage ? ` (${dto.rejectionMessage})` : ''}`
-                    : dto.note || `Order status updated to "${dto.newStatus}"`;
+                    : dto.note || `Order status updated to "${targetStatus}"`;
 
                 await this.notificationService.createOrderNotification(
                     updatedOrder.userId,
                     updatedOrder.orderId || updatedOrder.id,
-                    dto.newStatus,
+                    targetStatus,
                     notifNote
                 );
             }
 
             return ResponseUtils.successResponseHandler(200, 'Order status updated successfully.', 'data', updatedOrder);
         } catch (error: unknown) {
+            await queryRunner.rollbackTransaction();
             if (error instanceof HttpException) throw error;
             const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
             throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+        } finally {
+            await queryRunner.release();
         }
     }
 
@@ -681,55 +774,82 @@ export class OrdersService implements OnModuleInit {
         }
     }
 
-    async findVendorOrderList(
+        async findVendorOrderList(
         dto: OrdersFilterDto,
         userData: any
     ): Promise<ApiResponse<{ data: OrdersInterface[]; total: number; page: number; limit: number; pageCount: number }>> {
         try {
-            const order: FindOptionsOrder<Orders> = {
-                createdAt: 'desc'
-            };
+            const page = dto.page ? Number(dto.page) : 1;
+            const limit = dto.limit ? Number(dto.limit) : 10;
+            const skip = (page - 1) * limit;
 
-            const result = await this.repository.paginate({
-                page: dto.page || 1,
-                limit: dto.limit || 10,
-                order,
-                relations: ['orderSummaries', 'user']
+            const qb = this.dataSource.getRepository(Orders).createQueryBuilder('orders')
+                .innerJoin('orders.orderSummaries', 'summary')
+                .leftJoinAndSelect('orders.user', 'user')
+                .leftJoinAndSelect('orders.orderSummaries', 'allSummaries')
+                .where('summary.vendorId = :vendorId', { vendorId: userData.id })
+                .andWhere('(orders.isDeleted = false OR orders.isDeleted IS NULL)');
+
+            if (dto.status) {
+                qb.andWhere('orders.status = :status', { status: dto.status });
+            }
+
+            if (dto.paymentStatus) {
+                qb.andWhere('orders.paymentStatus = :paymentStatus', { paymentStatus: dto.paymentStatus });
+            }
+
+            if (dto.orderId) {
+                const cleanOrderId = dto.orderId.replace(/^#/, '').trim();
+                qb.andWhere('orders.orderId LIKE :orderId', { orderId: `%${cleanOrderId}%` });
+            }
+
+            if (dto.startDate && dto.endDate) {
+                qb.andWhere('orders.createdAt BETWEEN :startDate AND :endDate', {
+                    startDate: new Date(dto.startDate),
+                    endDate: new Date(dto.endDate)
+                });
+            } else if (dto.startDate) {
+                qb.andWhere('orders.createdAt >= :startDate', { startDate: new Date(dto.startDate) });
+            } else if (dto.endDate) {
+                qb.andWhere('orders.createdAt <= :endDate', { endDate: new Date(dto.endDate) });
+            }
+
+            qb.orderBy('orders.createdAt', 'DESC')
+                .addOrderBy('orders.id', 'DESC')
+                .skip(skip)
+                .take(limit);
+
+            const [orders, total] = await qb.getManyAndCount();
+
+            const filteredOrders = orders.map((order) => {
+                const vendorSummaries =
+                    order.orderSummaries?.filter((summary) => summary.vendorId === userData.id) || [];
+
+                const vendorTotalAmount = vendorSummaries.reduce(
+                    (sum, item) => sum + Number(item.price) * (Number(item.quantity) || 1),
+                    0
+                );
+
+                const vendorTotalCommission = vendorSummaries.reduce(
+                    (sum, item) => sum + Number(item.commissionAmount ?? 0),
+                    0
+                );
+
+                return {
+                    ...order,
+                    orderSummaries: vendorSummaries,
+                    vendorTotalAmount,
+                    vendorTotalCommission,
+                    user: order.user ? toSafeUser(order.user) : null
+                };
             });
 
-            const filteredOrders = result.data
-                .map((order) => {
-                    const vendorSummaries =
-                        order.orderSummaries?.filter((summary) => summary.vendorId === userData.id) || [];
-
-                    if (vendorSummaries.length === 0) return null;
-
-                    const vendorTotalAmount = vendorSummaries.reduce(
-                        (sum, item) => sum + Number(item.price) * item.quantity,
-                        0
-                    );
-
-                    const vendorTotalCommission = vendorSummaries.reduce(
-                        (sum, item) => sum + Number(item.commissionAmount ?? 0),
-                        0
-                    );
-
-                    return {
-                        ...order,
-                        orderSummaries: vendorSummaries,
-                        vendorTotalAmount,
-                        vendorTotalCommission,
-                        user: toSafeUser(order.user)
-                    };
-                })
-                .filter((order) => order !== null);
-
             const payload = {
-                data: filteredOrders,
-                total: filteredOrders.length,
-                page: result.page,
-                limit: result.limit,
-                pageCount: Math.ceil(filteredOrders.length / result.limit)
+                data: filteredOrders as any,
+                total,
+                page,
+                limit,
+                pageCount: Math.ceil(total / limit)
             };
 
             return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', payload);

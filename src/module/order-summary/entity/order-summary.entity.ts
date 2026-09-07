@@ -18,6 +18,13 @@ export class OrderSummary extends AbstractEntity {
     @Column({ type: 'varchar', nullable: true })
     productImage: string;
 
+    @Column({ type: "varchar", nullable: true })
+    size: string;
+
+    @Column({ type: "varchar", nullable: true })
+    selectedSize: string;
+
+
     @Column({ type: 'decimal', precision: 10, scale: 2, nullable: false })
     price: number;
 

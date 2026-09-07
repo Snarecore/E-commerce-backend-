@@ -8,7 +8,7 @@ import { UploadMulterFile } from '../../space-module/space-service';
 import { SpaceService } from '../../space-module/space-service/space.service';
 import { ResponseUtils, ApiResponse } from '../../../utils/response.utils';
 import { SecondCategoryFilterDto } from './dto/second-category-filter.dto';
-import { FindOptionsOrder } from 'typeorm';
+import { FindOptionsOrder, Like } from 'typeorm';
 
 @Injectable()
 export class SecondCategoryService {
@@ -54,7 +54,16 @@ export class SecondCategoryService {
 
 	async findAll(dto: SecondCategoryFilterDto): Promise<ApiResponse<{ data: SecondCategoryInterface[]; total: number; page: number; limit: number, pageCount: number }>> {
 			try {
-				let query = {};
+				let query: any = {};
+				if (dto.firstCategoryId) {
+					query.firstCategoryId = dto.firstCategoryId;
+				}
+				if (dto.mainCategoryId) {
+					query.mainCategoryId = dto.mainCategoryId;
+				}
+				if (dto.searchKeyword) {
+					query.name = Like(`%${dto.searchKeyword}%`);
+				}
 	
 				const order: FindOptionsOrder<SecondCategory> = {
 					position: 'asc',

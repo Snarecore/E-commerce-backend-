@@ -26,6 +26,7 @@ function transformOptionalInt({ value }: { value: any }) {
 }
 
 export class CreateProductDto {
+    slug?: string;
     @IsNotEmpty()
     @IsString()
     name: string;

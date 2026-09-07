@@ -37,11 +37,8 @@ export class ProductService {
         userData: any
     ): Promise<ApiResponse<ProductInterface>> {
         try {
-            const slug = this.generateSlug(dto.name);
-            const existingProduct = await this.repository.findBySlug(slug);
-            if (existingProduct) {
-                throw new HttpException('Product already exists.', HttpStatus.BAD_REQUEST);
-            }
+            const slug = await this.generateUniqueSlug(dto.name);
+            dto.slug = slug;
 
             if (userData) {
                 dto.vendorId = userData?.id;
@@ -533,11 +530,7 @@ export class ProductService {
             }
 
             if (dto.name) {
-                const slug = this.generateSlug(dto.name);
-                const existingProduct = await this.repository.findBySlug(slug);
-                if (existingProduct && existingProduct.id !== id) {
-                    throw new HttpException('Product already exists.', HttpStatus.BAD_REQUEST);
-                }
+                const slug = await this.generateUniqueSlug(dto.name, id);
                 dto.slug = slug;
             }
 
@@ -669,12 +662,43 @@ export class ProductService {
         }
     }
 
-    private generateSlug(name: string): string {
-        return name
+            private async generateUniqueSlug(name: string, currentId?: string): Promise<string> {
+        const baseSlug = name
             .toLowerCase()
             .trim()
             .replace(/[^a-z0-9\s-]/g, '')
             .replace(/\s+/g, '-')
             .replace(/-+/g, '-');
+
+        if (!baseSlug) {
+            return 'product-' + Date.now();
+        }
+
+        const qb = this.repository.createQueryBuilder('product')
+            .where('(product.slug = :baseSlug OR product.slug LIKE :pattern)', {
+                baseSlug,
+                pattern: baseSlug + '-%'
+            })
+            .andWhere('product.isDeleted = false');
+
+        if (currentId) {
+            qb.andWhere('product.id != :currentId', { currentId });
+        }
+
+        const existingProducts = await qb.select(['product.slug']).getMany();
+        if (existingProducts.length === 0) {
+            return baseSlug;
+        }
+
+        const slugSet = new Set(existingProducts.map(p => p.slug));
+        if (!slugSet.has(baseSlug)) {
+            return baseSlug;
+        }
+
+        let counter = 2;
+        while (slugSet.has(baseSlug + '-' + counter)) {
+            counter++;
+        }
+        return baseSlug + '-' + counter;
     }
 }
