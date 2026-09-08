@@ -1,11 +1,10 @@
-import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
+import { Injectable, HttpException, HttpStatus, OnModuleInit } from '@nestjs/common';
 import { ProductComment } from './entities/product-comment.entity';
 import { UserRepository } from '../../user/user.repository';
 import { UserProfileRepository } from '../../user-profile/user-profile.repository';
 import { In } from 'typeorm';
 import { CreateProductCommentDto } from './dto/create-product-comment.dto';
 import { UpdateProductCommentDto } from './dto/update-product-comment.dto';
-import { CommentFilterDto } from './dto/comment-filter.dto';
 import { ProductCommentRepository } from './product-comment.repository';
 import { ApiResponse, ResponseUtils } from '../../../utils/response.utils';
 import { toSafeUser } from '../../../utils/safe-user.utils';
@@ -13,6 +12,7 @@ import { ProductRepository } from '../product/product.repository';
 import { CommentNode } from './types/comment-node.type';
 import { IsNull } from 'typeorm';
 import { Product } from '../product/entities/product.entity';
+import { CommentFilterDto } from './dto/comment-filter.dto';
 
 type ProductLite = {
     id: string;
@@ -21,13 +21,19 @@ type ProductLite = {
 };
 
 @Injectable()
-export class ProductCommentService {
+export class ProductCommentService implements OnModuleInit {
     constructor(
         private readonly repo: ProductCommentRepository,
         private readonly productRepo: ProductRepository,
         private readonly userRepo: UserRepository,
         private readonly profileRepo: UserProfileRepository
     ) { }
+
+    async onModuleInit() {
+        try {
+            await (this.repo as any).query(`ALTER TABLE \`product_comments\` ADD COLUMN \`isApproved\` tinyint(1) NOT NULL DEFAULT 0`);
+        } catch (e) {}
+    }
 
     async create(dto: CreateProductCommentDto, user: any) {
         const product = await this.productRepo.findOne(dto.productId);
@@ -44,12 +50,14 @@ export class ProductCommentService {
             productId: dto.productId,
             parentId: dto.parentId ?? null,
             userId: user.id,
-            body: dto.body
+            body: dto.body,
+            isApproved: false
         }) as ProductComment;
 
-        return ResponseUtils.successResponseHandler(201, 'Comment posted.', 'data', {
+        return ResponseUtils.successResponseHandler(201, 'Comment submitted successfully. Pending admin approval.', 'data', {
             id: saved.id,
             body: saved.body,
+            isApproved: false,
             createdAt: saved.createdAt,
             user: null,
             replies: [],
@@ -68,7 +76,7 @@ export class ProductCommentService {
         const { data: tops, total, pageCount } = await this.repo.paginate({
             page,
             limit,
-            query: { productId, parentId: IsNull() },
+            query: { productId, parentId: IsNull(), isApproved: true },
             order: { createdAt: 'desc' }
         });
 
@@ -210,12 +218,14 @@ export class ProductCommentService {
         const nodes: CommentNode[] = tops.map(t => ({
             id: t.id,
             body: t.body,
+            isApproved: t.isApproved ?? false,
             createdAt: toISO(t.createdAt),
             user: buildUser(t.userId),
             product: buildProduct((t as any).product), 
             replies: (byParent.get(t.id) ?? []).map(r => ({
                 id: r.id,
                 body: r.body,
+                isApproved: r.isApproved ?? false,
                 createdAt: toISO(r.createdAt),
                 user: buildUser(r.userId),
                 replies: [],
@@ -230,6 +240,19 @@ export class ProductCommentService {
             page,
             limit,
             pageCount
+        });
+    }
+
+    async updateStatus(commentId: string, isApproved: boolean) {
+        const c = await this.repo.findOne(commentId);
+        if (!c || c.isDeleted) throw new HttpException('Comment not found', HttpStatus.NOT_FOUND);
+
+        const updated = await this.repo.update(c.id, { isApproved }) as ProductComment;
+        return ResponseUtils.successResponseHandler(200, `Comment ${isApproved ? 'approved' : 'rejected'}.`, 'data', {
+            id: updated.id,
+            body: updated.body,
+            isApproved: updated.isApproved,
+            createdAt: updated.createdAt
         });
     }
 

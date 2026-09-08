@@ -12,6 +12,7 @@ export interface CommentUser {
 export interface CommentNode {
     id: string;
     body: string;
+    isApproved?: boolean;
     createdAt: string;
     user: CommentUser | null;
     replies: CommentNode[];  

@@ -35,4 +35,7 @@ export class ProductComment extends AbstractEntity {
 
     @Column({ type: 'text' })
     body: string;
+
+    @Column({ type: 'boolean', default: false })
+    isApproved: boolean;
 }

@@ -95,6 +95,39 @@ export class OrdersService implements OnModuleInit {
         try {
             await (this.repository as any).query(`ALTER TABLE \`orders\` ADD COLUMN \`megaDiscountPercentage\` decimal(5,2) NULL`);
         } catch (e) {}
+        try {
+            await (this.repository as any).query(`ALTER TABLE \`order-summary\` ADD COLUMN \`size\` varchar(255) NULL`);
+        } catch (e) {}
+        try {
+            await (this.repository as any).query(`ALTER TABLE \`order-summary\` ADD COLUMN \`selectedSize\` varchar(255) NULL`);
+        } catch (e) {}
+        try {
+            await (this.repository as any).query(`ALTER TABLE \`order-summary\` ADD COLUMN \`unitCostPrice\` decimal(10,2) NOT NULL DEFAULT 0`);
+        } catch (e) {}
+        try {
+            await (this.repository as any).query(`ALTER TABLE \`order-summary\` ADD COLUMN \`totalCost\` decimal(10,2) NOT NULL DEFAULT 0`);
+        } catch (e) {}
+        try {
+            await (this.repository as any).query(`ALTER TABLE \`order-summary\` ADD COLUMN \`costSource\` varchar(50) NOT NULL DEFAULT 'SNAPSHOT'`);
+        } catch (e) {}
+        try {
+            await (this.repository as any).query(`ALTER TABLE \`order-summary\` ADD COLUMN \`snapshotMainCategoryId\` varchar(255) NULL`);
+        } catch (e) {}
+        try {
+            await (this.repository as any).query(`ALTER TABLE \`order-summary\` ADD COLUMN \`snapshotFirstCategoryId\` varchar(255) NULL`);
+        } catch (e) {}
+        try {
+            await (this.repository as any).query(`ALTER TABLE \`order-summary\` ADD COLUMN \`snapshotSecondCategoryId\` varchar(255) NULL`);
+        } catch (e) {}
+        try {
+            await (this.repository as any).query(`ALTER TABLE \`order-summary\` ADD COLUMN \`commissionAmount\` decimal(10,2) NULL`);
+        } catch (e) {}
+        try {
+            await (this.repository as any).query(`ALTER TABLE \`order_summary\` ADD COLUMN \`size\` varchar(255) NULL`);
+        } catch (e) {}
+        try {
+            await (this.repository as any).query(`ALTER TABLE \`order_summary\` ADD COLUMN \`selectedSize\` varchar(255) NULL`);
+        } catch (e) {}
     }
 
     private getStripeClient(): Stripe {

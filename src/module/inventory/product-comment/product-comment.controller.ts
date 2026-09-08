@@ -9,6 +9,7 @@ import { Role } from '../../../enums/role.enum';
 import { Public } from '../../../decorators/public.decorator';
 import { CreateProductCommentDto } from './dto/create-product-comment.dto';
 import { UpdateProductCommentDto } from './dto/update-product-comment.dto';
+import { UpdateProductCommentStatusDto } from './dto/update-product-comment-status.dto';
 import { CommentFilterDto } from './dto/comment-filter.dto';
 import { Request } from 'express';
 import { ProductCommentService } from './product-comment.service';
@@ -42,6 +43,16 @@ export class ProductCommentController {
         @Query() dto: CommentFilterDto
     ): Promise<ApiResponse<{ data: CommentNode[]; total: number; page: number; limit: number; pageCount: number }>> {
         return this.service.findAll(dto);
+    }
+
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles(Role.ADMIN)
+    @Patch(':commentId/status')
+    updateStatus(
+        @Param('commentId', new ParseUUIDPipe({ version: '4' })) commentId: string,
+        @Body() dto: UpdateProductCommentStatusDto
+    ) {
+        return this.service.updateStatus(commentId, dto.isApproved);
     }
 
     @UseGuards(JwtAuthGuard, RolesGuard)
