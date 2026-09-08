@@ -1,11 +1,25 @@
+const rawInstances = process.env.PM2_INSTANCES;
+let instances = 2;
+
+if (rawInstances !== undefined && rawInstances !== null && rawInstances.trim() !== '') {
+    const parsed = Number(rawInstances);
+    if (isNaN(parsed) || !Number.isInteger(parsed) || parsed < 1) {
+        throw new Error(`[PM2 Config Error] PM2_INSTANCES must be a valid integer >= 1. Received: "${rawInstances}"`);
+    }
+    instances = parsed;
+}
+
 module.exports = {
     apps: [
         {
             name: 'bazaarbound-backend',
             script: 'dist/main.js',
-            instances: 'max',
+            instances,
             exec_mode: 'cluster',
             watch: false,
+            max_memory_restart: '1G',
+            listen_timeout: 8000,
+            kill_timeout: 5000,
             env: {
                 NODE_ENV: 'production',
                 AWS_SDK_JS_SUPPRESS_MAINTENANCE_MODE_MESSAGE: '1',

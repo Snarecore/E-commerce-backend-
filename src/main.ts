@@ -7,6 +7,9 @@ import { CONFIG } from './utils/config';
 import bodyParser from 'body-parser';
 import compression from 'compression';
 
+import { DataSource } from 'typeorm';
+import { validateServerMaxConnections } from './configs/typeorm.config';
+
 async function bootstrap(): Promise<void> {
 	dotenv.config();
 	const app = await NestFactory.create(AppModule, { rawBody: true });
@@ -48,6 +51,15 @@ async function bootstrap(): Promise<void> {
     app.enableVersioning({
         type: VersioningType.URI
     });
+	app.enableShutdownHooks();
+
+	try {
+		const ds = app.get(DataSource);
+		await validateServerMaxConnections(ds);
+	} catch (e: any) {
+		console.warn(`[DB Budget Check Note] ${e.message}`);
+	}
+
 	await app.listen(process.env.PORT ?? 5000);
 }
 bootstrap();
