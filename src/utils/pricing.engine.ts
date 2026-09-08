@@ -1,3 +1,5 @@
+import { resolveEffectiveProductPrice } from './pricing-resolver.util';
+
 export interface PricingItem {
     price: number;
     discountType?: string | null;
@@ -15,26 +17,18 @@ export class ProductPricingResolver {
      * applying product-level discount and singleton mega discount.
      */
     static resolveUnitPrice(item: PricingItem, megaDiscount?: MegaDiscountRecord | null): number {
-        const rawPrice = Number(item?.price) || 0;
-        let priceAfterProductDiscount = rawPrice;
+        const megaState = megaDiscount ? {
+            isActive: Boolean(megaDiscount.isActive),
+            discountPercentage: Number(megaDiscount.discountPercentage || 0)
+        } : null;
 
-        const dType = (item?.discountType || '').trim().toUpperCase();
-        const dAmount = Number(item?.discountAmount) || 0;
+        const resolved = resolveEffectiveProductPrice({
+            price: Number(item?.price) || 0,
+            discountType: item?.discountType || undefined,
+            discountAmount: Number(item?.discountAmount) || 0
+        }, megaState);
 
-        if (dAmount > 0) {
-            if (dType === 'PERCENT' || dType.includes('PERCENTAGE')) {
-                priceAfterProductDiscount = rawPrice - (rawPrice * dAmount) / 100;
-            } else if (dType === 'FLAT' || dType.includes('FIXED') || dType.includes('AMOUNT')) {
-                priceAfterProductDiscount = Math.max(0, rawPrice - dAmount);
-            }
-        }
-
-        if (megaDiscount?.isActive && Number(megaDiscount?.discountPercentage) > 0) {
-            const megaPercent = Number(megaDiscount.discountPercentage);
-            priceAfterProductDiscount = priceAfterProductDiscount - (priceAfterProductDiscount * megaPercent) / 100;
-        }
-
-        return Math.max(0, Number(priceAfterProductDiscount.toFixed(2)));
+        return resolved.effectivePrice;
     }
 
     /**
@@ -51,3 +45,4 @@ export class ProductPricingResolver {
         return Number(total.toFixed(2));
     }
 }
+

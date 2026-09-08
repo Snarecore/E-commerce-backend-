@@ -15,39 +15,48 @@ export function resolveEffectiveProductPrice(
 	megaDiscount?: MegaDiscountState | null
 ): ResolvedProductPrice {
 	const basePrice = Number(product.price) || 0;
-	const isMegaActive = Boolean(megaDiscount?.isActive && Number(megaDiscount.discountPercentage) > 0);
-
-	if (isMegaActive) {
-		const pct = Number(megaDiscount!.discountPercentage);
-		const clampPct = Math.min(Math.max(pct, 0), 100);
-		const rawPrice = basePrice * (1 - clampPct / 100);
-		const effectivePrice = Math.round((rawPrice + Number.EPSILON) * 100) / 100;
-
+	if (basePrice <= 0) {
 		return {
-			effectivePrice: Math.max(0, effectivePrice),
-			discountType: 'PERCENT',
-			discountAmount: clampPct,
-			isMegaDiscountApplied: true
+			effectivePrice: 0,
+			discountType: product.discountType || 'NONE',
+			discountAmount: 0,
+			isMegaDiscountApplied: false
 		};
 	}
 
-	const discountType = product.discountType || 'NONE';
-	const discountAmount = Number(product.discountAmount) || 0;
-	let effectivePrice = basePrice;
+	const dType = (product.discountType || '').trim().toUpperCase();
+	const dAmount = Number(product.discountAmount) || 0;
+	let priceAfterProductDiscount = basePrice;
 
-	if (discountType === 'PERCENT') {
-		const clampPct = Math.min(Math.max(discountAmount, 0), 100);
-		const rawPrice = basePrice * (1 - clampPct / 100);
-		effectivePrice = Math.round((rawPrice + Number.EPSILON) * 100) / 100;
-	} else if (discountType === 'FLAT') {
-		const rawPrice = basePrice - Math.max(discountAmount, 0);
-		effectivePrice = Math.round((rawPrice + Number.EPSILON) * 100) / 100;
+	if (dAmount > 0) {
+		if (dType === 'PERCENT' || dType.includes('PERCENTAGE')) {
+			priceAfterProductDiscount = basePrice - (basePrice * dAmount) / 100;
+		} else if (dType === 'FLAT' || dType.includes('FIXED') || dType.includes('AMOUNT')) {
+			priceAfterProductDiscount = Math.max(0, basePrice - dAmount);
+		}
 	}
 
+	const isMegaActive = Boolean(megaDiscount?.isActive && Number(megaDiscount.discountPercentage) > 0);
+	let finalEffectivePrice = priceAfterProductDiscount;
+
+	if (isMegaActive) {
+		const megaPercent = Number(megaDiscount!.discountPercentage);
+		const clampMega = Math.min(Math.max(megaPercent, 0), 100);
+		finalEffectivePrice = finalEffectivePrice - (finalEffectivePrice * clampMega) / 100;
+	}
+
+	finalEffectivePrice = Math.max(0, Math.round((finalEffectivePrice + Number.EPSILON) * 100) / 100);
+
+	const totalDiscountMoney = basePrice - finalEffectivePrice;
+	const effectiveDiscountPct = totalDiscountMoney > 0
+		? Math.round(((totalDiscountMoney / basePrice) * 100 + Number.EPSILON) * 100) / 100
+		: 0;
+
 	return {
-		effectivePrice: Math.max(0, effectivePrice),
-		discountType,
-		discountAmount,
-		isMegaDiscountApplied: false
+		effectivePrice: finalEffectivePrice,
+		discountType: totalDiscountMoney > 0 ? 'PERCENT' : (product.discountType || 'NONE'),
+		discountAmount: effectiveDiscountPct,
+		isMegaDiscountApplied: isMegaActive
 	};
 }
+

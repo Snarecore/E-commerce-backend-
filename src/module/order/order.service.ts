@@ -348,7 +348,8 @@ export class OrdersService implements OnModuleInit {
                     discountAmount = couponRes.discountAmount;
                 }
 
-                const totalAmount = Math.max(0, subtotal + deliveryCharge - discountAmount);
+                const subtotalRounded = Math.round((subtotal + Number.EPSILON) * 100) / 100;
+                const totalAmount = Math.max(0, Math.round((subtotalRounded + deliveryCharge - discountAmount + Number.EPSILON) * 100) / 100);
                 const nowIso = new Date().toISOString();
 
                 const initialStatusHistory = [
@@ -368,7 +369,7 @@ export class OrdersService implements OnModuleInit {
                     paymentMethod: finalPaymentMethod,
                     paymentIntentId: finalPaymentIntentId,
                     totalAmount,
-                    subtotal,
+                    subtotal: subtotalRounded,
                     deliveryCharge,
                     couponId,
                     couponCode,
