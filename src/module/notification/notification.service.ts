@@ -47,6 +47,10 @@ export class NotificationService implements OnModuleInit {
     try {
       await this.repository.query(`ALTER TABLE \`notifications\` ADD COLUMN \`metadata\` json NULL`);
     } catch (e) {}
+
+    try {
+      await this.repository.query(`ALTER TABLE \`notifications\` DROP INDEX \`UNQ_notifications_type_orderId\``);
+    } catch (e) {}
   }
 
   async findUserNotifications(userId: string): Promise<
@@ -311,24 +315,30 @@ export class NotificationService implements OnModuleInit {
     if (!userId) return null;
 
     try {
+      const cleanStatus = (status || 'Updated').trim();
       const typeMap: Record<string, NotificationType> = {
-        Processing: 'ORDER_PROCESSING',
-        'Preparing Order': 'ORDER_PROCESSING',
-        Shipped: 'ORDER_SHIPPED',
-        'Loaded for Delivery': 'ORDER_SHIPPED',
-        'Handed Over to Courier': 'ORDER_SHIPPED',
-        'Out for Delivery': 'ORDER_SHIPPED',
-        Delivered: 'ORDER_DELIVERED',
-        Cancelled: 'ORDER_CANCELLED',
-        Returned: 'ORDER_CANCELLED',
+        Pending: 'ORDER_PLACED' as NotificationType,
+        'Order Placed': 'ORDER_PLACED' as NotificationType,
+        Processing: 'ORDER_PROCESSING' as NotificationType,
+        'Preparing Order': 'ORDER_PROCESSING' as NotificationType,
+        Shipped: 'ORDER_SHIPPED' as NotificationType,
+        'Loaded for Delivery': 'ORDER_SHIPPED' as NotificationType,
+        'Handed Over to Courier': 'ORDER_SHIPPED' as NotificationType,
+        'Out for Delivery': 'ORDER_SHIPPED' as NotificationType,
+        Delivered: 'ORDER_DELIVERED' as NotificationType,
+        Completed: 'ORDER_DELIVERED' as NotificationType,
+        Rejected: 'ORDER_CANCELLED' as NotificationType,
+        Cancelled: 'ORDER_CANCELLED' as NotificationType,
+        Returned: 'ORDER_CANCELLED' as NotificationType,
+        Failed: 'ORDER_CANCELLED' as NotificationType,
       };
 
-      const notifType: NotificationType = typeMap[status] || 'GENERAL';
+      const notifType: NotificationType = typeMap[cleanStatus] || (`ORDER_STATUS_${cleanStatus.toUpperCase().replace(/\s+/g, '_')}` as NotificationType);
       const displayId = orderId.startsWith('#') ? orderId : `#${orderId}`;
 
-      const title = `Order Status: ${status}`;
+      const title = `Order Status: ${cleanStatus}`;
       const message =
-        note || `Your order ${displayId} status has been updated to "${status}".`;
+        note || `Your order ${displayId} status has been updated to "${cleanStatus}".`;
 
       const notification = await this.repository.create({
         userId,
