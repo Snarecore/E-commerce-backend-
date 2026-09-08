@@ -12,6 +12,9 @@ import { CustomerSendMessageDto } from './dto/customer-send-message.dto';
 import { AdminReplyDto } from './dto/admin-reply.dto';
 import { GetConversationsDto } from './dto/get-conversations.dto';
 import { GetThreadDto } from './dto/get-thread.dto';
+import { SocketService } from '../../socket/socket.service';
+import { SocketEvent } from '../../socket/socket.constants';
+import { MessageCreatedPayload, ConversationUpdatedPayload } from '../../socket/socket.types';
 import { Conversation } from '../conversation/entities/conversation.entity';
 
 @Injectable()
@@ -20,7 +23,8 @@ export class MessageService {
         private readonly dataSource: DataSource,
         private readonly messageRepository: MessageRepository,
         private readonly conversationRepository: ConversationRepository,
-        private readonly userRepository: UserRepository
+        private readonly userRepository: UserRepository,
+        private readonly socketService: SocketService
     ) { }
 
     /**
@@ -69,6 +73,25 @@ export class MessageService {
                 return saved;
             });
 
+            // Post-commit event emission to active conversation room and admin inbox
+            const messagePayload: MessageCreatedPayload = {
+                id: savedMessage.id,
+                conversationId: savedMessage.conversationId,
+                senderId: savedMessage.senderId,
+                senderRole: 'customer',
+                content: savedMessage.content,
+                createdAt: (savedMessage.createdAt || new Date()).toISOString()
+            };
+            const conversationPayload: ConversationUpdatedPayload = {
+                conversationId: savedMessage.conversationId,
+                lastMessage: savedMessage.content,
+                lastMessageAt: (savedMessage.createdAt || new Date()).toISOString(),
+                unreadCountAdmin: 1
+            };
+
+            this.socketService.emitToConversation(savedMessage.conversationId, SocketEvent.MESSAGE_CREATED, messagePayload);
+            this.socketService.emitToAdmin(SocketEvent.CONVERSATION_UPDATED, conversationPayload);
+
             return ResponseUtils.successResponseHandler(201, 'Message sent successfully.', 'data', savedMessage);
         } catch (error: unknown) {
             const message = error instanceof Error ? error.message : 'Internal Server Error';
@@ -110,6 +133,25 @@ export class MessageService {
 
                 return saved;
             });
+
+            // Post-commit event emission to active conversation room and admin inbox
+            const messagePayload: MessageCreatedPayload = {
+                id: savedMessage.id,
+                conversationId: savedMessage.conversationId,
+                senderId: savedMessage.senderId,
+                senderRole: 'admin',
+                content: savedMessage.content,
+                createdAt: (savedMessage.createdAt || new Date()).toISOString()
+            };
+            const conversationPayload: ConversationUpdatedPayload = {
+                conversationId: savedMessage.conversationId,
+                lastMessage: savedMessage.content,
+                lastMessageAt: (savedMessage.createdAt || new Date()).toISOString(),
+                unreadCountAdmin: 0
+            };
+
+            this.socketService.emitToConversation(savedMessage.conversationId, SocketEvent.MESSAGE_CREATED, messagePayload);
+            this.socketService.emitToAdmin(SocketEvent.CONVERSATION_UPDATED, conversationPayload);
 
             return ResponseUtils.successResponseHandler(201, 'Reply sent successfully.', 'data', savedMessage);
         } catch (error: unknown) {
@@ -209,6 +251,11 @@ export class MessageService {
             // Admin viewing thread resets unreadCountAdmin
             if (user.role === Role.ADMIN && conversation.unreadCountAdmin > 0) {
                 await this.conversationRepository.update(conversation.id, { unreadCountAdmin: 0 });
+                this.socketService.emitToConversation(conversation.id, SocketEvent.MESSAGE_SEEN, {
+                    conversationId: conversation.id,
+                    seenAt: new Date().toISOString(),
+                    seenBy: user.id
+                });
             }
 
             const limit = dto.limit || 50;

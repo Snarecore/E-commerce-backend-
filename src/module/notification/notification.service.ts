@@ -1,13 +1,18 @@
-import { HttpException, HttpStatus, Injectable, OnModuleInit } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, OnModuleInit, Optional } from '@nestjs/common';
 import { NotificationRepository } from './notification.repository';
 import { Notifications, NotificationType } from './entity/notification.entity';
 import { ApiResponse, ResponseUtils } from '../../utils/response.utils';
 import { EntityManager, In } from 'typeorm';
 import { Role } from '../../enums/role.enum';
+import { SocketService } from '../socket/socket.service';
+import { SocketEvent, SOCKET_ROOMS } from '../socket/socket.constants';
 
 @Injectable()
 export class NotificationService implements OnModuleInit {
-  constructor(private readonly repository: NotificationRepository) {}
+  constructor(
+    private readonly repository: NotificationRepository,
+    @Optional() private readonly socketService?: SocketService
+  ) {}
 
   async onModuleInit() {
     try {
@@ -294,12 +299,27 @@ export class NotificationService implements OnModuleInit {
         isRead: false,
       };
 
+      let savedNotif: Notifications | null = null;
       if (manager && 'create' in manager) {
         const notifEntity = manager.create(Notifications, notifData);
-        return await manager.save(Notifications, notifEntity);
+        savedNotif = await manager.save(Notifications, notifEntity);
       } else {
-        return await this.repository.create(notifData);
+        savedNotif = await this.repository.create(notifData);
       }
+
+      if (savedNotif && this.socketService) {
+        try {
+          this.socketService.emitToRoom(SOCKET_ROOMS.ADMIN_ROOM, SocketEvent.ADMIN_NOTIFICATION, {
+            id: savedNotif.id,
+            type: savedNotif.type,
+            title: savedNotif.title,
+            message: savedNotif.message,
+            createdAt: savedNotif.createdAt ? new Date(savedNotif.createdAt).toISOString() : new Date().toISOString()
+          });
+        } catch (socketErr) {}
+      }
+
+      return savedNotif;
     } catch (err) {
       console.error('Error creating admin order notification in DB (Idempotency check / duplicate prevented):', err);
       return null;

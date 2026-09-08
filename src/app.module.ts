@@ -65,11 +65,13 @@ import { CouponModule } from './module/coupon/coupon.module';
 import { MegaDiscountModule } from './module/setting/mega-discount/mega-discount.module';
 import { AuditLogModule } from './module/audit-log/audit-log.module';
 import { ProfitReportModule } from './module/profit-report/profit-report.module';
+import { SocketModule } from './module/socket/socket.module';
 import { AppController } from './app.controller';
 
 @Module({
 	controllers: [AppController],
 	imports: [
+		SocketModule,
 		ThrottlerModule.forRoot({
 			throttlers: [
 				{

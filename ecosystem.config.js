@@ -1,5 +1,5 @@
 const rawInstances = process.env.PM2_INSTANCES;
-let instances = 2;
+let instances = 1; // Default to 1 worker in Phase 1 for deterministic in-memory Socket.io event bus without Redis
 
 if (rawInstances !== undefined && rawInstances !== null && rawInstances.trim() !== '') {
     const parsed = Number(rawInstances);

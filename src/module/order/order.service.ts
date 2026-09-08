@@ -62,6 +62,9 @@ const RESTOCKED_STATUS_GROUP = new Set([
     OrderStatus.FAILED
 ]);
 
+import { SocketService } from '../socket/socket.service';
+import { SocketEvent, SOCKET_ROOMS } from '../socket/socket.constants';
+
 @Injectable()
 export class OrdersService implements OnModuleInit {
     private stripe: Stripe;
@@ -76,7 +79,8 @@ export class OrdersService implements OnModuleInit {
         @Optional() private readonly configService?: ConfigService,
         @Optional() private readonly couponService?: CouponService,
         @Optional() private readonly megaDiscountRepository?: MegaDiscountRepository,
-        @Optional() private readonly auditLogService?: AuditLogService
+        @Optional() private readonly auditLogService?: AuditLogService,
+        @Optional() private readonly socketService?: SocketService
     ) {}
 
     async onModuleInit() {
@@ -461,6 +465,33 @@ export class OrdersService implements OnModuleInit {
 
                 await queryRunner.commitTransaction();
 
+                if (this.socketService) {
+                    try {
+                        this.socketService.emitToRoom(SOCKET_ROOMS.ADMIN_ROOM, SocketEvent.ORDER_CREATED, {
+                            orderId: savedOrder.id,
+                            orderNumber: savedOrder.orderId,
+                            totalAmount: savedOrder.totalAmount,
+                            createdAt: savedOrder.createdAt ? new Date(savedOrder.createdAt).toISOString() : new Date().toISOString()
+                        });
+
+                        for (const prepItem of preparedItems) {
+                            if (prepItem.product?.id) {
+                                this.socketService.emitToRoom(
+                                    SOCKET_ROOMS.PRODUCT(prepItem.product.id),
+                                    SocketEvent.STOCK_UPDATED,
+                                    {
+                                        productId: prepItem.product.id,
+                                        sizeStock: prepItem.product.sizeStock || null,
+                                        totalQuantity: Math.max(0, (prepItem.product.quantity || 0) - prepItem.quantity)
+                                    }
+                                );
+                            }
+                        }
+                    } catch (socketErr) {
+                        // Socket emission failure must not abort successful DB response
+                    }
+                }
+
                 return ResponseUtils.successResponseHandler(201, 'Order created successfully.', 'data', savedOrder);
             } catch (error) {
                 await queryRunner.rollbackTransaction();
@@ -586,6 +617,23 @@ export class OrdersService implements OnModuleInit {
 
             await queryRunner.commitTransaction();
 
+            if (this.socketService) {
+                try {
+                    const statusPayload = {
+                        orderId: updatedOrder.id,
+                        status: targetStatus,
+                        changedAt: nowIso,
+                        note: historyNote
+                    };
+                    this.socketService.emitToRoom(SOCKET_ROOMS.ADMIN_ROOM, SocketEvent.ORDER_STATUS_UPDATED, statusPayload);
+                    if (updatedOrder.userId) {
+                        this.socketService.emitToRoom(SOCKET_ROOMS.USER(updatedOrder.userId), SocketEvent.ORDER_STATUS_UPDATED, statusPayload);
+                    }
+                } catch (socketErr) {
+                    // Socket failure must not block response
+                }
+            }
+
             if (this.auditLogService) {
                 this.auditLogService.createAsyncLog({
                     actorId: adminUser?.id || adminUser?.userId || null,
@@ -645,6 +693,21 @@ export class OrdersService implements OnModuleInit {
             order.courierTrackingLink = dto.courierTrackingLink || '';
 
             const updatedOrder = (await this.repository.save(order)) as Orders;
+
+            if (this.socketService) {
+                try {
+                    const statusPayload = {
+                        orderId: updatedOrder.id,
+                        status: updatedOrder.status || 'Shipped',
+                        changedAt: new Date().toISOString(),
+                        note: `Courier updated: ${dto.courierName} (Tracking ID: ${dto.trackingId})`
+                    };
+                    this.socketService.emitToRoom(SOCKET_ROOMS.ADMIN_ROOM, SocketEvent.ORDER_STATUS_UPDATED, statusPayload);
+                    if (updatedOrder.userId) {
+                        this.socketService.emitToRoom(SOCKET_ROOMS.USER(updatedOrder.userId), SocketEvent.ORDER_STATUS_UPDATED, statusPayload);
+                    }
+                } catch (socketErr) {}
+            }
 
             if (this.notificationService && updatedOrder?.userId) {
                 await this.notificationService.createOrderNotification(

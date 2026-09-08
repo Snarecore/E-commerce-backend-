@@ -4,9 +4,10 @@ import { Notifications } from './entity/notification.entity';
 import { NotificationRepository } from './notification.repository';
 import { NotificationService } from './notification.service';
 import { NotificationController } from './notification.controller';
+import { SocketModule } from '../socket/socket.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Notifications])],
+  imports: [TypeOrmModule.forFeature([Notifications]), SocketModule],
   controllers: [NotificationController],
   providers: [NotificationService, NotificationRepository],
   exports: [NotificationService, NotificationRepository],
