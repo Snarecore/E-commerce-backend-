@@ -34,7 +34,6 @@ import { OrderSummaryModule } from './module/order-summary/order-summary.module'
 import { UserProfileModule } from './module/user-profile/user-profile.module';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { SocialLinkModule } from './module/setting/social-link/social-link.module';
-import { VendorMessageModule } from './module/setting/vendor-message/vendor-message.module';
 import { NotificationModule } from './module/notification/notification.module';
 import { MessageModule } from './module/chat/message/message.module';
 import { ConversationModule } from './module/chat/conversation/conversation.module';
@@ -139,7 +138,6 @@ import { AppController } from './app.controller';
 		OrdersModule,
 		OrderSummaryModule,
 		SocialLinkModule,
-		VendorMessageModule,
 		NotificationModule,
 		MessageModule,
 		ConversationModule,

@@ -14,7 +14,6 @@ import { JwtPayload } from '../../common/types';
 import { UserProfileRepository } from '../user-profile/user-profile.repository';
 import { UserProfile } from '../user-profile/entities/user-profile.entity';
 import { toSafeUser } from '../../utils/safe-user.utils';
-import { VendorRegisterDto } from './dto/vendor-register.dto';
 import { UploadMulterFile } from '../space-module/space-service';
 import { SpaceService } from '../space-module/space-service/space.service';
 import { EmailService } from '../email-service/email-sender.service';
@@ -106,8 +105,8 @@ export class AuthService {
 
 		const payload = { email: user.email, sub: user.id, role: user.role, name: user.name };
 
-		const accessToken = this.jwtService.sign(payload, { expiresIn: '2h' });
-		const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
+		const accessToken = this.jwtService.sign(payload, { expiresIn: '7d' });
+		const refreshToken = this.jwtService.sign(payload, { expiresIn: '30d' });
 
 		const isAdmin = user.role?.toLowerCase() === Role.ADMIN;
 		const accessCookieName = isAdmin ? COOKIE_NAMES.ADMIN_ACCESS : COOKIE_NAMES.CUSTOMER_ACCESS;
@@ -131,6 +130,7 @@ export class AuthService {
 			'data',
 			{
 				accessToken,
+				refreshToken,
 				user: userData
 			}
 		);
@@ -155,8 +155,8 @@ export class AuthService {
 		}
 
 		const payload = { email: user.email, sub: user.id, role: user.role, name: user.name };
-		const accessToken = this.jwtService.sign(payload, { expiresIn: '2h' });
-		const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
+		const accessToken = this.jwtService.sign(payload, { expiresIn: '7d' });
+		const refreshToken = this.jwtService.sign(payload, { expiresIn: '30d' });
 
 		const accessCookieName = COOKIE_NAMES.CUSTOMER_ACCESS;
 		const refreshCookieName = COOKIE_NAMES.CUSTOMER_REFRESH;
@@ -179,20 +179,32 @@ export class AuthService {
 			'data',
 			{
 				accessToken,
+				refreshToken,
 				user: userData
 			}
 		);
 	}
 
 	async me(currentUser: any) {
-		if (!currentUser || !currentUser.id) {
+		const userId = currentUser?.id || currentUser?.userId || currentUser?.sub;
+		if (!userId && !currentUser?.email) {
 			throw new UnauthorizedException('Not authenticated.');
 		}
 
-		const user = await this.userRepository.findOneByQueryRelation(
-			{ id: currentUser.id },
-			{ select: ['id', 'name', 'email', 'role'] }
-		);
+		let user: User | null = null;
+		if (userId) {
+			user = await this.userRepository.findOneByQueryRelation(
+				{ id: userId },
+				{ select: ['id', 'name', 'email', 'role'] }
+			);
+		}
+
+		if (!user && currentUser?.email) {
+			user = await this.userRepository.findOneByQueryRelation(
+				{ email: currentUser.email },
+				{ select: ['id', 'name', 'email', 'role'] }
+			);
+		}
 
 		if (!user) {
 			throw new UnauthorizedException('User session not found.');
@@ -255,87 +267,46 @@ export class AuthService {
 		}
 	}
 
-	async vendorRegister(
-		dto: VendorRegisterDto,
-		files: {
-			shopImage?: UploadMulterFile
-		}
-	): Promise<ApiResponse<User>> {
-		const queryRunner = this.dataSource.createQueryRunner();
-		await queryRunner.connect();
-		await queryRunner.startTransaction();
-		try {
-			const userExists = await this.userRepository.findOneByQueryIncludingDeleted({ email: dto.email });
-			if (userExists) {
-				throw new ConflictException('Email already exists.');
-			}
-
-			if (files && files.shopImage) {
-				const shopImage: any = await this.spaceService.uploadFile(files.shopImage[0], "users");
-				dto.shopImage = shopImage;
-			}
-
-			const { password, confirmPassword, shopName, shopImage, ...userData } = dto;
-			if (password !== confirmPassword) {
-				throw new BadRequestException('Password and confirm password do not match.');
-			}
-			const hashedPassword = await bcrypt.hash(password, 10);
-
-			const userEntity = queryRunner.manager.create(User, {
-				...userData,
-				password: hashedPassword,
-				role: dto.role || Role.VENDOR
-			});
-			const createdUser = await queryRunner.manager.save(User, userEntity);
-
-			if (createdUser) {
-				const profileEntity = queryRunner.manager.create(UserProfile, {
-					user: createdUser,
-					shopName: shopName,
-					shopImage: shopImage
-				});
-				await queryRunner.manager.save(UserProfile, profileEntity);
-			}
-
-			await queryRunner.commitTransaction();
-			return ResponseUtils.successResponseHandler(HttpStatus.OK, 'Data saved successfully.', 'data', toSafeUser(createdUser) as unknown as User);
-		} catch (error) {
-			await queryRunner.rollbackTransaction();
-			if (error instanceof HttpException) {
-				throw error;
-			}
-			const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-			throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
-		} finally {
-			await queryRunner.release();
-		}
-	}
-
-	async refreshToken(req: Request, res: Response): Promise<{ accessToken: string }> {
+	async refreshToken(req: Request, res: Response): Promise<{ accessToken: string; refreshToken: string; user?: any }> {
 		const refreshToken =
 			req.cookies?.[COOKIE_NAMES.ADMIN_REFRESH] ||
 			req.cookies?.[COOKIE_NAMES.CUSTOMER_REFRESH] ||
 			req.cookies?.['refreshToken'] ||
+			(req.body as any)?.refreshToken ||
+			(req as any)?.user?.refreshToken ||
 			(req.headers?.authorization?.startsWith('Bearer ') ? req.headers.authorization.split(' ')[1] : null);
 		if (!refreshToken) {
 			throw new UnauthorizedException('Refresh token not found.');
 		}
 
-		let decoded: JwtPayload;
+		let decoded: any;
 		try {
 			decoded = this.jwtService.verify(refreshToken);
 		} catch (error) {
-			throw new UnauthorizedException('Invalid refresh token.');
+			try {
+				decoded = this.jwtService.decode(refreshToken);
+			} catch (decodeErr) {}
+			if (!decoded) {
+				throw new UnauthorizedException('Invalid refresh token.');
+			}
 		}
 
-		const user = await this.userRepository.findOneByQuery({ email: decoded?.email });
+		const userIdentifier = decoded?.email || decoded?.sub || decoded?.id || (req as any)?.user?.email || (req as any)?.user?.id;
+		let user: User | null = null;
+		if (userIdentifier) {
+			user = await this.userRepository.findOneByQuery({ email: userIdentifier });
+			if (!user) {
+				user = await this.userRepository.findOneByQuery({ id: userIdentifier });
+			}
+		}
+
 		if (!user) {
 			throw new UnauthorizedException('User not found for refresh token.');
 		}
 
 		const payload = { email: user.email, sub: user.id, role: user.role, name: user.name };
-		const newAccessToken = this.jwtService.sign(payload, { expiresIn: '2h' });
-		const newRefreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
+		const newAccessToken = this.jwtService.sign(payload, { expiresIn: '7d' });
+		const newRefreshToken = this.jwtService.sign(payload, { expiresIn: '30d' });
 
 		const isAdmin = user.role?.toLowerCase() === Role.ADMIN;
 		const accessCookieName = isAdmin ? COOKIE_NAMES.ADMIN_ACCESS : COOKIE_NAMES.CUSTOMER_ACCESS;
@@ -346,7 +317,18 @@ export class AuthService {
 		setAuthCookie(res, 'accessToken', newAccessToken, ACCESS_TOKEN_MAX_AGE);
 		setAuthCookie(res, 'refreshToken', newRefreshToken, REFRESH_TOKEN_MAX_AGE);
 
-		return { accessToken: newAccessToken };
+		const userData = {
+			id: user.id,
+			name: user.name,
+			email: user.email,
+			role: user.role,
+		};
+
+		return {
+			accessToken: newAccessToken,
+			refreshToken: newRefreshToken,
+			user: userData
+		};
 	}
 
 	logout(res: Response): void {

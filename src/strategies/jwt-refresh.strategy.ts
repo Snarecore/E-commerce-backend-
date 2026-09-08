@@ -23,7 +23,9 @@ export class JwtRefreshStrategy extends PassportStrategy(Strategy, 'jwt-refresh'
         });
     }
 
-    validate(payload: JwtPayload): { userId: string; email: string; roles: string; name: string } {
-        return { userId: payload.sub, email: payload.email, roles: payload.role, name: payload.name };
+    validate(payload: any) {
+        const role = (payload.role || payload.roles || 'customer').toString().toLowerCase();
+        const id = payload.sub || payload.id || payload.userId;
+        return { id, userId: id, email: payload.email, role, roles: role, name: payload.name };
     }
 }

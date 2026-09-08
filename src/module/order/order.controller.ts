@@ -53,23 +53,13 @@ export class OrdersController {
 	}
 
 	@UseGuards(JwtAuthGuard, RolesGuard)
-	@Roles(Role.CUSTOMER)
+	@Roles(Role.CUSTOMER, Role.ADMIN)
 	@Get('/customer-order')
 	async findCustomerOrderList(
 		@Query() dto: OrdersFilterDto,
 		@Req() req: Request
 	): Promise<ApiResponse<{ data: OrdersInterface[]; total: number; page: number; limit: number; pageCount: number }>> {
 		return await this.service.findCustomerOrderList(dto, req?.user);
-	}
-
-	@UseGuards(JwtAuthGuard, RolesGuard)
-	@Roles(Role.VENDOR)
-	@Get('/vendor-order')
-	async findVendorOrderList(
-		@Query() dto: OrdersFilterDto,
-		@Req() req: Request
-	): Promise<ApiResponse<{ data: OrdersInterface[]; total: number; page: number; limit: number; pageCount: number }>> {
-		return await this.service.findVendorOrderList(dto, req?.user);
 	}
 
 	@UseGuards(JwtAuthGuard, RolesGuard)

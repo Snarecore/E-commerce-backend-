@@ -405,8 +405,6 @@ export class OrdersService implements OnModuleInit {
                         snapshotMainCategoryId: prepItem.product.mainCategoryId || null,
                         snapshotFirstCategoryId: prepItem.product.firstCategoryId || null,
                         snapshotSecondCategoryId: prepItem.product.secondCategoryId || null,
-                        vendorId: prepItem.product.vendorId || '',
-                        commissionAmount: 0,
                         size: prepItem.selectedSize || null,
                         selectedSize: prepItem.selectedSize || null
                     } as any);
@@ -432,7 +430,7 @@ export class OrdersService implements OnModuleInit {
                                 quantity: newTotalQty,
                                 sizeStock: updatedSizeStock
                             })
-                            .where("id = :id AND quantity >= :qty AND isDeleted = false", {
+                            .where("id = :id AND quantity >= :qty AND (isDeleted = false OR isDeleted IS NULL)", {
                                 id: prepItem.product.id,
                                 qty: prepItem.quantity
                             })
@@ -675,10 +673,6 @@ export class OrdersService implements OnModuleInit {
                 query.userId = dto.userId;
             }
 
-            if (dto.vendorId) {
-                query.vendorId = dto.vendorId;
-            }
-
             if (dto.status) {
                 query.status = dto.status;
             }
@@ -751,8 +745,9 @@ export class OrdersService implements OnModuleInit {
         try {
             let query: OrdersFilter = {};
 
-            if (userData.id) {
-                query.userId = userData.id;
+            const userId = userData?.id || userData?.userId || userData?.sub;
+            if (userId) {
+                query.userId = userId;
             }
 
             const order: FindOptionsOrder<Orders> = {
@@ -798,92 +793,6 @@ export class OrdersService implements OnModuleInit {
                 page: result.page,
                 limit: result.limit,
                 pageCount: result.pageCount
-            };
-
-            return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', payload);
-        } catch (error: unknown) {
-            if (error instanceof HttpException) throw error;
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
-        }
-    }
-
-        async findVendorOrderList(
-        dto: OrdersFilterDto,
-        userData: any
-    ): Promise<ApiResponse<{ data: OrdersInterface[]; total: number; page: number; limit: number; pageCount: number }>> {
-        try {
-            const page = dto.page ? Number(dto.page) : 1;
-            const limit = dto.limit ? Number(dto.limit) : 10;
-            const skip = (page - 1) * limit;
-
-            const qb = this.dataSource.getRepository(Orders).createQueryBuilder('orders')
-                .innerJoin('orders.orderSummaries', 'summary')
-                .leftJoinAndSelect('orders.user', 'user')
-                .leftJoinAndSelect('orders.orderSummaries', 'allSummaries')
-                .where('summary.vendorId = :vendorId', { vendorId: userData.id })
-                .andWhere('(orders.isDeleted = false OR orders.isDeleted IS NULL)');
-
-            if (dto.status) {
-                qb.andWhere('orders.status = :status', { status: dto.status });
-            }
-
-            if (dto.paymentStatus) {
-                qb.andWhere('orders.paymentStatus = :paymentStatus', { paymentStatus: dto.paymentStatus });
-            }
-
-            if (dto.orderId) {
-                const cleanOrderId = dto.orderId.replace(/^#/, '').trim();
-                qb.andWhere('orders.orderId LIKE :orderId', { orderId: `%${cleanOrderId}%` });
-            }
-
-            if (dto.startDate && dto.endDate) {
-                qb.andWhere('orders.createdAt BETWEEN :startDate AND :endDate', {
-                    startDate: new Date(dto.startDate),
-                    endDate: new Date(dto.endDate)
-                });
-            } else if (dto.startDate) {
-                qb.andWhere('orders.createdAt >= :startDate', { startDate: new Date(dto.startDate) });
-            } else if (dto.endDate) {
-                qb.andWhere('orders.createdAt <= :endDate', { endDate: new Date(dto.endDate) });
-            }
-
-            qb.orderBy('orders.createdAt', 'DESC')
-                .addOrderBy('orders.id', 'DESC')
-                .skip(skip)
-                .take(limit);
-
-            const [orders, total] = await qb.getManyAndCount();
-
-            const filteredOrders = orders.map((order) => {
-                const vendorSummaries =
-                    order.orderSummaries?.filter((summary) => summary.vendorId === userData.id) || [];
-
-                const vendorTotalAmount = vendorSummaries.reduce(
-                    (sum, item) => sum + Number(item.price) * (Number(item.quantity) || 1),
-                    0
-                );
-
-                const vendorTotalCommission = vendorSummaries.reduce(
-                    (sum, item) => sum + Number(item.commissionAmount ?? 0),
-                    0
-                );
-
-                return {
-                    ...order,
-                    orderSummaries: vendorSummaries,
-                    vendorTotalAmount,
-                    vendorTotalCommission,
-                    user: order.user ? toSafeUser(order.user) : null
-                };
-            });
-
-            const payload = {
-                data: filteredOrders as any,
-                total,
-                page,
-                limit,
-                pageCount: Math.ceil(total / limit)
             };
 
             return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', payload);

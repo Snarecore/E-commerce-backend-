@@ -26,7 +26,7 @@ export class ProductReviewController {
 	}
 
 	@UseGuards(JwtAuthGuard, RolesGuard)
-	@Roles(Role.ADMIN, Role.VENDOR)
+	@Roles(Role.ADMIN)
 	@Get()
 	async findAll(
 		@Query() dto: ProductReviewFilterDto,

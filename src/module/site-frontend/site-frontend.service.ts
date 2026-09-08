@@ -33,7 +33,6 @@ import { OrderSummaryRepository } from "../order-summary/order-summary.repositor
 import { UserProfileRepository } from "../user-profile/user-profile.repository";
 import { toSafeUser } from "../../utils/safe-user.utils";
 import { PageMetaRepository } from "../seo/page-meta/page-meta.repository";
-import { VendorMessageRepository } from "../setting/vendor-message/vendor-message.repository";
 import { toSafeProduct } from "../../utils/safe-product.util";
 import { ProductSeoRepository } from "../seo/product-meta/product-seo.repository";
 import { omit, omitMany } from "../../utils/helper.utils";
@@ -59,7 +58,6 @@ export class SiteFrontendService {
         private readonly orderSummaryRepository: OrderSummaryRepository,
         private readonly userProfileRepository: UserProfileRepository,
         private readonly pageMetaRepository: PageMetaRepository,
-        private readonly vendorMessageRepository: VendorMessageRepository,
         private readonly productSeoRepository: ProductSeoRepository,
         private readonly megaDiscountRepository: MegaDiscountRepository
     ) { }
@@ -505,12 +503,10 @@ export class SiteFrontendService {
                 throw new HttpException('Product not found!', HttpStatus.BAD_REQUEST);
             }
 
-            const [productImages, relatedProductsRaw, productReview, vendor, vendorProfile, seoData, megaDiscount] = await Promise.all([
+            const [productImages, relatedProductsRaw, productReview, seoData, megaDiscount] = await Promise.all([
                 this.productImageGalleryRepository.findAll({ productId: product.id }),
                 this.productRepository.findByQueryWithHardLimit({ mainCategoryId: product.mainCategoryId, status: true }),
                 this.getProductReviewData(product.id),
-                this.userRepository.findOne(product.vendorId),
-                this.userProfileRepository.findOneByQuery({ user: { id: product.vendorId } }),
                 this.productSeoRepository.findOneByQuery({ productId: product.id }),
                 this.megaDiscountRepository.getSingleton()
             ]);
@@ -524,12 +520,7 @@ export class SiteFrontendService {
                 productImages: omitMany(productImages, [...metaKeys]),
                 relatedProducts,
                 productReview,
-                vendor: vendor
-                    ? {
-                        ...toSafeUser(vendor),
-                        profile: vendorProfile ? omit(vendorProfile, [...metaKeys]) : null
-                    }
-                    : null,
+                vendor: null,
                 seoData: seoData ? omit(seoData, [...metaKeys]) : {}
             };
 
@@ -641,14 +632,12 @@ export class SiteFrontendService {
             const [
                 totalProducts,
                 totalOrders,
-                totalVendors,
                 totalCustomers,
                 recentProducts,
                 recentOrdersRaw
             ] = await Promise.all([
                 this.productRepository.count(),
                 this.ordersRepository.count(),
-                this.userRepository.count({ role: Role.VENDOR }),
                 this.userRepository.count({ role: Role.CUSTOMER }),
                 this.productRepository.paginateWithHardLimit({
                     page: 1,
@@ -680,7 +669,7 @@ export class SiteFrontendService {
             const payload = {
                 totalProducts: totalProducts,
                 totalOrders: totalOrders,
-                totalVendors: totalVendors,
+                totalVendors: 0,
                 totalCustomers: totalCustomers,
                 recentProducts: recentProducts ?? [],
                 recentOrders: recentOrders ?? []
@@ -691,122 +680,6 @@ export class SiteFrontendService {
             throw new InternalServerErrorException(
                 error.message || 'An unexpected error occurred while fetching data.'
             );
-        }
-    }
-
-    async findVendorDashboardData(userData: any) {
-        try {
-            const productQuery: ProductFilter = { vendorId: userData.id };
-
-            const productOrder: FindOptionsOrder<Product> = {
-                createdAt: 'desc'
-            };
-
-            const [totalProducts, recentProducts, totalMessages, totalReviews] = await Promise.all([
-                this.productRepository.count(productQuery),
-                this.productRepository.paginateWithHardLimit({
-                    page: 1,
-                    limit: 5,
-                    maxTotal: 5,
-                    query: productQuery,
-                    order: productOrder
-                }),
-                this.vendorMessageRepository.count(productQuery),
-                this.productReviewRepository.count(productQuery)
-            ]);
-
-            const allVendorSummaries = await this.orderSummaryRepository.findAll({
-                vendorId: userData.id
-            });
-
-            const orderIds = [...new Set(allVendorSummaries.map(s => s.orderId))];
-
-            const recentOrdersRaw = await this.ordersRepository.findByQueryWithHardLimit({
-                id: In(orderIds),
-                isDeleted: false
-            }, 5, ['user']);
-
-            const recentOrders = recentOrdersRaw.map(order => {
-                const summaries = allVendorSummaries.filter(s => s.orderId === order.id);
-
-                const vendorTotalAmount = summaries.reduce(
-                    (sum, item) => sum + Number(item.price) * item.quantity,
-                    0
-                );
-
-                const vendorTotalCommission = summaries.reduce(
-                    (sum, item) => sum + Number(item.commissionAmount ?? 0),
-                    0
-                );
-
-                return {
-                    ...order,
-                    orderSummaries: summaries,
-                    user: order.user,
-                    vendorTotalAmount,
-                    vendorTotalCommission
-                };
-            });
-
-            const payload = {
-                totalProducts,
-                recentProducts: recentProducts ?? [],
-                totalOrders: orderIds.length,
-                recentOrders,
-                totalMessages,
-                totalReviews
-            };
-
-            return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', payload);
-        } catch (error) {
-            throw new InternalServerErrorException(
-                error.message || 'An unexpected error occurred while fetching data.'
-            );
-        }
-    }
-
-    async findVendorList(dto: UserFilterDto) {
-        try {
-            let query: UserFilter = {};
-
-            if (dto.role) {
-                query.role = dto.role;
-            }
-
-            const vendorList = await this.userRepository.findAll(query);
-            const safeVendorList = (vendorList ?? []).map(toSafeUser);
-
-            const data = {
-                vendorList: safeVendorList ?? []
-            }
-
-            return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', data);
-        } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
-        }
-    }
-
-    async findAdminList(dto: UserFilterDto) {
-        try {
-            let query: UserFilter = {};
-
-            if (dto.role) {
-                query.role = dto.role;
-            }
-
-            const adminList = await this.userRepository.findAll(query);
-
-            const safeAdminList = (adminList ?? []).map(toSafeUser);
-
-            const data = {
-                adminList: safeAdminList ?? []
-            }
-
-            return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', data);
-        } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 

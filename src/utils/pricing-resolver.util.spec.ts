@@ -20,7 +20,7 @@ describe('ProductPricingResolver', () => {
 		expect(result.isMegaDiscountApplied).toBe(false);
 	});
 
-	it('should override individual discount with Mega Discount when Mega Discount is ON', () => {
+	it('should apply Mega Discount on top of individual discount when Mega Discount is ON', () => {
 		const product = {
 			price: 1000,
 			discountType: 'PERCENT',
@@ -33,9 +33,9 @@ describe('ProductPricingResolver', () => {
 
 		const result = resolveEffectiveProductPrice(product, megaDiscount);
 
-		expect(result.effectivePrice).toBe(800.00);
+		expect(result.effectivePrice).toBe(720.00);
 		expect(result.discountType).toBe('PERCENT');
-		expect(result.discountAmount).toBe(20);
+		expect(result.discountAmount).toBe(28);
 		expect(result.isMegaDiscountApplied).toBe(true);
 	});
 

@@ -6,7 +6,6 @@ import { DiscountType } from '../../../../enums/product.enum';
 
 @Entity('product')
 @Index('IDX_product_slug', ['slug'])
-@Index('IDX_product_vendor_status', ['vendorId', 'status', 'isApprove', 'isDeleted'])
 @Index('IDX_product_main_category', ['mainCategoryId', 'status', 'isApprove', 'isDeleted'])
 @Index('IDX_product_first_category', ['firstCategoryId', 'status', 'isApprove', 'isDeleted'])
 @Index('IDX_product_second_category', ['secondCategoryId', 'status', 'isApprove', 'isDeleted'])
@@ -66,11 +65,11 @@ export class Product extends AbstractEntity {
 	@Column({ type: 'varchar', nullable: true })
 	secondCategoryName: string;
 
-	@Column({ type: 'varchar', nullable: false })
-	vendorId: string;
+	@Column({ type: 'varchar', nullable: true })
+	vendorId?: string;
 
-	@Column({ type: 'varchar', nullable: false })
-	vendorName: string;
+	@Column({ type: 'varchar', nullable: true })
+	vendorName?: string;
 
 	@Column({ type: 'float', nullable: true, default: 0 })
 	rating: number;

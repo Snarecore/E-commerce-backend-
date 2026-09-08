@@ -20,8 +20,8 @@ export interface SafeProduct {
     firstCategoryName: string | null;
     secondCategoryId: string | null;
     secondCategoryName: string | null;
-    vendorId: string;
-    vendorName: string;
+    vendorId?: string;
+    vendorName?: string;
     rating: number | null;
     status: boolean;
     isApprove: boolean;

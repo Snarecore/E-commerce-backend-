@@ -9,15 +9,8 @@ import { Request, Response } from 'express';
 import { RefreshAuthGuard } from '../../guards/refresh-auth.guard';
 import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
 import { Public } from '../../decorators/public.decorator';
-import { RolesGuard } from '../../guards/role.guard';
-import { Roles } from '../../decorators/role.decorator';
-import { Role } from '../../enums/role.enum';
-import { VendorRegisterDto } from './dto/vendor-register.dto';
-import { FileFieldsInterceptor } from '@nestjs/platform-express';
-import { UploadMulterFile } from '../space-module/space-service';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
-
 import { Throttle } from '@nestjs/throttler';
 
 @Controller({ path: "auth", version: CONFIG.API_VERSION })
@@ -29,20 +22,6 @@ export class AuthController {
 	@Post('register')
 	async register(@Body() dto: RegisterDto): Promise<ApiResponse<User>> {
 		return await this.authService.register(dto);
-	}
-
-	@Public()
-	@Throttle({ default: { limit: 30, ttl: 60000 } })
-	@Post('vendor-register')
-	@UseInterceptors(FileFieldsInterceptor([{ name: 'shopImage', maxCount: 1 }]))
-	async vendorRegister(
-		@Body() dto: VendorRegisterDto,
-		@UploadedFiles()
-		files: {
-			shopImage?: UploadMulterFile;
-		}
-	): Promise<ApiResponse<User>> {
-		return await this.authService.vendorRegister(dto, files);
 	}
 
 	@Public()
@@ -86,7 +65,7 @@ export class AuthController {
 	@Public()
 	@Post('refresh-token')
 	@UseGuards(RefreshAuthGuard)
-	async refreshToken(@Req() req: Request, @Res({ passthrough: true }) res: Response): Promise<{ accessToken: string }> {
+	async refreshToken(@Req() req: Request, @Res({ passthrough: true }) res: Response): Promise<{ accessToken: string; refreshToken: string; user?: any }> {
 		return this.authService.refreshToken(req, res);
 	}
 

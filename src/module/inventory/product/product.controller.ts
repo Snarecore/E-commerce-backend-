@@ -22,7 +22,7 @@ export class ProductController {
 	constructor(private readonly service: ProductService) { }
 
 	@UseGuards(JwtAuthGuard, RolesGuard)
-	@Roles(Role.VENDOR, Role.ADMIN)
+	@Roles(Role.ADMIN)
 	@Post()
 	@UseInterceptors(FileFieldsInterceptor(
         [
@@ -62,17 +62,7 @@ export class ProductController {
 	}
 
 	@UseGuards(JwtAuthGuard, RolesGuard)
-	@Roles(Role.VENDOR)
-	@Get('/vendor-products')
-	async findAllForVendor(
-		@Query() dto: ProductFilterDto,
-		@Req() req: Request
-	): Promise<ApiResponse<{ data: ProductInterface[]; total: number; page: number; limit: number, pageCount: number }>> {
-		return await this.service.findAllForVendor(dto, req?.user);
-	}
-
-	@UseGuards(JwtAuthGuard, RolesGuard)
-	@Roles(Role.ADMIN, Role.VENDOR)
+	@Roles(Role.ADMIN)
 	@Get('/admin-product/:id')
 	async findOneForAdmin(@Param('id') id: string): Promise<ApiResponse<ProductInterface>> {
 		return await this.service.findOneForAdmin(id);

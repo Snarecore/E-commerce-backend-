@@ -21,7 +21,7 @@ export class ProductCommentController {
     constructor(private readonly service: ProductCommentService) { }
 
     @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles(Role.CUSTOMER, Role.VENDOR)
+    @Roles(Role.CUSTOMER, Role.ADMIN)
     @Post()
     create(@Body() dto: CreateProductCommentDto, @Req() req: Request) {
         return this.service.create(dto, req.user);

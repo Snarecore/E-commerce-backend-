@@ -101,27 +101,6 @@ export class SiteFrontendController {
     }
 
     @UseGuards(JwtAuthGuard, RolesGuard)
-	@Roles(Role.VENDOR)
-    @Get('/vendor-dashboard')
-    async findVendorDashboardData(@Req() req: Request) {
-        return await this.service.findVendorDashboardData(req?.user);
-    }
-
-    @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles(Role.ADMIN)
-    @Get('/vendor')
-    async findVendorList(@Query() dto: UserFilterDto) {
-        return await this.service.findVendorList(dto);
-    }
-
-    @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles(Role.VENDOR)
-    @Get('/admin')
-    async findAdminList(@Query() dto: UserFilterDto) {
-        return await this.service.findAdminList(dto);
-    }
-
-    @UseGuards(JwtAuthGuard, RolesGuard)
     @Roles(Role.ADMIN)
     @Get('/customer')
     async findCustomerList(@Query() dto: UserFilterDto) {

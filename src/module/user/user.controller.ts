@@ -19,7 +19,7 @@ export class UserController {
     constructor(private readonly userService: UserService) { }
 
     @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles(Role.CUSTOMER)
+    @Roles(Role.CUSTOMER, Role.ADMIN)
     @Patch('/customer-profile')
     @UseInterceptors(FileFieldsInterceptor(
         [
@@ -37,39 +37,9 @@ export class UserController {
     }
 
     @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles(Role.VENDOR)
-    @Patch('/vendor-profile')
-    @UseInterceptors(FileFieldsInterceptor(
-        [
-            { name: "shopImage", maxCount: 1 },
-            { name: "profileImage", maxCount: 1 }
-        ]
-    ))
-    async updateVendorProfile(
-        @Req() req: Request,
-        @Body() dto: UpdateUserProfileDto,
-        @UploadedFiles() files: {
-            shopImage?: UploadMulterFile,
-            profileImage?: UploadMulterFile
-        }
-    ) {
-        return await this.userService.updateVendorProfile(req.user, dto, files);
-    }
-
-    @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles(Role.CUSTOMER)
+    @Roles(Role.CUSTOMER, Role.ADMIN)
     @Patch('/customer-password')
     async updateCustomerPassword(
-        @Req() req: Request,
-        @Body() dto: UpdatePasswordDto
-    ) {
-        return await this.userService.updatePassword(req.user, dto);
-    }
-
-    @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles(Role.VENDOR)
-    @Patch('/vendor-password')
-    async updateVendorPassword(
         @Req() req: Request,
         @Body() dto: UpdatePasswordDto
     ) {
@@ -84,17 +54,10 @@ export class UserController {
     }
 
     @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles(Role.CUSTOMER)
+    @Roles(Role.CUSTOMER, Role.ADMIN)
     @Get('/customer')
     async findCustomerData(@Req() req: Request) {
         return await this.userService.findOneCustomer(req.user);
-    }
-
-    @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles(Role.VENDOR)
-    @Get('/vendor')
-    async findVendorData(@Req() req: Request) {
-        return await this.userService.findOneVendor(req.user);
     }
 
     @UseGuards(JwtAuthGuard, RolesGuard)

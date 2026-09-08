@@ -32,7 +32,6 @@ import { ProductReviewRepository } from '../inventory/product-review/product-rev
 import { OrderSummaryRepository } from '../order-summary/order-summary.repository';
 import { UserProfileRepository } from '../user-profile/user-profile.repository';
 import { PageMetaRepository } from '../seo/page-meta/page-meta.repository';
-import { VendorMessageRepository } from '../setting/vendor-message/vendor-message.repository';
 import { ProductSeoRepository } from '../seo/product-meta/product-seo.repository';
 
 import { MegaDiscountModule } from '../setting/mega-discount/mega-discount.module';
@@ -77,7 +76,6 @@ import { MegaDiscountModule } from '../setting/mega-discount/mega-discount.modul
         OrderSummaryRepository,
         UserProfileRepository,
         PageMetaRepository,
-        VendorMessageRepository,
         ProductSeoRepository
     ]
 })

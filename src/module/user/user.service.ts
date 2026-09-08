@@ -63,28 +63,11 @@ export class UserService {
 
     async findOneCustomer(userData: any) {
         try {
-            const user = await this.userRepository.findOne(userData.id);
-            if (!user) {
-                throw new HttpException('User not found!', HttpStatus.BAD_REQUEST);
+            const userId = userData?.id || userData?.userId || userData?.sub;
+            let user = userId ? await this.userRepository.findOne(userId) : null;
+            if (!user && userData?.email) {
+                user = await this.userRepository.findOneByQuery({ email: userData.email });
             }
-
-            const profile = await this.userProfileRepository.findOneByQuery({ user: { id: user.id } });
-
-            const payload = {
-                ...toSafeUser(user),
-                profile: profile || null
-            };
-
-            return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', payload);
-        } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
-        }
-    }
-
-     async findOneVendor(userData: any) {
-        try {
-            const user = await this.userRepository.findOne(userData.id);
             if (!user) {
                 throw new HttpException('User not found!', HttpStatus.BAD_REQUEST);
             }
@@ -111,7 +94,11 @@ export class UserService {
         }
     ) {
         try {
-            const user = await this.userRepository.findOne(userData.id);
+            const userId = userData?.id || userData?.userId || userData?.sub;
+            let user = userId ? await this.userRepository.findOne(userId) : null;
+            if (!user && userData?.email) {
+                user = await this.userRepository.findOneByQuery({ email: userData.email });
+            }
             if (!user) {
                 throw new HttpException('User not found!', HttpStatus.BAD_REQUEST);
             }
@@ -156,80 +143,13 @@ export class UserService {
         }
     }
 
-    async updateVendorProfile(
-        userData: any, 
-        dto: UpdateUserProfileDto,
-        files: {
-            shopImage?: UploadMulterFile;
-            profileImage?: UploadMulterFile;
-        }
-    ) {
-        try {
-            const user = await this.userRepository.findOne(userData.id);
-            if (!user) {
-                throw new HttpException('User not found!', HttpStatus.BAD_REQUEST);
-            }
-
-            if (dto.name || dto.phone) {
-                await this.userRepository.update(user.id, {
-                    name: dto.name ?? user.name,
-                    phone: dto.phone ?? user.phone
-                });
-            }
-
-            let profile = await this.userProfileRepository.findOneByQuery({ user: { id: user.id } });
-
-            dto.profileImage = profile?.profileImage;
-            if (files?.profileImage?.[0]) {
-                const imageUrl = await this.spaceService.uploadFile(
-                    files.profileImage[0],
-                    'users'
-                );
-                dto.profileImage = imageUrl;
-            }
-
-            dto.shopImage = profile?.shopImage;
-            if (files?.shopImage?.[0]) {
-                const imageUrl = await this.spaceService.uploadFile(
-                    files.shopImage[0],
-                    'users'
-                );
-                dto.shopImage = imageUrl;
-            }
-
-            const updatedProfileData = {
-                shopName: dto.shopName ?? profile?.shopName,
-                profileImage: dto.profileImage ?? profile?.profileImage,
-                shopImage: dto.shopImage ?? profile?.shopImage,
-                accountNumber: dto.accountNumber ?? profile?.accountNumber,
-                accountHolderName: dto.accountHolderName ?? profile?.accountHolderName,
-                bankName: dto.bankName ?? profile?.bankName,
-                branchName: dto.branchName ?? profile?.branchName,
-                IBAN: dto.IBAN ?? profile?.IBAN,
-                country: dto.country ?? profile?.country,
-                swiftCode: dto.swiftCode ?? profile?.swiftCode,
-                paypalEmailAddress: dto.paypalEmailAddress ?? profile?.paypalEmailAddress
-            };
-
-            if (profile) {
-                await this.userProfileRepository.update(profile.id, updatedProfileData);
-            } else {
-                await this.userProfileRepository.create({
-                    ...updatedProfileData,
-                    user
-                });
-            }
-
-            return ResponseUtils.successResponseHandler(200, 'Profile updated successfully.', 'data', {});
-        } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
-        }
-    }
-
     async updatePassword(userData: any, dto: UpdatePasswordDto) {
         try {
-            const user = await this.userRepository.findOne(userData.id);
+            const userId = userData?.id || userData?.userId || userData?.sub;
+            let user = userId ? await this.userRepository.findOne(userId) : null;
+            if (!user && userData?.email) {
+                user = await this.userRepository.findOneByQuery({ email: userData.email });
+            }
             if (!user) {
                 throw new HttpException('User not found!', HttpStatus.BAD_REQUEST);
             }

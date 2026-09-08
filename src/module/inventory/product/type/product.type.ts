@@ -21,8 +21,8 @@ export interface ProductInterface {
 	firstCategoryName: string;
 	secondCategoryId: string;
 	secondCategoryName: string;
-	vendorId: string;
-	vendorName: string;
+	vendorId?: string;
+	vendorName?: string;
 	status: boolean;
 	isApprove: boolean;
 	isProductSectionOne: boolean;

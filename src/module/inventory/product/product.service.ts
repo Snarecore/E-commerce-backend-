@@ -40,11 +40,6 @@ export class ProductService {
             const slug = await this.generateUniqueSlug(dto.name);
             dto.slug = slug;
 
-            if (userData) {
-                dto.vendorId = userData?.id;
-                dto.vendorName = userData?.name;
-            }
-
             if (dto.sizeStock && typeof dto.sizeStock === 'object') {
                 const totalQty = Object.values(dto.sizeStock).reduce((sum, q) => sum + (Number(q) || 0), 0);
                 dto.quantity = totalQty;
@@ -156,10 +151,6 @@ export class ProductService {
 
             if (dto.secondCategoryId) {
                 qb.andWhere('product.secondCategoryId = :secondCategoryId', { secondCategoryId: dto.secondCategoryId });
-            }
-
-            if (dto.vendorId) {
-                qb.andWhere('product.vendorId = :vendorId', { vendorId: dto.vendorId });
             }
 
             if (dto.inStockOnly) {
@@ -305,10 +296,6 @@ export class ProductService {
                 query.secondCategoryId = dto.secondCategoryId;
             }
 
-            if (dto.vendorId) {
-                query.vendorId = dto.vendorId;
-            }
-
             const order: FindOptionsOrder<Product> = {
                 createdAt: 'desc',
                 id: 'desc'
@@ -337,109 +324,6 @@ export class ProductService {
             const enrichedData = result?.data?.map((product) => ({
                 ...product,
                 productImages: imagesByProductId.get(product.id) ?? []
-            }));
-
-            const payload = {
-                data: enrichedData,
-                total: result.total,
-                page: result.page,
-                limit: result.limit,
-                pageCount: result.pageCount
-            };
-
-            return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', payload);
-        } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
-        }
-    }
-
-     async findAllForVendor(
-        dto: ProductFilterDto,
-        userData: any
-    ): Promise<ApiResponse<{ data: ProductInterface[]; total: number; page: number; limit: number; pageCount: number; }>> {
-        try {
-            let query: ProductFilter = {};
-
-            if (userData) {
-                query.vendorId = userData?.id;
-            }
-
-            if (dto.searchKeyword) {
-                query.name = ILike(`%${dto.searchKeyword}%`);
-            }
-
-            if (dto.sku) {
-                query.sku = ILike(`%${dto.sku}%`);
-            }
-
-            if (typeof dto.isActive === 'boolean') {
-                query.status = dto.isActive;
-            }
-
-            if (typeof dto.isApprove === 'boolean') {
-                query.isApprove = dto.isApprove;
-            }
-
-            if (dto.startDate && dto.endDate) {
-                query.createdAt = Between(
-                    new Date(`${dto.startDate.toISOString().split('T')[0]}T00:00:00.000Z`),
-                    new Date(`${dto.endDate.toISOString().split('T')[0]}T23:59:59.999Z`)
-                );
-            } else if (dto.startDate) {
-                query.createdAt = MoreThanOrEqual(
-                    new Date(`${dto.startDate.toISOString().split('T')[0]}T00:00:00.000Z`)
-                );
-            } else if (dto.endDate) {
-                query.createdAt = LessThanOrEqual(
-                    new Date(`${dto.endDate.toISOString().split('T')[0]}T23:59:59.999Z`)
-                );
-            }
-
-            if (dto.mainCategoryId) {
-                query.mainCategoryId = dto.mainCategoryId;
-            }
-
-            if (dto.firstCategoryId) {
-                query.firstCategoryId = dto.firstCategoryId;
-            }
-
-            if (dto.secondCategoryId) {
-                query.secondCategoryId = dto.secondCategoryId;
-            }
-
-            if (dto.vendorId) {
-                query.vendorId = dto.vendorId;
-            }
-
-            const order: FindOptionsOrder<Product> = {
-                createdAt: 'desc',
-                id: 'desc'
-            };
-
-            const result = await this.repository.paginate({
-                page: dto.page ? dto?.page : 1,
-                limit: dto.limit ? dto?.limit : 10,
-                query,
-                order
-            });
-
-            // Fix: Batch fetch all product images in one IN query (Option B)
-            const vendorProductIds = result?.data?.map(p => p.id) ?? [];
-            const vendorAllImages = vendorProductIds.length > 0
-                ? await this.productImageGalleryRepository.findAll({ productId: In(vendorProductIds) as any })
-                : [];
-
-            const vendorImagesByProductId = new Map<string, typeof vendorAllImages>();
-            for (const img of vendorAllImages) {
-                const list = vendorImagesByProductId.get(img.productId) ?? [];
-                list.push(img);
-                vendorImagesByProductId.set(img.productId, list);
-            }
-
-            const enrichedData = result?.data?.map((product) => ({
-                ...product,
-                productImages: vendorImagesByProductId.get(product.id) ?? []
             }));
 
             const payload = {
