@@ -12,7 +12,11 @@ import { validateServerMaxConnections } from './configs/typeorm.config';
 
 async function bootstrap(): Promise<void> {
 	dotenv.config();
-	const app = await NestFactory.create(AppModule, { rawBody: true });
+	const isProd = process.env.NODE_ENV === 'production';
+	const app = await NestFactory.create(AppModule, {
+		rawBody: true,
+		logger: isProd ? ['error', 'warn', 'log'] : ['error', 'warn', 'log', 'debug', 'verbose']
+	});
 	app.getHttpAdapter().getInstance().set('trust proxy', 1);
 	app.use(compression());
 	app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
@@ -60,6 +64,10 @@ async function bootstrap(): Promise<void> {
 		console.warn(`[DB Budget Check Note] ${e.message}`);
 	}
 
-	await app.listen(process.env.PORT ?? 5000);
+	const server = await app.listen(process.env.PORT ?? 5000);
+	if (server && 'keepAliveTimeout' in server) {
+		server.keepAliveTimeout = 65000;
+		server.headersTimeout = 66000;
+	}
 }
 bootstrap();

@@ -132,6 +132,12 @@ export class OrdersService implements OnModuleInit {
         try {
             await (this.repository as any).query(`ALTER TABLE \`order_summary\` ADD COLUMN \`selectedSize\` varchar(255) NULL`);
         } catch (e) {}
+        try {
+            await (this.repository as any).query(`CREATE INDEX \`IDX_orders_status_created\` ON \`orders\` (\`status\`, \`createdAt\`)`);
+        } catch (e) {}
+        try {
+            await (this.repository as any).query(`CREATE INDEX \`IDX_orders_payment_status\` ON \`orders\` (\`paymentStatus\`, \`createdAt\`)`);
+        } catch (e) {}
     }
 
     private getStripeClient(): Stripe {
@@ -617,10 +623,22 @@ export class OrdersService implements OnModuleInit {
 
             await queryRunner.commitTransaction();
 
+            if (this.notificationService && updatedOrder.userId) {
+                try {
+                    await this.notificationService.createOrderNotification(
+                        updatedOrder.userId,
+                        updatedOrder.orderId,
+                        targetStatus,
+                        historyNote
+                    );
+                } catch (notifErr) {}
+            }
+
             if (this.socketService) {
                 try {
                     const statusPayload = {
                         orderId: updatedOrder.id,
+                        rawOrderId: updatedOrder.orderId,
                         status: targetStatus,
                         changedAt: nowIso,
                         note: historyNote
@@ -868,12 +886,19 @@ export class OrdersService implements OnModuleInit {
 
     async findOne(id: string, userData?: any): Promise<ApiResponse<OrdersInterface>> {
         try {
-            const data = await this.repository.findOneWithRelations(id, ['orderSummaries', 'user']);
+            const cleanId = (id || '').replace(/^#/, '').trim();
+            const data = await this.repository.getRepository().findOne({
+                where: [
+                    { id: cleanId, isDeleted: false },
+                    { orderId: cleanId, isDeleted: false }
+                ],
+                relations: ['orderSummaries', 'user']
+            });
             if (!data) {
                 throw new HttpException('Data not found!', HttpStatus.NOT_FOUND);
             }
 
-            if (userData && userData.role === 'customer' && data.userId !== userData.id) {
+            if (userData && userData.role === 'customer' && data.userId && data.userId !== userData.id) {
                 throw new HttpException('Forbidden access to order.', HttpStatus.FORBIDDEN);
             }
 

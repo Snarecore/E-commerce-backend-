@@ -7,6 +7,8 @@ import { User } from '../../user/entities/user.entity';
 @Entity('orders')
 @Index('IDX_orders_orderId', ['orderId'])
 @Index('IDX_orders_user_created', ['userId', 'createdAt'])
+@Index('IDX_orders_status_created', ['status', 'createdAt'])
+@Index('IDX_orders_payment_status', ['paymentStatus', 'createdAt'])
 export class Orders extends AbstractEntity {
     @Column({ type: 'varchar', nullable: false })
     orderId: string;

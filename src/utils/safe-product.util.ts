@@ -36,7 +36,11 @@ export interface SafeProduct {
     isProductSectionSix: boolean;
 }
 
-export function toSafeProduct(product: Product, megaDiscount?: MegaDiscountState | null): SafeProduct {
+export function toSafeProduct(
+    product: Product,
+    megaDiscount?: MegaDiscountState | null,
+    options?: { isListingView?: boolean }
+): SafeProduct {
     const {
         id,
         name,
@@ -80,7 +84,7 @@ export function toSafeProduct(product: Product, megaDiscount?: MegaDiscountState
         slug,
         sku,
         featuredImage,
-        description,
+        description: options?.isListingView ? null : description,
         videoUrl,
         summary,
         price,

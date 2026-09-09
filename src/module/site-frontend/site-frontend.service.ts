@@ -212,7 +212,7 @@ export class SiteFrontendService {
 
             const formatProduct = (p: Product) => {
                 const pImages = imagesByProductMap.get(p.id) || [];
-                const safe = toSafeProduct(p, megaDiscount);
+                const safe = toSafeProduct(p, megaDiscount, { isListingView: true });
                 const featured = safe.featuredImage || pImages[0]?.imageUrl || null;
                 return {
                     ...safe,
@@ -252,7 +252,7 @@ export class SiteFrontendService {
                 this.megaDiscountRepository.getSingleton()
             ]);
 
-            const recommendedProducts = recommendedProductsRaw.map((p) => toSafeProduct(p, megaDiscount));
+            const recommendedProducts = recommendedProductsRaw.map((p) => toSafeProduct(p, megaDiscount, { isListingView: true }));
 
             const data = {
                 recommendedProducts
@@ -383,7 +383,7 @@ export class SiteFrontendService {
 
             const safeData = products.map((p) => {
                 const pImages = imagesByProductMap.get(p.id) || [];
-                const safe = toSafeProduct(p, megaDiscount);
+                const safe = toSafeProduct(p, megaDiscount, { isListingView: true });
                 return { ...safe, productImages: pImages };
             });
 
@@ -428,7 +428,7 @@ export class SiteFrontendService {
                 order
             });
 
-            const safeData = result.data.map((p) => toSafeProduct(p, megaDiscount));
+            const safeData = result.data.map((p) => toSafeProduct(p, megaDiscount, { isListingView: true }));
 
             const payload = {
                 data: safeData,
@@ -511,7 +511,7 @@ export class SiteFrontendService {
                 this.megaDiscountRepository.getSingleton()
             ]);
 
-            const relatedProducts = relatedProductsRaw.filter(p => p.id !== product.id).map((p) => toSafeProduct(p, megaDiscount));
+            const relatedProducts = relatedProductsRaw.filter(p => p.id !== product.id).map((p) => toSafeProduct(p, megaDiscount, { isListingView: true }));
 
             const metaKeys = ['createdAt', 'updatedAt', 'isDeleted'] as const;
 
