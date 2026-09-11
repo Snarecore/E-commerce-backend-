@@ -66,6 +66,7 @@ import { MegaDiscountModule } from './module/setting/mega-discount/mega-discount
 import { AuditLogModule } from './module/audit-log/audit-log.module';
 import { ProfitReportModule } from './module/profit-report/profit-report.module';
 import { SocketModule } from './module/socket/socket.module';
+import { RiskModule } from './module/risk/risk.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -164,7 +165,8 @@ import { AppController } from './app.controller';
 		MegaDiscountModule,
 		AuditLogModule,
 		PopupModule,
-		ProfitReportModule
+		ProfitReportModule,
+		RiskModule
 	],
 	providers: [
 		{

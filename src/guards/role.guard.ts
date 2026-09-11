@@ -3,12 +3,16 @@ import {
   CanActivate,
   ExecutionContext,
   ForbiddenException,
-  Inject,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { ROLES_KEY } from '../decorators/role.decorator';
-
 import { Role } from '../enums/role.enum';
+
+export const ROLE_HIERARCHY: Record<string, number> = {
+  customer: 10,
+  user: 10,
+  admin: 20,
+};
 
 @Injectable()
 export class RolesGuard implements CanActivate {
@@ -20,7 +24,7 @@ export class RolesGuard implements CanActivate {
       context.getClass(),
     ]);
 
-    if (!requiredRoles) return true;
+    if (!requiredRoles || requiredRoles.length === 0) return true;
 
     const request = context.switchToHttp().getRequest();
     const user = request.user;
@@ -29,13 +33,19 @@ export class RolesGuard implements CanActivate {
       throw new ForbiddenException('User not found in request.');
     }
 
-    const userRole = typeof user.role === 'string' ? user.role.toLowerCase().trim() : user.role;
-    const hasRole = requiredRoles.some((r) =>
-      typeof r === 'string' ? r.toLowerCase() === userRole : r === userRole,
-    );
+    const userRole = typeof user.role === 'string' ? user.role.toLowerCase().trim() : '';
+    const userLevel = ROLE_HIERARCHY[userRole] ?? 0;
 
-    if (!hasRole) {
-      throw new ForbiddenException('Access denied. Insufficient role.');
+    // Minimum required level among the specified roles for this endpoint
+    const requiredLevels = requiredRoles.map((r) => {
+      const roleStr = typeof r === 'string' ? r.toLowerCase().trim() : '';
+      return ROLE_HIERARCHY[roleStr] ?? 999;
+    });
+    const minRequiredLevel = Math.min(...requiredLevels);
+
+    // Hierarchical comparison: User Level >= Required Level
+    if (userLevel < minRequiredLevel) {
+      throw new ForbiddenException('Access denied. Insufficient role hierarchy.');
     }
 
     return true;

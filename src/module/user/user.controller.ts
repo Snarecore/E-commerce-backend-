@@ -19,7 +19,7 @@ export class UserController {
     constructor(private readonly userService: UserService) { }
 
     @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles(Role.CUSTOMER, Role.ADMIN)
+    @Roles(Role.CUSTOMER)
     @Patch('/customer-profile')
     @UseInterceptors(FileFieldsInterceptor(
         [
@@ -37,7 +37,7 @@ export class UserController {
     }
 
     @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles(Role.CUSTOMER, Role.ADMIN)
+    @Roles(Role.CUSTOMER)
     @Patch('/customer-password')
     async updateCustomerPassword(
         @Req() req: Request,
@@ -54,7 +54,7 @@ export class UserController {
     }
 
     @UseGuards(JwtAuthGuard, RolesGuard)
-    @Roles(Role.CUSTOMER, Role.ADMIN)
+    @Roles(Role.CUSTOMER)
     @Get('/customer')
     async findCustomerData(@Req() req: Request) {
         return await this.userService.findOneCustomer(req.user);

@@ -10,6 +10,8 @@ import compression from 'compression';
 import { DataSource } from 'typeorm';
 import { validateServerMaxConnections } from './configs/typeorm.config';
 
+import helmet from 'helmet';
+
 async function bootstrap(): Promise<void> {
 	dotenv.config();
 	const isProd = process.env.NODE_ENV === 'production';
@@ -18,6 +20,10 @@ async function bootstrap(): Promise<void> {
 		logger: isProd ? ['error', 'warn', 'log'] : ['error', 'warn', 'log', 'debug', 'verbose']
 	});
 	app.getHttpAdapter().getInstance().set('trust proxy', 1);
+	app.use(helmet({
+		crossOriginResourcePolicy: { policy: "cross-origin" },
+		contentSecurityPolicy: false, // Managed at gateway/CDN level or customized as needed
+	}));
 	app.use(compression());
 	app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
 	const defaultOrigins = ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173', 'http://localhost:5174'];
@@ -31,8 +37,7 @@ async function bootstrap(): Promise<void> {
 			if (
 				!origin ||
 				allowedOrigins.includes(origin) ||
-				/\.vercel\.app$/.test(origin) ||
-				/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+				(!isProd && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin))
 			) {
 				callback(null, true);
 			} else {

@@ -5,6 +5,8 @@ import { Role } from '../../enums/role.enum';
 import { COOKIE_NAMES } from '../../utils/cookie-config';
 import { ConversationRepository } from '../chat/conversation/conversation.repository';
 
+import { ConfigService } from '@nestjs/config';
+
 export interface AuthenticatedSocketUser {
     id: string;
     email: string;
@@ -18,6 +20,7 @@ export class SocketAuthService {
 
     constructor(
         private readonly jwtService: JwtService,
+        private readonly configService: ConfigService,
         private readonly conversationRepository: ConversationRepository
     ) {}
 
@@ -40,19 +43,25 @@ export class SocketAuthService {
 
             // 2. Fallback to handshake auth payload (if explicitly provided in non-cookie environments)
             if (!rawToken && client.handshake?.auth?.token) {
-                rawToken = String(client.handshake.auth.token).replace(/^Bearers+/i, '');
+                rawToken = String(client.handshake.auth.token).replace(/^Bearer\s+/i, '').trim();
             }
 
             // 3. Fallback to authorization header
             if (!rawToken && client.handshake?.headers?.authorization) {
-                rawToken = String(client.handshake.headers.authorization).replace(/^Bearers+/i, '');
+                rawToken = String(client.handshake.headers.authorization).replace(/^Bearer\s+/i, '').trim();
             }
 
             if (!rawToken) {
                 return null;
             }
 
-            const secret = process.env.JWT_SECRET || '0c1b10e6e5375d9a6fcd5cbf764f7ae83f9a6b91d0b77127c553b0aef4647d89';
+            rawToken = rawToken.replace(/^Bearer\s+/i, '').trim();
+
+            const secret = this.configService.get<string>('JWT_SECRET') || process.env.JWT_SECRET;
+            if (!secret) {
+                this.logger.error('JWT_SECRET environment variable is not defined.');
+                return null;
+            }
             const payload = this.jwtService.verify(rawToken, { secret });
 
             if (!payload) {

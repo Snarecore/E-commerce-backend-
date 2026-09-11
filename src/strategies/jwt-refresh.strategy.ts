@@ -1,13 +1,18 @@
 import { Injectable } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
+import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
 import { ExtractJwt, Strategy } from 'passport-jwt';
-import { JwtPayload } from '../common/types';
 import { COOKIE_NAMES } from '../utils/cookie-config';
 
 @Injectable()
 export class JwtRefreshStrategy extends PassportStrategy(Strategy, 'jwt-refresh') {
-    constructor() {
+    constructor(private readonly configService: ConfigService) {
+        const secret = configService.get<string>('JWT_SECRET') || process.env.JWT_SECRET;
+        if (!secret && process.env.NODE_ENV === 'production') {
+            throw new Error('JWT_SECRET environment variable is missing');
+        }
+
         super({
             jwtFromRequest: ExtractJwt.fromExtractors([
                 ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -19,7 +24,7 @@ export class JwtRefreshStrategy extends PassportStrategy(Strategy, 'jwt-refresh'
                     return typeof token === 'string' ? token : null;
                 },
             ]),
-            secretOrKey: process.env.JWT_SECRET || '0c1b10e6e5375d9a6fcd5cbf764f7ae83f9a6b91d0b77127c553b0aef4647d89',
+            secretOrKey: secret || 'dev_jwt_secret_cloth',
         });
     }
 
@@ -29,3 +34,4 @@ export class JwtRefreshStrategy extends PassportStrategy(Strategy, 'jwt-refresh'
         return { id, userId: id, email: payload.email, role, roles: role, name: payload.name };
     }
 }
+

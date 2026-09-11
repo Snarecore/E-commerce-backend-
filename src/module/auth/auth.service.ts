@@ -6,6 +6,7 @@ import { User } from '../user/entities/user.entity';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
 import * as bcrypt from 'bcryptjs';
+import * as crypto from 'crypto';
 import { LoginDto } from './dto/login.dto';
 import { JwtService } from '@nestjs/jwt';
 import { Response } from 'express';
@@ -342,17 +343,24 @@ export class AuthService {
 
 	async forgotPassword(email: string) {
 		try {
-			const user = await this.userRepository.findOneByQuery({ email: email });
+			const cleanEmail = (email || '').trim().toLowerCase();
+			const user = await this.userRepository.findOneByQuery({ email: cleanEmail });
 
 			if (!user) {
-				throw new NotFoundException('User with this email not found');
+				return ResponseUtils.successResponseHandler(
+					HttpStatus.OK,
+					'If your email is registered, a password reset code has been sent.',
+					'data',
+					{ sent: true }
+				);
 			}
 
 			const resetToken = Math.floor(100000 + Math.random() * 900000).toString();
-			const resetTokenExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+			const hashedResetToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+			const resetTokenExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
 			await this.userRepository.update(user.id, {
-				resetToken: resetToken,
+				resetToken: hashedResetToken,
 				resetTokenExpiry: resetTokenExpiresAt
 			});
 
@@ -370,20 +378,23 @@ export class AuthService {
 
 			return ResponseUtils.successResponseHandler(
 				HttpStatus.OK,
-				'Reset password link sent to email address',
+				'If your email is registered, a password reset code has been sent to your email.',
 				'data',
-				resetToken
+				{ sent: true }
 			);
 		} catch (error) {
 			console.log(error);
+			throw new HttpException('Failed to process forgot password request', HttpStatus.INTERNAL_SERVER_ERROR);
 		}
 	}
 
 	async resetPassword(dto: ResetPasswordDto) {
 		const { email, token, newPassword, confirmPassword } = dto;
+		const cleanEmail = (email || '').trim().toLowerCase();
+		const cleanToken = (token || '').trim();
 
 		const user = await this.userRepository.findOneByQueryRelation(
-			{ email: email },
+			{ email: cleanEmail },
 			{ select: ['id', 'email', 'resetToken', 'resetTokenExpiry'] }
 		);
 		if (!user) {
@@ -391,16 +402,17 @@ export class AuthService {
 		}
 
 		if (!user.resetToken || !user.resetTokenExpiry) {
-			throw new BadRequestException('No reset token found');
+			throw new BadRequestException('No reset token found or already used.');
 		}
 
 		const now = new Date();
-		if (user.resetToken !== token) {
-			throw new BadRequestException('Invalid reset token.');
+		if (new Date(user.resetTokenExpiry) < now) {
+			throw new BadRequestException('Reset token has expired.');
 		}
 
-		if (user.resetTokenExpiry < now) {
-			throw new BadRequestException('Reset token has expired.');
+		const hashedIncomingToken = crypto.createHash('sha256').update(cleanToken).digest('hex');
+		if (user.resetToken !== hashedIncomingToken && user.resetToken !== cleanToken) {
+			throw new BadRequestException('Invalid reset token.');
 		}
 
 		if (newPassword !== confirmPassword) {
@@ -408,9 +420,9 @@ export class AuthService {
 		}
 
 		const hashedPassword = await bcrypt.hash(newPassword, 10);
-		const response = await this.userRepository.update(user.id, {
-			resetToken: undefined,
-			resetTokenExpiry: undefined,
+		await this.userRepository.update(user.id, {
+			resetToken: null as any,
+			resetTokenExpiry: null as any,
 			password: hashedPassword
 		});
 
@@ -418,7 +430,7 @@ export class AuthService {
 			HttpStatus.OK,
 			'Password has been reset successfully',
 			'data',
-			response
+			{ success: true }
 		);
 	}
 }

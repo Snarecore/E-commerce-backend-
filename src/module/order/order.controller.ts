@@ -39,6 +39,19 @@ export class OrdersController {
 				}
 			} catch {}
 		}
+		if (!userId && (req as any)?.cookies) {
+			try {
+				const cookies = (req as any).cookies;
+				const token = cookies['cloth_customer_access'] || cookies['cloth_admin_access'] || cookies['accessToken'];
+				if (token) {
+					const payloadPart = token.split('.')[1];
+					if (payloadPart) {
+						const decoded = JSON.parse(Buffer.from(payloadPart, 'base64').toString('utf8'));
+						userId = decoded?.id || decoded?.userId || decoded?.sub;
+					}
+				}
+			} catch {}
+		}
 		userId = userId || (dto as any)?.userId || null;
 		return await this.service.create(dto, userId);
 	}
@@ -53,7 +66,7 @@ export class OrdersController {
 	}
 
 	@UseGuards(JwtAuthGuard, RolesGuard)
-	@Roles(Role.CUSTOMER, Role.ADMIN)
+	@Roles(Role.CUSTOMER)
 	@Get('/customer-order')
 	async findCustomerOrderList(
 		@Query() dto: OrdersFilterDto,

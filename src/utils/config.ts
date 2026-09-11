@@ -9,7 +9,6 @@ export const CONFIG = {
     DELETE_FAILED: 'Delete failed',
     GENERIC_ERROR: 'An error occurred',
     DUPLICATE_FOUND: 'Duplicate data found',
-    JWT_SECRET: 'com.domain',
     HTTP_200: 200, // Ok
     HTTP_201: 201, // Created
     HTTP_400: 400, // Bad request

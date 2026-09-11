@@ -370,6 +370,20 @@ export class NotificationService implements OnModuleInit {
         isRead: false,
       });
 
+      if (notification && this.socketService) {
+        try {
+          this.socketService.emitToRoom(SOCKET_ROOMS.USER(userId), SocketEvent.ORDER_STATUS_UPDATED, {
+            id: notification.id,
+            userId,
+            orderId,
+            status: cleanStatus,
+            title: notification.title,
+            message: notification.message,
+            createdAt: notification.createdAt ? new Date(notification.createdAt).toISOString() : new Date().toISOString()
+          });
+        } catch (socketErr) {}
+      }
+
       return notification;
     } catch (err) {
       console.error('Error creating order notification in DB:', err);
