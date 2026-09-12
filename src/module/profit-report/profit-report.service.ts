@@ -1,64 +1,12 @@
-import { Injectable, InternalServerErrorException, OnModuleInit } from '@nestjs/common';
+import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { ProfitReportFilterDto } from './dto/profit-report-filter.dto';
 import { ProfitReportStatusScope, CostSource } from '../../enums/profit-report.enum';
 import { ResponseUtils } from '../../utils/response.utils';
 
 @Injectable()
-export class ProfitReportService implements OnModuleInit {
+export class ProfitReportService {
     constructor(private readonly dataSource: DataSource) {}
-
-    async onModuleInit() {
-        // Auto-add columns to MySQL table if missing
-        try {
-            await this.dataSource.query(`ALTER TABLE \`order-summary\` ADD COLUMN \`unitCostPrice\` decimal(10,2) NOT NULL DEFAULT '0.00'`);
-        } catch (e) {}
-        try {
-            await this.dataSource.query(`ALTER TABLE \`order-summary\` ADD COLUMN \`totalCost\` decimal(10,2) NOT NULL DEFAULT '0.00'`);
-        } catch (e) {}
-        try {
-            await this.dataSource.query(`ALTER TABLE \`order-summary\` ADD COLUMN \`costSource\` enum('SNAPSHOT','MIGRATED','UNKNOWN') NOT NULL DEFAULT 'SNAPSHOT'`);
-        } catch (e) {}
-        try {
-            await this.dataSource.query(`ALTER TABLE \`order-summary\` ADD COLUMN \`snapshotMainCategoryId\` varchar(255) NULL`);
-        } catch (e) {}
-        try {
-            await this.dataSource.query(`ALTER TABLE \`order-summary\` ADD COLUMN \`snapshotFirstCategoryId\` varchar(255) NULL`);
-        } catch (e) {}
-        try {
-            await this.dataSource.query(`ALTER TABLE \`order-summary\` ADD COLUMN \`snapshotSecondCategoryId\` varchar(255) NULL`);
-        } catch (e) {}
-
-        // Auto-backfill existing order summaries and missing createdAt
-        try {
-            await this.dataSource.query(`UPDATE orders SET createdAt = CURRENT_TIMESTAMP WHERE createdAt IS NULL;`);
-        } catch (e) {}
-
-        try {
-            await this.dataSource.query(`
-                UPDATE \`order-summary\` os
-                LEFT JOIN \`product\` p ON os.productId = p.id
-                SET 
-                    os.unitCostPrice = IF(p.cost IS NOT NULL AND p.cost > 0, p.cost, 0.00),
-                    os.totalCost = IF(p.cost IS NOT NULL AND p.cost > 0, ROUND(p.cost * os.quantity, 2), 0.00),
-                    os.costSource = IF(p.cost IS NOT NULL AND p.cost > 0, 'MIGRATED', 'UNKNOWN'),
-                    os.snapshotMainCategoryId = p.mainCategoryId,
-                    os.snapshotFirstCategoryId = p.firstCategoryId,
-                    os.snapshotSecondCategoryId = p.secondCategoryId
-                WHERE os.unitCostPrice = 0.00 AND os.costSource = 'SNAPSHOT';
-            `);
-        } catch (e) {}
-
-        try {
-            await this.dataSource.query(`CREATE INDEX \`IDX_order_summary_costSource\` ON \`order-summary\` (\`costSource\`);`);
-        } catch (e) {}
-        try {
-            await this.dataSource.query(`CREATE INDEX \`IDX_order_summary_categories\` ON \`order-summary\` (\`snapshotMainCategoryId\`, \`snapshotFirstCategoryId\`);`);
-        } catch (e) {}
-        try {
-            await this.dataSource.query(`CREATE INDEX \`IDX_orders_status_created\` ON \`orders\` (\`status\`, \`createdAt\`);`);
-        } catch (e) {}
-    }
 
     private buildStatusCondition(scope?: ProfitReportStatusScope, customStatus?: string): { sql: string; params: any[] } {
         if (scope === ProfitReportStatusScope.ACTIVE_ALL) {

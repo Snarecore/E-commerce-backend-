@@ -1,4 +1,4 @@
-import { Injectable, HttpException, HttpStatus, OnModuleInit } from '@nestjs/common';
+import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
 import { ProductComment } from './entities/product-comment.entity';
 import { UserRepository } from '../../user/user.repository';
 import { UserProfileRepository } from '../../user-profile/user-profile.repository';
@@ -21,19 +21,13 @@ type ProductLite = {
 };
 
 @Injectable()
-export class ProductCommentService implements OnModuleInit {
+export class ProductCommentService {
     constructor(
         private readonly repo: ProductCommentRepository,
         private readonly productRepo: ProductRepository,
         private readonly userRepo: UserRepository,
         private readonly profileRepo: UserProfileRepository
     ) { }
-
-    async onModuleInit() {
-        try {
-            await (this.repo as any).query(`ALTER TABLE \`product_comments\` ADD COLUMN \`isApproved\` tinyint(1) NOT NULL DEFAULT 0`);
-        } catch (e) {}
-    }
 
     async create(dto: CreateProductCommentDto, user: any) {
         const product = await this.productRepo.findOne(dto.productId);

@@ -1,4 +1,4 @@
-import { HttpException, HttpStatus, Injectable, OnModuleInit, Optional } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, Optional } from '@nestjs/common';
 import { NotificationRepository } from './notification.repository';
 import { Notifications, NotificationType } from './entity/notification.entity';
 import { ApiResponse, ResponseUtils } from '../../utils/response.utils';
@@ -8,55 +8,11 @@ import { SocketService } from '../socket/socket.service';
 import { SocketEvent, SOCKET_ROOMS } from '../socket/socket.constants';
 
 @Injectable()
-export class NotificationService implements OnModuleInit {
+export class NotificationService {
   constructor(
     private readonly repository: NotificationRepository,
     @Optional() private readonly socketService?: SocketService
   ) {}
-
-  async onModuleInit() {
-    try {
-      await this.repository.query(`
-        CREATE TABLE IF NOT EXISTS \`notifications\` (
-          \`id\` varchar(36) NOT NULL,
-          \`createdAt\` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-          \`updatedAt\` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-          \`isDeleted\` tinyint(4) NOT NULL DEFAULT 0,
-          \`userId\` varchar(255) DEFAULT NULL,
-          \`role\` varchar(50) DEFAULT 'CUSTOMER',
-          \`title\` varchar(255) NOT NULL,
-          \`message\` text NOT NULL,
-          \`type\` varchar(100) NOT NULL DEFAULT 'GENERAL',
-          \`orderId\` varchar(255) DEFAULT NULL,
-          \`metadata\` json DEFAULT NULL,
-          \`isRead\` tinyint(4) NOT NULL DEFAULT 0,
-          PRIMARY KEY (\`id\`),
-          KEY \`IDX_notifications_userId\` (\`userId\`),
-          KEY \`IDX_notifications_role_createdAt\` (\`role\`, \`createdAt\`),
-          KEY \`IDX_notifications_role_isRead_createdAt\` (\`role\`, \`isRead\`, \`createdAt\`),
-          UNIQUE KEY \`UNQ_notifications_type_orderId\` (\`type\`, \`orderId\`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-      `);
-    } catch (err) {
-      console.error('Auto table creation error for notifications:', err);
-    }
-
-    try {
-      await this.repository.query(`ALTER TABLE \`notifications\` MODIFY COLUMN \`userId\` varchar(255) NULL`);
-    } catch (e) {}
-
-    try {
-      await this.repository.query(`ALTER TABLE \`notifications\` ADD COLUMN \`role\` varchar(50) NOT NULL DEFAULT 'CUSTOMER'`);
-    } catch (e) {}
-
-    try {
-      await this.repository.query(`ALTER TABLE \`notifications\` ADD COLUMN \`metadata\` json NULL`);
-    } catch (e) {}
-
-    try {
-      await this.repository.query(`ALTER TABLE \`notifications\` DROP INDEX \`UNQ_notifications_type_orderId\``);
-    } catch (e) {}
-  }
 
   async findUserNotifications(userId: string): Promise<
     ApiResponse<{ notifications: any[]; unreadCount: number }>

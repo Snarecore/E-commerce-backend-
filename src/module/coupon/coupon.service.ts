@@ -3,7 +3,7 @@ import { MegaDiscount } from "../setting/mega-discount/entities/mega-discount.en
 import { SINGLETON_MEGA_DISCOUNT_ID } from "../setting/mega-discount/mega-discount.repository";
 import { InjectDataSource } from "@nestjs/typeorm";
 import { DataSource } from "typeorm";
-import { HttpException, HttpStatus, Injectable, OnModuleInit } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { QueryRunner } from 'typeorm';
 import { ResponseUtils, ApiResponse } from '../../utils/response.utils';
 import { CouponRepository } from './coupon.repository';
@@ -17,74 +17,13 @@ import { ValidateCouponDto } from './dto/validate-coupon.dto';
 import { CouponDiscountType } from '../../enums/coupon.enum';
 
 @Injectable()
-export class CouponService implements OnModuleInit {
+export class CouponService {
     constructor(
         private readonly couponRepository: CouponRepository,
         private readonly couponUsageRepository: CouponUsageRepository,
         private readonly productRepository: ProductRepository,
         @InjectDataSource() private readonly dataSource: DataSource
     ) {}
-
-    async onModuleInit() {
-        // Auto-create MySQL schema for coupon and coupon_usage if missing
-        try {
-            await (this.couponRepository as any).query(`
-                CREATE TABLE IF NOT EXISTS \`coupon\` (
-                    \`id\` varchar(255) NOT NULL,
-                    \`code\` varchar(255) NOT NULL,
-                    \`description\` text NULL,
-                    \`discountType\` enum('PERCENTAGE','FIXED_AMOUNT','FREE_SHIPPING') NOT NULL DEFAULT 'PERCENTAGE',
-                    \`discountValue\` decimal(10,2) NOT NULL DEFAULT '0.00',
-                    \`minOrderAmount\` decimal(10,2) NOT NULL DEFAULT '0.00',
-                    \`maxDiscountAmount\` decimal(10,2) NULL,
-                    \`startDate\` datetime NULL,
-                    \`endDate\` datetime NULL,
-                    \`usageLimit\` int NULL,
-                    \`userUsageLimit\` int NULL DEFAULT NULL,
-                    \`usageCount\` int NOT NULL DEFAULT '0',
-                    \`isActive\` tinyint NOT NULL DEFAULT '1',
-                    \`isDeleted\` tinyint NOT NULL DEFAULT '0',
-                    \`createdAt\` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-                    \`updatedAt\` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-                    PRIMARY KEY (\`id\`),
-                    UNIQUE KEY \`UQ_coupon_code\` (\`code\`)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            `);
-        } catch (e) {}
-
-        try {
-            await (this.couponRepository as any).query(`ALTER TABLE \`coupon\` MODIFY COLUMN \`userUsageLimit\` int NULL DEFAULT NULL`);
-        } catch (e) {}
-
-        try {
-            await (this.couponRepository as any).query(`
-                CREATE TABLE IF NOT EXISTS \`coupon_usage\` (
-                    \`id\` varchar(255) NOT NULL,
-                    \`couponId\` varchar(255) NOT NULL,
-                    \`userId\` varchar(255) NOT NULL,
-                    \`orderId\` varchar(255) NOT NULL,
-                    \`discountAmount\` decimal(10,2) NOT NULL,
-                    \`usedAt\` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    \`isDeleted\` tinyint NOT NULL DEFAULT '0',
-                    \`createdAt\` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-                    \`updatedAt\` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-                    PRIMARY KEY (\`id\`),
-                    KEY \`IDX_coupon_user\` (\`couponId\`,\`userId\`),
-                    KEY \`IDX_coupon_order\` (\`couponId\`,\`orderId\`)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            `);
-        } catch (e) {}
-
-        try {
-            await (this.couponRepository as any).query(`ALTER TABLE \`orders\` ADD COLUMN \`couponId\` varchar(255) NULL`);
-        } catch (e) {}
-        try {
-            await (this.couponRepository as any).query(`ALTER TABLE \`orders\` ADD COLUMN \`couponCode\` varchar(255) NULL`);
-        } catch (e) {}
-        try {
-            await (this.couponRepository as any).query(`ALTER TABLE \`orders\` ADD COLUMN \`discountAmount\` decimal(10,2) NOT NULL DEFAULT '0.00'`);
-        } catch (e) {}
-    }
 
     private roundTwoDecimals(num: number): number {
         return Math.round((num + Number.EPSILON) * 100) / 100;

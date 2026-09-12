@@ -79,12 +79,23 @@ export abstract class AbstractRepository<T extends BaseEntity> implements IRepos
     }
 
     async create(data: DeepPartial<T>): Promise<T> {
-        const entity = this.repository.create(data);
+        const entityData = {
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            ...data
+        };
+        const entity = this.repository.create(entityData);
         return this.repository.save(entity);
     }
 
     async createMany(data: DeepPartial<T>[]): Promise<T[]> {
-        const entities = this.repository.create(data);
+        const now = new Date();
+        const entitiesData = data.map((item) => ({
+            createdAt: now,
+            updatedAt: now,
+            ...item
+        }));
+        const entities = this.repository.create(entitiesData);
         return this.repository.save(entities);
     }
 

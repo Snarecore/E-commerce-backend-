@@ -66,7 +66,7 @@ import { SocketService } from '../socket/socket.service';
 import { SocketEvent, SOCKET_ROOMS } from '../socket/socket.constants';
 
 @Injectable()
-export class OrdersService implements OnModuleInit {
+export class OrdersService {
     private stripe: Stripe;
 
     constructor(
@@ -82,63 +82,6 @@ export class OrdersService implements OnModuleInit {
         @Optional() private readonly auditLogService?: AuditLogService,
         @Optional() private readonly socketService?: SocketService
     ) {}
-
-    async onModuleInit() {
-        try {
-            await (this.repository as any).query(`ALTER TABLE \`orders\` MODIFY COLUMN \`userId\` varchar(255) NULL`);
-        } catch (e) {}
-        try {
-            await (this.repository as any).query(`ALTER TABLE \`orders\` ADD COLUMN \`rejectionReason\` varchar(255) NULL`);
-        } catch (e) {}
-        try {
-            await (this.repository as any).query(`ALTER TABLE \`orders\` ADD COLUMN \`rejectionMessage\` text NULL`);
-        } catch (e) {}
-        try {
-            await (this.repository as any).query(`ALTER TABLE \`orders\` ADD COLUMN \`megaDiscountApplied\` tinyint(1) NOT NULL DEFAULT 0`);
-        } catch (e) {}
-        try {
-            await (this.repository as any).query(`ALTER TABLE \`orders\` ADD COLUMN \`megaDiscountPercentage\` decimal(5,2) NULL`);
-        } catch (e) {}
-        try {
-            await (this.repository as any).query(`ALTER TABLE \`order-summary\` ADD COLUMN \`size\` varchar(255) NULL`);
-        } catch (e) {}
-        try {
-            await (this.repository as any).query(`ALTER TABLE \`order-summary\` ADD COLUMN \`selectedSize\` varchar(255) NULL`);
-        } catch (e) {}
-        try {
-            await (this.repository as any).query(`ALTER TABLE \`order-summary\` ADD COLUMN \`unitCostPrice\` decimal(10,2) NOT NULL DEFAULT 0`);
-        } catch (e) {}
-        try {
-            await (this.repository as any).query(`ALTER TABLE \`order-summary\` ADD COLUMN \`totalCost\` decimal(10,2) NOT NULL DEFAULT 0`);
-        } catch (e) {}
-        try {
-            await (this.repository as any).query(`ALTER TABLE \`order-summary\` ADD COLUMN \`costSource\` varchar(50) NOT NULL DEFAULT 'SNAPSHOT'`);
-        } catch (e) {}
-        try {
-            await (this.repository as any).query(`ALTER TABLE \`order-summary\` ADD COLUMN \`snapshotMainCategoryId\` varchar(255) NULL`);
-        } catch (e) {}
-        try {
-            await (this.repository as any).query(`ALTER TABLE \`order-summary\` ADD COLUMN \`snapshotFirstCategoryId\` varchar(255) NULL`);
-        } catch (e) {}
-        try {
-            await (this.repository as any).query(`ALTER TABLE \`order-summary\` ADD COLUMN \`snapshotSecondCategoryId\` varchar(255) NULL`);
-        } catch (e) {}
-        try {
-            await (this.repository as any).query(`ALTER TABLE \`order-summary\` ADD COLUMN \`commissionAmount\` decimal(10,2) NULL`);
-        } catch (e) {}
-        try {
-            await (this.repository as any).query(`ALTER TABLE \`order_summary\` ADD COLUMN \`size\` varchar(255) NULL`);
-        } catch (e) {}
-        try {
-            await (this.repository as any).query(`ALTER TABLE \`order_summary\` ADD COLUMN \`selectedSize\` varchar(255) NULL`);
-        } catch (e) {}
-        try {
-            await (this.repository as any).query(`CREATE INDEX \`IDX_orders_status_created\` ON \`orders\` (\`status\`, \`createdAt\`)`);
-        } catch (e) {}
-        try {
-            await (this.repository as any).query(`CREATE INDEX \`IDX_orders_payment_status\` ON \`orders\` (\`paymentStatus\`, \`createdAt\`)`);
-        } catch (e) {}
-    }
 
     private getStripeClient(): Stripe {
         if (!this.stripe) {
@@ -540,11 +483,19 @@ export class OrdersService implements OnModuleInit {
                 return ResponseUtils.successResponseHandler(200, 'Order status remains unchanged.', 'data', order);
             }
 
-            // 2. State Machine Validation (Allow any valid OrderStatus)
+            // 2. State Machine Validation
             const isValidEnumStatus = Object.values(OrderStatus).includes(targetStatus as OrderStatus);
             if (!isValidEnumStatus) {
                 throw new HttpException(
                     `Invalid target status "${targetStatus}".`,
+                    HttpStatus.BAD_REQUEST
+                );
+            }
+
+            const allowedNext = ALLOWED_ORDER_TRANSITIONS[currentStatus];
+            if (allowedNext && !allowedNext.includes(targetStatus)) {
+                throw new HttpException(
+                    `Invalid status transition from "${currentStatus}" to "${targetStatus}".`,
                     HttpStatus.BAD_REQUEST
                 );
             }
