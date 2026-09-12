@@ -540,11 +540,11 @@ export class OrdersService implements OnModuleInit {
                 return ResponseUtils.successResponseHandler(200, 'Order status remains unchanged.', 'data', order);
             }
 
-            // 2. State Machine Validation
-            const allowedNextStates = ALLOWED_ORDER_TRANSITIONS[currentStatus] || [];
-            if (!allowedNextStates.includes(targetStatus)) {
+            // 2. State Machine Validation (Allow any valid OrderStatus)
+            const isValidEnumStatus = Object.values(OrderStatus).includes(targetStatus as OrderStatus);
+            if (!isValidEnumStatus) {
                 throw new HttpException(
-                    `Invalid status transition from "${currentStatus}" to "${targetStatus}".`,
+                    `Invalid target status "${targetStatus}".`,
                     HttpStatus.BAD_REQUEST
                 );
             }
@@ -748,46 +748,52 @@ export class OrdersService implements OnModuleInit {
         dto: OrdersFilterDto
     ): Promise<ApiResponse<{ data: OrdersInterface[]; total: number; page: number; limit: number; pageCount: number }>> {
         try {
-            let query: OrdersFilter = {};
+            const page = dto.page ? Math.max(1, Number(dto.page)) : 1;
+            const limit = dto.limit ? Math.max(1, Number(dto.limit)) : 10;
+            const skip = (page - 1) * limit;
+
+            const qb = this.repository.createQueryBuilder('order')
+                .leftJoinAndSelect('order.orderSummaries', 'orderSummaries')
+                .leftJoinAndSelect('order.user', 'user')
+                .where('order.isDeleted = false');
 
             if (dto.userId) {
-                query.userId = dto.userId;
+                qb.andWhere('order.userId = :userId', { userId: dto.userId });
             }
 
             if (dto.status) {
-                query.status = dto.status;
+                qb.andWhere('order.status = :status', { status: dto.status });
             }
 
             if (dto.paymentStatus) {
-                query.paymentStatus = dto.paymentStatus;
+                qb.andWhere('order.paymentStatus = :paymentStatus', { paymentStatus: dto.paymentStatus });
             }
 
             if (dto.orderId) {
                 const cleanOrderId = dto.orderId.replace(/^#/, '').trim();
-                query.orderId = Like(`%${cleanOrderId}%`);
+                qb.andWhere('order.orderId LIKE :orderId', { orderId: `%${cleanOrderId}%` });
             }
 
             if (dto.startDate && dto.endDate) {
-                query.createdAt = Between(new Date(dto.startDate), new Date(dto.endDate));
+                qb.andWhere('order.createdAt BETWEEN :startDate AND :endDate', {
+                    startDate: new Date(dto.startDate),
+                    endDate: new Date(dto.endDate)
+                });
             } else if (dto.startDate) {
-                query.createdAt = MoreThanOrEqual(new Date(dto.startDate));
+                qb.andWhere('order.createdAt >= :startDate', { startDate: new Date(dto.startDate) });
             } else if (dto.endDate) {
-                query.createdAt = LessThanOrEqual(new Date(dto.endDate));
+                qb.andWhere('order.createdAt <= :endDate', { endDate: new Date(dto.endDate) });
             }
 
-            const order: FindOptionsOrder<Orders> = {
-                createdAt: 'desc'
-            };
+            qb.orderBy('order.createdAt', 'DESC')
+              .addOrderBy('order.id', 'DESC')
+              .skip(skip)
+              .take(limit);
 
-            const result = await this.repository.paginate({
-                page: dto.page ? dto?.page : 1,
-                limit: dto.limit ? dto?.limit : 10,
-                query,
-                order,
-                relations: ['orderSummaries', 'user']
-            });
+            const [orders, total] = await qb.getManyAndCount();
+            const pageCount = Math.ceil(total / limit);
 
-            const enrichedData = result?.data?.map((order) => {
+            const enrichedData = (orders || []).map((order) => {
                 const orderSummaries = order.orderSummaries || [];
 
                 const totalCommission = orderSummaries.reduce(
@@ -805,10 +811,10 @@ export class OrdersService implements OnModuleInit {
 
             const payload = {
                 data: enrichedData,
-                total: result.total,
-                page: result.page,
-                limit: result.limit,
-                pageCount: result.pageCount
+                total,
+                page,
+                limit,
+                pageCount
             };
 
             return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', payload);
@@ -824,27 +830,30 @@ export class OrdersService implements OnModuleInit {
         userData: any
     ): Promise<ApiResponse<{ data: OrdersInterface[]; total: number; page: number; limit: number; pageCount: number }>> {
         try {
-            let query: OrdersFilter = {};
+            const page = dto.page ? Math.max(1, Number(dto.page)) : 1;
+            const limit = dto.limit ? Math.max(1, Number(dto.limit)) : 10;
+            const skip = (page - 1) * limit;
+
+            const qb = this.repository.createQueryBuilder('order')
+                .leftJoinAndSelect('order.orderSummaries', 'orderSummaries')
+                .leftJoinAndSelect('order.user', 'user')
+                .where('order.isDeleted = false');
 
             const userId = userData?.id || userData?.userId || userData?.sub;
             if (userId) {
-                query.userId = userId;
+                qb.andWhere('order.userId = :userId', { userId });
             }
 
-            const order: FindOptionsOrder<Orders> = {
-                createdAt: 'desc'
-            };
+            qb.orderBy('order.createdAt', 'DESC')
+              .addOrderBy('order.id', 'DESC')
+              .skip(skip)
+              .take(limit);
 
-            const result = await this.repository.paginate({
-                page: dto.page ? dto?.page : 1,
-                limit: dto.limit ? dto?.limit : 10,
-                query,
-                order,
-                relations: ['orderSummaries', 'user']
-            });
+            const [ordersList, total] = await qb.getManyAndCount();
+            const pageCount = Math.ceil(total / limit);
 
             // Fix: Collect all productIds across all orders, fetch in one IN query
-            const allProductIds = result.data.flatMap(order =>
+            const allProductIds = ordersList.flatMap(order =>
                 (order.orderSummaries || []).map(s => s.productId).filter(Boolean)
             );
 
@@ -856,7 +865,7 @@ export class OrdersService implements OnModuleInit {
                 allProducts.map(p => [p.id, p.fileUrl ?? null])
             );
 
-            const enrichedData = result.data.map((order) => {
+            const enrichedData = ordersList.map((order) => {
                 const summariesWithFileUrl = (order.orderSummaries || []).map((summary) => ({
                     ...summary,
                     productFileUrl: productFileUrlMap.get(summary.productId) ?? null
@@ -870,10 +879,10 @@ export class OrdersService implements OnModuleInit {
 
             const payload = {
                 data: enrichedData,
-                total: result.total,
-                page: result.page,
-                limit: result.limit,
-                pageCount: result.pageCount
+                total,
+                page,
+                limit,
+                pageCount
             };
 
             return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', payload);

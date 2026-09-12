@@ -130,7 +130,7 @@ export class AuditLogService implements OnModuleInit {
             qb.andWhere('log.createdAt <= :toDate', { toDate: new Date(dto.toDate) });
         }
 
-        qb.orderBy('log.createdAt', 'DESC');
+        qb.orderBy('log.createdAt', 'DESC').addOrderBy('log.id', 'DESC');
         qb.skip(skip).take(limit);
 
         const [data, total] = await qb.getManyAndCount();

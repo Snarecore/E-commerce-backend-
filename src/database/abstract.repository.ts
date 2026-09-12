@@ -70,6 +70,10 @@ export abstract class AbstractRepository<T extends BaseEntity> implements IRepos
         return this.repository;
     }
 
+    createQueryBuilder(alias?: string) {
+        return this.repository.createQueryBuilder(alias);
+    }
+
     private isDeletedCondition(query?: FindOptionsWhere<T>): FindOptionsWhere<T> {
         return { ...query, isDeleted: false } as FindOptionsWhere<T>;
     }
@@ -105,7 +109,7 @@ export abstract class AbstractRepository<T extends BaseEntity> implements IRepos
         page = 1,
         limit = 10,
         query,
-        order,
+        order = { createdAt: 'DESC' } as unknown as FindOptionsOrder<T>,
         relations = []
     }: PaginationParams<T>): Promise<{
         data: T[];
@@ -118,7 +122,7 @@ export abstract class AbstractRepository<T extends BaseEntity> implements IRepos
             where: this.isDeletedCondition(query),
             skip: (page - 1) * limit,
             take: limit,
-            order,
+            order: order || ({ createdAt: 'DESC' } as unknown as FindOptionsOrder<T>),
             relations
         });
         const pageCount = Math.ceil(total / limit);
@@ -130,7 +134,7 @@ export abstract class AbstractRepository<T extends BaseEntity> implements IRepos
         limit = 10,
         maxTotal = 50,
         query,
-        order,
+        order = { createdAt: 'DESC' } as unknown as FindOptionsOrder<T>,
         relations = []
     }: PaginationWithHardLimitParams<T>): Promise<{
         data: T[];
@@ -143,7 +147,7 @@ export abstract class AbstractRepository<T extends BaseEntity> implements IRepos
             where: this.isDeletedCondition(query),
             skip: (page - 1) * limit,
             take: limit,
-            order,
+            order: order || ({ createdAt: 'DESC' } as unknown as FindOptionsOrder<T>),
             relations
         });
 

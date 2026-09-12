@@ -34,7 +34,8 @@ export class UserService {
 			}
 
             const order: FindOptionsOrder<User> = {
-                createdAt: 'desc'
+                createdAt: 'desc',
+                id: 'desc'
             };
 
             const result = await this.userRepository.paginate({

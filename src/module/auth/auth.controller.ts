@@ -20,8 +20,11 @@ export class AuthController {
 	@Public()
 	@Throttle({ default: { limit: 30, ttl: 60000 } })
 	@Post('register')
-	async register(@Body() dto: RegisterDto): Promise<ApiResponse<User>> {
-		return await this.authService.register(dto);
+	async register(
+		@Body() dto: RegisterDto,
+		@Req() req: Request
+	): Promise<ApiResponse<User>> {
+		return await this.authService.register(dto, req);
 	}
 
 	@Public()
@@ -29,9 +32,10 @@ export class AuthController {
 	@Post('login')
 	async login(
 		@Body() dto: LoginDto,
-		@Res({ passthrough: true }) res: Response
+		@Res({ passthrough: true }) res: Response,
+		@Req() req: Request
 	) {
-		return await this.authService.login(dto, res);
+		return await this.authService.login(dto, res, req);
 	}
 
 	@Public()
@@ -39,9 +43,10 @@ export class AuthController {
 	@Post('firebase-login')
 	async firebaseLogin(
 		@Body() dto: { idToken: string; email?: string; name?: string; photoURL?: string; firebaseUid?: string },
-		@Res({ passthrough: true }) res: Response
+		@Res({ passthrough: true }) res: Response,
+		@Req() req: Request
 	) {
-		return await this.authService.firebaseLogin(dto, res);
+		return await this.authService.firebaseLogin(dto, res, req);
 	}
 
 	@UseGuards(JwtAuthGuard)
@@ -71,8 +76,11 @@ export class AuthController {
 
 	@Public()
 	@Post('logout')
-	logout(@Res({ passthrough: true }) res: Response) {
-		this.authService.logout(res);
+	logout(
+		@Res({ passthrough: true }) res: Response,
+		@Req() req: Request
+	) {
+		this.authService.logout(res, req);
 		return ResponseUtils.successResponseHandler(
 			HttpStatus.OK,
 			'Logged out successfully.'

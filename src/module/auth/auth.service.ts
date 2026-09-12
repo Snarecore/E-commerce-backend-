@@ -41,7 +41,31 @@ export class AuthService {
 		private readonly auditLogService: AuditLogService
 	) { }
 
-	async validateUser(dto: LoginDto): Promise<User> {
+	private extractClientInfo(req?: Request) {
+		if (!req) return { ipAddress: null, userAgent: null };
+		const xForwardedFor = req.headers?.['x-forwarded-for'];
+		let ipAddress: string | null = null;
+		if (typeof xForwardedFor === 'string') {
+			ipAddress = xForwardedFor.split(',')[0].trim();
+		} else if (Array.isArray(xForwardedFor) && xForwardedFor.length > 0) {
+			ipAddress = xForwardedFor[0];
+		} else if (req.headers?.['x-real-ip']) {
+			ipAddress = req.headers['x-real-ip'] as string;
+		} else {
+			ipAddress = req.ip || req.socket?.remoteAddress || null;
+		}
+
+		if (ipAddress === '::1' || ipAddress === '::ffff:127.0.0.1') {
+			ipAddress = '127.0.0.1';
+		}
+
+		const userAgent = (req.headers?.['user-agent'] as string) || null;
+		return { ipAddress, userAgent };
+	}
+
+	async validateUser(dto: LoginDto, req?: Request): Promise<User> {
+		const { ipAddress, userAgent } = this.extractClientInfo(req);
+
 		const user = await this.userRepository.findOneByQueryRelation(
 			{ email: dto.email },
 			{ select: ['id', 'name', 'email', 'password', 'role'] }
@@ -57,10 +81,14 @@ export class AuthService {
 				targetId: null,
 				targetType: AuditTargetType.USER,
 				status: 'FAILED',
+				ipAddress,
+				userAgent,
+				httpMethod: 'POST',
+				route: '/api/v1/auth/login',
 				changes: {
 					type: 'SNAPSHOT',
 					before: null,
-					after: { attemptedEmail: dto.email }
+					after: { attemptedEmail: dto.email, reason: 'User not found' }
 				}
 			});
 			throw new NotFoundException('User not found.');
@@ -77,10 +105,14 @@ export class AuthService {
 				targetId: user.id,
 				targetType: AuditTargetType.USER,
 				status: 'FAILED',
+				ipAddress,
+				userAgent,
+				httpMethod: 'POST',
+				route: '/api/v1/auth/login',
 				changes: {
 					type: 'SNAPSHOT',
 					before: null,
-					after: { attemptedEmail: dto.email }
+					after: { attemptedEmail: dto.email, reason: 'Incorrect password' }
 				}
 			});
 			throw new UnauthorizedException('Incorrect password.');
@@ -95,14 +127,18 @@ export class AuthService {
 			module: AuditModule.AUTH,
 			targetId: user.id,
 			targetType: AuditTargetType.USER,
-			status: 'SUCCESS'
+			status: 'SUCCESS',
+			ipAddress,
+			userAgent,
+			httpMethod: 'POST',
+			route: '/api/v1/auth/login'
 		});
 
 		return user;
 	}
 
-	async login(dto: LoginDto, @Res({ passthrough: true }) res: Response) {
-		const user = await this.validateUser(dto);
+	async login(dto: LoginDto, @Res({ passthrough: true }) res: Response, req?: Request) {
+		const user = await this.validateUser(dto, req);
 
 		const payload = { email: user.email, sub: user.id, role: user.role, name: user.name };
 
@@ -139,13 +175,17 @@ export class AuthService {
 
 	async firebaseLogin(
 		dto: { idToken: string; email?: string; name?: string; photoURL?: string; firebaseUid?: string },
-		res: Response
+		res: Response,
+		req?: Request
 	) {
+		const { ipAddress, userAgent } = this.extractClientInfo(req);
 		const email = dto.email || `${dto.firebaseUid || Date.now()}@google.user`;
 		const name = dto.name || email.split('@')[0] || "User";
 
 		let user = await this.userRepository.findOneByQueryRelation({ email });
+		let isNewUser = false;
 		if (!user) {
+			isNewUser = true;
 			user = await this.userRepository.create({
 				email,
 				name,
@@ -166,6 +206,28 @@ export class AuthService {
 		setAuthCookie(res, refreshCookieName, refreshToken, REFRESH_TOKEN_MAX_AGE);
 		setAuthCookie(res, 'accessToken', accessToken, ACCESS_TOKEN_MAX_AGE);
 		setAuthCookie(res, 'refreshToken', refreshToken, REFRESH_TOKEN_MAX_AGE);
+
+		// Record audit log for Google/Firebase login
+		this.auditLogService.createAsyncLog({
+			actorId: user.id,
+			actorName: user.name,
+			actorEmail: user.email,
+			actorRole: user.role,
+			action: isNewUser ? AuditAction.AUTH_REGISTER : AuditAction.AUTH_LOGIN_SUCCESS,
+			module: AuditModule.AUTH,
+			targetId: user.id,
+			targetType: AuditTargetType.USER,
+			status: 'SUCCESS',
+			ipAddress,
+			userAgent,
+			httpMethod: 'POST',
+			route: '/api/v1/auth/firebase-login',
+			changes: {
+				type: 'SNAPSHOT',
+				before: null,
+				after: { authProvider: 'Google/Firebase', email: user.email, isNewUser }
+			}
+		});
 
 		const userData = {
 			id: user.id,
@@ -224,7 +286,8 @@ export class AuthService {
 		);
 	}
 
-	async register(dto: RegisterDto): Promise<ApiResponse<User>> {
+	async register(dto: RegisterDto, req?: Request): Promise<ApiResponse<User>> {
+		const { ipAddress, userAgent } = this.extractClientInfo(req);
 		const queryRunner = this.dataSource.createQueryRunner();
 		await queryRunner.connect();
 		await queryRunner.startTransaction();
@@ -255,6 +318,28 @@ export class AuthService {
 			}
 
 			await queryRunner.commitTransaction();
+
+			this.auditLogService.createAsyncLog({
+				actorId: createdUser.id,
+				actorName: createdUser.name,
+				actorEmail: createdUser.email,
+				actorRole: createdUser.role,
+				action: AuditAction.AUTH_REGISTER,
+				module: AuditModule.AUTH,
+				targetId: createdUser.id,
+				targetType: AuditTargetType.USER,
+				status: 'SUCCESS',
+				ipAddress,
+				userAgent,
+				httpMethod: 'POST',
+				route: '/api/v1/auth/register',
+				changes: {
+					type: 'SNAPSHOT',
+					before: null,
+					after: { name: createdUser.name, email: createdUser.email, role: createdUser.role }
+				}
+			});
+
 			return ResponseUtils.successResponseHandler(HttpStatus.OK, 'Registration successful.', 'data', toSafeUser(createdUser) as unknown as User);
 		} catch (error) {
 			await queryRunner.rollbackTransaction();
@@ -332,7 +417,7 @@ export class AuthService {
 		};
 	}
 
-	logout(res: Response): void {
+	logout(res: Response, _req?: Request): void {
 		clearAuthCookie(res, COOKIE_NAMES.CUSTOMER_ACCESS);
 		clearAuthCookie(res, COOKIE_NAMES.CUSTOMER_REFRESH);
 		clearAuthCookie(res, COOKIE_NAMES.ADMIN_ACCESS);
