@@ -621,6 +621,7 @@ export class SiteFrontendService {
 
     async findAdminDashboardData() {
         try {
+            const currentYear = new Date().getFullYear();
             const sort: FindOptionsOrder<Orders> = {
                 createdAt: 'desc'
             };
@@ -633,12 +634,14 @@ export class SiteFrontendService {
                 totalProducts,
                 totalOrders,
                 totalCustomers,
+                totalCategories,
                 recentProducts,
                 recentOrdersRaw
             ] = await Promise.all([
-                this.productRepository.count(),
-                this.ordersRepository.count(),
-                this.userRepository.count({ role: Role.CUSTOMER }),
+                this.productRepository.count({ isDeleted: false }),
+                this.ordersRepository.count({ isDeleted: false }),
+                this.userRepository.count({ role: Role.CUSTOMER, isDeleted: false }),
+                this.mainCategoryRepository.count({ status: true, isDeleted: false }),
                 this.productRepository.paginateWithHardLimit({
                     page: 1,
                     limit: 5,
@@ -666,11 +669,196 @@ export class SiteFrontendService {
                 };
             });
 
+            // 1. Dynamic Top Categories Revenue Aggregation (Database SSOT)
+            let topCategories: Array<{ category: string; sales: number }> = [];
+            try {
+                const topCategoriesRaw = await this.orderSummaryRepository.query(`
+                    SELECT 
+                        COALESCE(mc.name, p.mainCategoryName, os.productName, 'General') AS category,
+                        ROUND(SUM(os.price * os.quantity), 2) AS sales
+                    FROM \`order-summary\` os
+                    INNER JOIN orders o ON o.id = os.orderId
+                    LEFT JOIN \`main-category\` mc ON mc.id = os.snapshotMainCategoryId
+                    LEFT JOIN product p ON p.id = os.productId
+                    WHERE (os.isDeleted = 0 OR os.isDeleted IS NULL)
+                      AND (o.isDeleted = 0 OR o.isDeleted IS NULL)
+                      AND o.status NOT IN ('Cancelled', 'Rejected', 'Failed')
+                    GROUP BY category
+                    ORDER BY sales DESC
+                    LIMIT 5
+                `);
+                topCategories = (topCategoriesRaw || []).map((r: any) => ({
+                    category: String(r.category || 'General'),
+                    sales: Number(r.sales) || 0
+                }));
+            } catch (err) {
+                topCategories = [];
+            }
+
+            if (topCategories.length === 0) {
+                try {
+                    const activeCats = await this.mainCategoryRepository.findAllWithOrder({ status: true }, { position: 'asc' });
+                    topCategories = (activeCats || []).slice(0, 4).map((c: any) => ({
+                        category: c.name,
+                        sales: 0
+                    }));
+                } catch {
+                    topCategories = [];
+                }
+            }
+
+            // 2. Full Year Monthly Sales & Commission SQL Aggregation
+            let monthlySalesRaw: any[] = [];
+            let monthlyCommissionsRaw: any[] = [];
+
+            try {
+                monthlySalesRaw = await this.ordersRepository.query(`
+                    SELECT 
+                        DATE_FORMAT(createdAt, '%Y-%m') AS month,
+                        ROUND(SUM(totalAmount), 2) AS totalSales
+                    FROM orders
+                    WHERE (isDeleted = 0 OR isDeleted IS NULL)
+                      AND status NOT IN ('Cancelled', 'Rejected', 'Failed')
+                      AND YEAR(createdAt) = ?
+                    GROUP BY DATE_FORMAT(createdAt, '%Y-%m')
+                    ORDER BY month ASC
+                `, [currentYear]);
+            } catch {
+                monthlySalesRaw = [];
+            }
+
+            try {
+                monthlyCommissionsRaw = await this.orderSummaryRepository.query(`
+                    SELECT 
+                        DATE_FORMAT(o.createdAt, '%Y-%m') AS month,
+                        ROUND(SUM(os.commissionAmount), 2) AS totalCommission
+                    FROM \`order-summary\` os
+                    INNER JOIN orders o ON o.id = os.orderId
+                    WHERE (os.isDeleted = 0 OR os.isDeleted IS NULL)
+                      AND (o.isDeleted = 0 OR o.isDeleted IS NULL)
+                      AND o.status NOT IN ('Cancelled', 'Rejected', 'Failed')
+                      AND YEAR(o.createdAt) = ?
+                    GROUP BY DATE_FORMAT(o.createdAt, '%Y-%m')
+                    ORDER BY month ASC
+                `, [currentYear]);
+            } catch {
+                monthlyCommissionsRaw = [];
+            }
+
+            const salesMap = new Map((monthlySalesRaw || []).map((r: any) => [r.month, Number(r.totalSales) || 0]));
+            const commMap = new Map((monthlyCommissionsRaw || []).map((r: any) => [r.month, Number(r.totalCommission) || 0]));
+
+            const monthlySalesCommissionData: Array<{ month: string; totalSales: number; totalCommission: number }> = [];
+            for (let m = 1; m <= 12; m++) {
+                const monthStr = `${currentYear}-${String(m).padStart(2, '0')}`;
+                monthlySalesCommissionData.push({
+                    month: monthStr,
+                    totalSales: salesMap.get(monthStr) || 0,
+                    totalCommission: commMap.get(monthStr) || 0
+                });
+            }
+
+            // 3. Customer Monthly Registration Trend (12 Months)
+            let customerRegRaw: any[] = [];
+            try {
+                customerRegRaw = await this.userRepository.query(`
+                    SELECT 
+                        MONTH(createdAt) AS monthNum,
+                        COUNT(id) AS customerCount
+                    FROM user
+                    WHERE role = 'customer'
+                      AND (isDeleted = 0 OR isDeleted IS NULL)
+                      AND YEAR(createdAt) = ?
+                    GROUP BY MONTH(createdAt)
+                `, [currentYear]);
+            } catch {
+                customerRegRaw = [];
+            }
+
+            const customerRegMap = new Map((customerRegRaw || []).map((r: any) => [Number(r.monthNum), Number(r.customerCount) || 0]));
+            const customerMonthlyReports = Array.from({ length: 12 }, (_, i) => customerRegMap.get(i + 1) || 0);
+
+            // 4. Monthly Order Volume (12 Months)
+            let orderVolumeRaw: any[] = [];
+            try {
+                orderVolumeRaw = await this.ordersRepository.query(`
+                    SELECT 
+                        MONTH(createdAt) AS monthNum,
+                        COUNT(id) AS orderCount
+                    FROM orders
+                    WHERE (isDeleted = 0 OR isDeleted IS NULL)
+                      AND status NOT IN ('Cancelled', 'Rejected', 'Failed')
+                      AND YEAR(createdAt) = ?
+                    GROUP BY MONTH(createdAt)
+                `, [currentYear]);
+            } catch {
+                orderVolumeRaw = [];
+            }
+
+            const orderVolMap = new Map((orderVolumeRaw || []).map((r: any) => [Number(r.monthNum), Number(r.orderCount) || 0]));
+            const newVendorMonthlyReports = Array.from({ length: 12 }, (_, i) => orderVolMap.get(i + 1) || 0);
+
+            // 5. Weekly Earnings & Best Sellers (Sales Dashboard SSOT)
+            let currentWeekEarnings = 0;
+            let previousWeekEarnings = 0;
+            try {
+                const weeklyEarningsRaw = await this.ordersRepository.query(`
+                    SELECT 
+                        ROUND(COALESCE(SUM(CASE WHEN createdAt >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN totalAmount ELSE 0 END), 0), 2) AS currentWeekEarnings,
+                        ROUND(COALESCE(SUM(CASE WHEN createdAt >= DATE_SUB(NOW(), INTERVAL 14 DAY) AND createdAt < DATE_SUB(NOW(), INTERVAL 7 DAY) THEN totalAmount ELSE 0 END), 0), 2) AS previousWeekEarnings
+                    FROM orders
+                    WHERE (isDeleted = 0 OR isDeleted IS NULL)
+                      AND status NOT IN ('Cancelled', 'Rejected', 'Failed')
+                `);
+                if (weeklyEarningsRaw && weeklyEarningsRaw.length > 0) {
+                    currentWeekEarnings = Number(weeklyEarningsRaw[0].currentWeekEarnings) || 0;
+                    previousWeekEarnings = Number(weeklyEarningsRaw[0].previousWeekEarnings) || 0;
+                }
+            } catch {}
+
+            let weeklyPercentageChange = 0;
+            if (previousWeekEarnings > 0) {
+                weeklyPercentageChange = Math.round(((currentWeekEarnings - previousWeekEarnings) / previousWeekEarnings) * 100);
+            } else if (currentWeekEarnings > 0) {
+                weeklyPercentageChange = 100;
+            }
+
+            let bestSellers: any[] = [];
+            try {
+                bestSellers = await this.orderSummaryRepository.query(`
+                    SELECT 
+                        os.productId AS id,
+                        os.productName AS name,
+                        COALESCE(os.productImage, '') AS image,
+                        ROUND(AVG(os.price), 2) AS price,
+                        SUM(os.quantity) AS sales
+                    FROM \`order-summary\` os
+                    INNER JOIN orders o ON o.id = os.orderId
+                    WHERE (os.isDeleted = 0 OR os.isDeleted IS NULL)
+                      AND (o.isDeleted = 0 OR o.isDeleted IS NULL)
+                      AND o.status NOT IN ('Cancelled', 'Rejected', 'Failed')
+                    GROUP BY os.productId, os.productName, os.productImage
+                    ORDER BY sales DESC
+                    LIMIT 5
+                `);
+            } catch {}
+
             const payload = {
                 totalProducts: totalProducts,
                 totalOrders: totalOrders,
                 totalVendors: 0,
                 totalCustomers: totalCustomers,
+                totalCategories: totalCategories,
+                topCategories: topCategories,
+                monthlySalesCommissionData: monthlySalesCommissionData,
+                customerMonthlyReports: customerMonthlyReports,
+                newVendorMonthlyReports: newVendorMonthlyReports,
+                weeklyEarnings: {
+                    amount: currentWeekEarnings,
+                    previousAmount: previousWeekEarnings,
+                    percentageChange: weeklyPercentageChange
+                },
+                bestSellers: bestSellers ?? [],
                 recentProducts: recentProducts ?? [],
                 recentOrders: recentOrders ?? []
             };

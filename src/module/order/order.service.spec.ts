@@ -280,6 +280,20 @@ describe('OrdersService', () => {
         expect(data.paymentIntentId).toBe('pi_resolved_from_session_789');
     });
 
+    it('TEST 10b: Online payment with tampered amount throws error and rejects order', async () => {
+        const product = { id: 'p1', name: 'Shirt', price: 200, quantity: 5 };
+        queryRunnerMock.manager.find.mockResolvedValue([product]);
+        (service as any).stripe.paymentIntents.retrieve.mockResolvedValue({ status: 'succeeded', amount: 100 }); // Paid 100 cents ($1.00) instead of required amount
+
+        const dto = {
+            paymentMethod: 'Online',
+            paymentIntentId: 'pi_tampered_123',
+            items: [{ productId: 'p1', quantity: 1 }]
+        };
+
+        await expect(service.create(dto as any, 'user-1')).rejects.toThrow('Payment verification failed');
+    });
+
     it('TEST 11: Invalid State Machine status jump throws 400 Bad Request', async () => {
         const existingOrder = {
             id: 'order-1',

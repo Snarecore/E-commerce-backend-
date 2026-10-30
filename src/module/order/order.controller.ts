@@ -20,6 +20,43 @@ export class OrdersController {
 	constructor(private readonly service: OrdersService) {}
 
 	@Public()
+	@Post('preview')
+	async preview(
+		@Body() dto: any,
+		@Req() req: Request
+	): Promise<ApiResponse<any>> {
+		let userId = (req as any)?.user?.id || (req as any)?.user?.userId;
+		if (!userId && req.headers?.authorization) {
+			try {
+				const authHeader = req.headers.authorization;
+				const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+				if (token) {
+					const payloadPart = token.split('.')[1];
+					if (payloadPart) {
+						const decoded = JSON.parse(Buffer.from(payloadPart, 'base64').toString('utf8'));
+						userId = decoded?.id || decoded?.userId || decoded?.sub;
+					}
+				}
+			} catch {}
+		}
+		if (!userId && (req as any)?.cookies) {
+			try {
+				const cookies = (req as any).cookies;
+				const token = cookies['cloth_customer_access'] || cookies['cloth_admin_access'] || cookies['accessToken'];
+				if (token) {
+					const payloadPart = token.split('.')[1];
+					if (payloadPart) {
+						const decoded = JSON.parse(Buffer.from(payloadPart, 'base64').toString('utf8'));
+						userId = decoded?.id || decoded?.userId || decoded?.sub;
+					}
+				}
+			} catch {}
+		}
+		dto.userId = userId || (dto as any)?.userId || null;
+		return await this.service.calculateOrderPreview(dto);
+	}
+
+	@Public()
 	@Post()
 	async create(
 		@Body() dto: CreateOrdersDto,

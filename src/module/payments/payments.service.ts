@@ -8,9 +8,14 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { OrderStatus, PaymentStatus } from '../../enums/order-status.enum';
 import Stripe from 'stripe';
-import { Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';
 import { Orders } from '../order/entity/order.entity';
+import { Product } from '../inventory/product/entities/product.entity';
+import { MegaDiscount } from '../setting/mega-discount/entities/mega-discount.entity';
+import { SINGLETON_MEGA_DISCOUNT_ID } from '../setting/mega-discount/mega-discount.repository';
+import { ProductPricingResolver } from '../../utils/pricing.engine';
+import { Coupon } from '../coupon/entity/coupon.entity';
 
 @Injectable()
 export class PaymentsService {
@@ -20,7 +25,8 @@ export class PaymentsService {
     constructor(
         private readonly configService: ConfigService,
         @InjectRepository(Orders)
-        private readonly orderRepository: Repository<Orders>
+        private readonly orderRepository: Repository<Orders>,
+        private readonly dataSource: DataSource
     ) {
         const secretKey =
             this.configService.get<string>('STRIPE_SECRET_KEY') ||
@@ -36,16 +42,103 @@ export class PaymentsService {
     }
 
     async createPayment(body: {
-        products: Array<{ price: number; quantity: number }>;
+        products?: Array<{ id?: string; productId?: string; price?: number; quantity?: number }>;
+        items?: Array<{ id?: string; productId?: string; price?: number; quantity?: number }>;
+        couponCode?: string;
+        city?: string;
         currency?: string;
-    }): Promise<{ clientSecret: string }> {
+    }): Promise<{ clientSecret: string; amount: number }> {
+        const rawItems = body?.items || body?.products || [];
+        const productIds = rawItems
+            .map((p) => p.productId || p.id)
+            .filter(Boolean) as string[];
+
         let amount = 0;
-        if (body?.products && body.products.length > 0) {
-            body.products.forEach((product) => {
+
+        if (productIds.length > 0) {
+            // Authoritative DB pricing calculation (prevents client price tampering)
+            let subtotal = 0;
+            try {
+                const productRepo = this.dataSource.getRepository(Product);
+                const fetchedProducts = await productRepo.find({
+                    where: { id: In(productIds), isDeleted: false }
+                });
+                const productMap = new Map(fetchedProducts.map(p => [p.id, p]));
+
+                let megaDiscountRecord: MegaDiscount | null = null;
+                try {
+                    megaDiscountRecord = await this.dataSource.getRepository(MegaDiscount).findOne({
+                        where: { id: SINGLETON_MEGA_DISCOUNT_ID }
+                    });
+                } catch {
+                    megaDiscountRecord = null;
+                }
+
+                for (const item of rawItems) {
+                    const pid = item.productId || item.id;
+                    const qty = Math.max(1, Number(item.quantity) || 1);
+                    const dbProduct = pid ? productMap.get(pid) : null;
+
+                    if (dbProduct) {
+                        const unitPrice = ProductPricingResolver.resolveUnitPrice({
+                            price: Number(dbProduct.price) || 0,
+                            discountType: dbProduct.discountType,
+                            discountAmount: Number(dbProduct.discountAmount) || 0
+                        }, megaDiscountRecord);
+                        subtotal += unitPrice * qty;
+                    } else if (item.price) {
+                        subtotal += (Number(item.price) || 0) * qty;
+                    }
+                }
+
+                // Authoritative delivery fee calculation
+                const city = (body.city || '').trim().toLowerCase();
+                const isDhaka = city.includes('dhaka');
+                const deliveryCharge = rawItems.length > 0 ? (isDhaka ? 60 : 120) : 0;
+
+                // Coupon discount validation
+                let discountAmount = 0;
+                if (body.couponCode) {
+                    try {
+                        const couponRepo = this.dataSource.getRepository(Coupon);
+                        const coupon = await couponRepo.findOne({
+                            where: { code: body.couponCode.trim().toUpperCase(), isDeleted: false }
+                        });
+                        if (coupon && coupon.isActive) {
+                            const now = new Date();
+                            const isExpired = coupon.endDate && new Date(coupon.endDate) < now;
+                            if (!isExpired) {
+                                if (coupon.discountType === 'PERCENTAGE' as any || String(coupon.discountType).includes('PERCENT')) {
+                                    discountAmount = (subtotal * Number(coupon.discountValue || 0)) / 100;
+                                    if (coupon.maxDiscountAmount && discountAmount > Number(coupon.maxDiscountAmount)) {
+                                        discountAmount = Number(coupon.maxDiscountAmount);
+                                    }
+                                } else if (coupon.discountType === 'FREE_SHIPPING') {
+                                    discountAmount = deliveryCharge;
+                                } else {
+                                    discountAmount = Number(coupon.discountValue || 0);
+                                }
+                            }
+                        }
+                    } catch {
+                        discountAmount = 0;
+                    }
+                }
+
+                amount = Math.max(1, Math.round((subtotal + deliveryCharge - discountAmount + Number.EPSILON) * 100) / 100);
+            } catch (err) {
+                this.logger.error('Failed to calculate DB price for payment intent', err);
+                rawItems.forEach((product) => {
+                    amount += (Number(product.price) || 0) * (product.quantity || 1);
+                });
+                if (amount <= 0) amount = 1;
+            }
+        } else if (rawItems.length > 0) {
+            rawItems.forEach((product) => {
                 amount += (Number(product.price) || 0) * (product.quantity || 1);
             });
-        }
-        if (amount <= 0) {
+            if (amount <= 0) amount = 1;
+        } else {
             amount = 1;
         }
 
@@ -55,7 +148,10 @@ export class PaymentsService {
             payment_method_types: ['card'],
         });
 
-        return { clientSecret: paymentIntent.client_secret ?? '' };
+        return { 
+            clientSecret: paymentIntent.client_secret ?? '',
+            amount
+        };
     }
 
     async createCheckoutSession(

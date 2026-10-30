@@ -97,6 +97,132 @@ export class OrdersService {
         return this.stripe;
     }
 
+    /**
+     * Authoritative backend calculation for Cart & Checkout order preview.
+     * Database Single Source of Truth (SSOT) for unit prices, delivery fee, discounts, and total.
+     */
+    async calculateOrderPreview(dto: {
+        items?: Array<{ productId?: string; id?: string; product?: string; quantity: number; size?: string }>;
+        products?: Array<{ productId?: string; id?: string; product?: string; quantity: number; size?: string }>;
+        shippingAddress?: { city?: string };
+        city?: string;
+        couponCode?: string;
+        userId?: string;
+    }): Promise<ApiResponse<any>> {
+        try {
+            const rawItems = (dto.items && dto.items.length > 0) ? dto.items : (dto.products || []);
+            if (!rawItems || rawItems.length === 0) {
+                return ResponseUtils.successResponseHandler(200, 'Order preview calculated.', 'data', {
+                    subtotal: 0,
+                    deliveryCharge: 0,
+                    deliveryZone: 'inside_dhaka',
+                    discountAmount: 0,
+                    couponCode: null,
+                    totalAmount: 0,
+                    items: []
+                });
+            }
+
+            const productIds = rawItems
+                .map((i: any) => i.productId || i.id || i.product)
+                .filter(Boolean);
+
+            let productMap = new Map<string, Product>();
+            if (productIds.length > 0) {
+                const fetchedProducts = await this.productRepository.findAll({
+                    id: In(productIds)
+                } as any);
+                productMap = new Map<string, Product>(fetchedProducts.map(p => [p.id, p]));
+            }
+
+            let megaDiscountRecord: MegaDiscount | null = null;
+            try {
+                megaDiscountRecord = await this.dataSource.getRepository(MegaDiscount).findOne({
+                    where: { id: SINGLETON_MEGA_DISCOUNT_ID }
+                });
+            } catch {
+                megaDiscountRecord = null;
+            }
+
+            let subtotal = 0;
+            const calculatedItems: any[] = [];
+
+            for (const itemDto of rawItems) {
+                const productId = itemDto.productId || itemDto.id || itemDto.product;
+                const qty = Math.max(1, Number(itemDto.quantity) || 1);
+                const product = productId ? productMap.get(productId) : null;
+
+                const basePrice = product ? Number(product.price) || 0 : 0;
+                const discountType = product?.discountType;
+                const discountAmount = product ? Number(product.discountAmount) || 0 : 0;
+
+                const unitPrice = product ? ProductPricingResolver.resolveUnitPrice({
+                    price: basePrice,
+                    discountType,
+                    discountAmount
+                }, megaDiscountRecord) : 0;
+
+                const itemSubtotal = unitPrice * qty;
+                subtotal += itemSubtotal;
+
+                calculatedItems.push({
+                    productId: product?.id || productId,
+                    productName: product?.name || 'Product',
+                    productImage: product?.featuredImage || '',
+                    basePrice,
+                    unitPrice,
+                    quantity: qty,
+                    itemSubtotal: Math.round((itemSubtotal + Number.EPSILON) * 100) / 100,
+                    size: (itemDto as any).size || (itemDto as any).selectedSize || undefined
+                });
+            }
+
+            const cityStr = (dto.shippingAddress?.city || dto.city || '').trim().toLowerCase();
+            const isDhaka = cityStr.includes('dhaka');
+            const deliveryCharge = calculatedItems.length > 0 ? (isDhaka ? 60 : 120) : 0;
+
+            let discountAmount = 0;
+            let validatedCouponCode: string | null = null;
+
+            if (dto.couponCode && this.couponService) {
+                try {
+                    const validateRes = await this.couponService.calculateCouponPreview({
+                        code: dto.couponCode.trim().toUpperCase(),
+                        items: rawItems.map(i => ({ productId: String(i.productId || i.id || i.product || ''), quantity: Number(i.quantity) || 1 })),
+                        deliveryZone: isDhaka ? 'dhaka' : 'outside_dhaka'
+                    }, dto.userId);
+                    const data = validateRes?.data || validateRes;
+                    if (data?.valid || data?.discountAmount !== undefined) {
+                        discountAmount = Number(data.discountAmount) || 0;
+                        validatedCouponCode = data.couponCode || dto.couponCode;
+                    }
+                } catch {
+                    discountAmount = 0;
+                }
+            }
+
+            const subtotalRounded = Math.round((subtotal + Number.EPSILON) * 100) / 100;
+            const totalAmount = Math.max(0, Math.round((subtotalRounded + deliveryCharge - discountAmount + Number.EPSILON) * 100) / 100);
+
+            const result = {
+                subtotal: subtotalRounded,
+                deliveryCharge,
+                deliveryZone: isDhaka ? 'inside_dhaka' : 'outside_dhaka',
+                discountAmount,
+                couponCode: validatedCouponCode,
+                totalAmount,
+                items: calculatedItems
+            };
+
+            return ResponseUtils.successResponseHandler(200, 'Order preview calculated successfully.', 'data', result);
+        } catch (error: any) {
+            throw new HttpException(
+                error.message || 'Failed to calculate order preview.',
+                HttpStatus.INTERNAL_SERVER_ERROR
+            );
+        }
+    }
+
     async create(dto: CreateOrdersDto, userId: string): Promise<ApiResponse<OrdersInterface>> {
         try {
             // 1. Idempotency Check
@@ -303,6 +429,27 @@ export class OrdersService {
 
                 const subtotalRounded = Math.round((subtotal + Number.EPSILON) * 100) / 100;
                 const totalAmount = Math.max(0, Math.round((subtotalRounded + deliveryCharge - discountAmount + Number.EPSILON) * 100) / 100);
+
+                // Online payment amount security verification (prevents client price tampering)
+                if (finalPaymentMethod !== 'COD' && finalPaymentIntentId && !finalPaymentIntentId.startsWith('cs_')) {
+                    try {
+                        const stripeClient = this.getStripeClient();
+                        const intent = await stripeClient.paymentIntents.retrieve(finalPaymentIntentId);
+                        if (intent && intent.amount !== undefined && intent.amount !== null) {
+                            const paidCents = Number(intent.amount) || 0;
+                            const expectedCents = Math.round(totalAmount * 100);
+                            if (paidCents < expectedCents - 50) {
+                                throw new HttpException(
+                                    `Payment verification failed: Amount paid ($${(paidCents / 100).toFixed(2)}) is less than required total ($${totalAmount.toFixed(2)}).`,
+                                    HttpStatus.BAD_REQUEST
+                                );
+                            }
+                        }
+                    } catch (err: unknown) {
+                        if (err instanceof HttpException) throw err;
+                    }
+                }
+
                 const nowIso = new Date().toISOString();
 
                 const initialStatusHistory = [

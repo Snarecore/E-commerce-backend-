@@ -26,7 +26,7 @@ export class PaymentsController {
     @Post()
     async createPayment(
         @Body() body: any
-    ): Promise<{ clientSecret: string }> {
+    ): Promise<{ clientSecret: string; amount?: number }> {
         return this.paymentsService.createPayment(body);
     }
 
