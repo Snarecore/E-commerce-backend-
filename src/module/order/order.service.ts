@@ -730,17 +730,6 @@ export class OrdersService {
 
             await queryRunner.commitTransaction();
 
-            if (this.notificationService && updatedOrder.userId) {
-                try {
-                    await this.notificationService.createOrderNotification(
-                        updatedOrder.userId,
-                        updatedOrder.orderId,
-                        targetStatus,
-                        historyNote
-                    );
-                } catch (notifErr) {}
-            }
-
             if (this.socketService) {
                 try {
                     const statusPayload = {
