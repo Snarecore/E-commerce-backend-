@@ -64,6 +64,12 @@ const RESTOCKED_STATUS_GROUP = new Set([
 
 import { SocketService } from '../socket/socket.service';
 import { SocketEvent, SOCKET_ROOMS } from '../socket/socket.constants';
+import { BlacklistService } from '../risk/services/blacklist.service';
+import {
+    BlacklistStatusEnum,
+    BlacklistSubjectTypeEnum,
+    BlacklistSeverityEnum
+} from '../risk/entity/blacklist.entity';
 
 @Injectable()
 export class OrdersService {
@@ -80,7 +86,8 @@ export class OrdersService {
         @Optional() private readonly couponService?: CouponService,
         @Optional() private readonly megaDiscountRepository?: MegaDiscountRepository,
         @Optional() private readonly auditLogService?: AuditLogService,
-        @Optional() private readonly socketService?: SocketService
+        @Optional() private readonly socketService?: SocketService,
+        @Optional() private readonly blacklistService?: BlacklistService
     ) {}
 
     private getStripeClient(): Stripe {
@@ -891,6 +898,10 @@ export class OrdersService {
             const [orders, total] = await qb.getManyAndCount();
             const pageCount = Math.ceil(total / limit);
 
+            const activeBlacklists = this.blacklistService
+                ? await this.blacklistService.listBlacklists({ status: BlacklistStatusEnum.ACTIVE })
+                : [];
+
             const enrichedData = (orders || []).map((order) => {
                 const orderSummaries = order.orderSummaries || [];
 
@@ -899,10 +910,42 @@ export class OrdersService {
                     0
                 );
 
+                let parsedShipping = order.shippingAddress;
+                if (typeof parsedShipping === 'string') {
+                    try { parsedShipping = JSON.parse(parsedShipping); } catch {}
+                }
+                const phone = (parsedShipping?.phone || order.user?.phone || '').replace(/\D/g, '');
+                const email = (order.user?.email || parsedShipping?.email || '').trim().toLowerCase();
+                const ip = ((order as any).ipAddress || '').trim();
+
+                let isBlacklisted = false;
+                let isSuspicious = false;
+
+                for (const b of activeBlacklists) {
+                    if (b.subjectType === BlacklistSubjectTypeEnum.PHONE && phone && b.displayValue) {
+                        const bPhone = b.displayValue.replace(/\D/g, '');
+                        if (bPhone && (phone.endsWith(bPhone) || bPhone.endsWith(phone))) {
+                            if (b.severity === BlacklistSeverityEnum.HARD_BLOCK) isBlacklisted = true;
+                            else isSuspicious = true;
+                        }
+                    }
+                    if (b.customerEmail && email && b.customerEmail.toLowerCase() === email) {
+                        if (b.severity === BlacklistSeverityEnum.HARD_BLOCK) isBlacklisted = true;
+                        else isSuspicious = true;
+                    }
+                    if (b.subjectType === BlacklistSubjectTypeEnum.EXACT_IP && ip && b.ipAddress === ip) {
+                        if (b.severity === BlacklistSeverityEnum.HARD_BLOCK) isBlacklisted = true;
+                        else isSuspicious = true;
+                    }
+                }
+
                 return {
                     ...order,
                     orderSummaries,
                     totalCommission,
+                    isBlacklisted,
+                    isSuspicious,
+                    riskLevel: isBlacklisted ? 'CRITICAL' : isSuspicious ? 'HIGH' : 'LOW',
                     user: order.user ? toSafeUser(order.user) : null
                 };
             });
@@ -926,7 +969,7 @@ export class OrdersService {
     async findCustomerOrderList(
         dto: OrdersFilterDto,
         userData: any
-    ): Promise<ApiResponse<{ data: OrdersInterface[]; total: number; page: number; limit: number; pageCount: number }>> {
+    ): Promise<ApiResponse<{ data: OrdersInterface[]; total: number; page: number; limit: number; pageCount: number; statusCounts?: Record<string, number> }>> {
         try {
             const page = dto.page ? Math.max(1, Number(dto.page)) : 1;
             const limit = dto.limit ? Math.max(1, Number(dto.limit)) : 10;
@@ -942,6 +985,15 @@ export class OrdersService {
                 qb.andWhere('order.userId = :userId', { userId });
             }
 
+            if (dto.status) {
+                qb.andWhere('order.status = :status', { status: dto.status });
+            }
+
+            if (dto.orderId) {
+                const cleanOrderId = dto.orderId.replace(/^#/, '').trim();
+                qb.andWhere('order.orderId LIKE :orderId', { orderId: `%${cleanOrderId}%` });
+            }
+
             qb.orderBy('order.createdAt', 'DESC')
               .addOrderBy('order.id', 'DESC')
               .skip(skip)
@@ -949,6 +1001,38 @@ export class OrdersService {
 
             const [ordersList, total] = await qb.getManyAndCount();
             const pageCount = Math.ceil(total / limit);
+
+            // Compute authoritative status counts across all orders for this customer
+            const countsQb = this.repository.createQueryBuilder('order')
+                .select('order.status', 'status')
+                .addSelect('COUNT(order.id)', 'count')
+                .where('order.isDeleted = false');
+
+            if (userId) {
+                countsQb.andWhere('order.userId = :userId', { userId });
+            }
+
+            const rawCounts = await countsQb.groupBy('order.status').getRawMany();
+            const statusCounts: Record<string, number> = {
+                All: 0,
+                Pending: 0,
+                'Order Placed': 0,
+                Processing: 0,
+                Shipped: 0,
+                Delivered: 0,
+                Cancelled: 0,
+                Rejected: 0
+            };
+
+            let sumTotal = 0;
+            for (const item of rawCounts) {
+                const countNum = Number(item.count) || 0;
+                sumTotal += countNum;
+                if (item.status) {
+                    statusCounts[item.status] = (statusCounts[item.status] || 0) + countNum;
+                }
+            }
+            statusCounts.All = sumTotal;
 
             // Fix: Collect all productIds across all orders, fetch in one IN query
             const allProductIds = ordersList.flatMap(order =>
@@ -980,7 +1064,8 @@ export class OrdersService {
                 total,
                 page,
                 limit,
-                pageCount
+                pageCount,
+                statusCounts
             };
 
             return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', payload);
@@ -1009,7 +1094,74 @@ export class OrdersService {
                 throw new HttpException('Forbidden access to order.', HttpStatus.FORBIDDEN);
             }
 
-            return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', data);
+            // Enrich summaries with calculated line item profit
+            const enrichedSummaries = (data.orderSummaries || []).map((item) => {
+                const unitCost = Number(item.unitCostPrice || 0);
+                const itemQty = Number(item.quantity || 1);
+                const itemPrice = Number(item.price || 0);
+                const itemSubtotal = Number((itemPrice * itemQty).toFixed(2));
+                const totalCost = Number(item.totalCost || (unitCost * itemQty).toFixed(2));
+                const profit = unitCost > 0 ? Number((itemSubtotal - totalCost).toFixed(2)) : null;
+
+                return {
+                    ...item,
+                    unitCostPrice: unitCost,
+                    totalCost,
+                    subtotal: itemSubtotal,
+                    profit
+                };
+            });
+
+            let riskEvaluation: {
+                riskScore: number;
+                riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+                policyDecision: 'ALLOW' | 'MANUAL_REVIEW' | 'HARD_BLOCK';
+                fulfillmentHold: boolean;
+                riskReviewStatus: 'NOT_REQUIRED' | 'PENDING_REVIEW' | 'HARD_BLOCKED';
+                isBlacklisted: boolean;
+                isSuspicious: boolean;
+                reason?: string;
+            } = {
+                riskScore: 0,
+                riskLevel: 'LOW',
+                policyDecision: 'ALLOW',
+                fulfillmentHold: false,
+                riskReviewStatus: 'NOT_REQUIRED',
+                isBlacklisted: false,
+                isSuspicious: false,
+                reason: undefined
+            };
+
+            if (this.blacklistService) {
+                let parsedShipping = data.shippingAddress;
+                if (typeof parsedShipping === 'string') {
+                    try { parsedShipping = JSON.parse(parsedShipping); } catch {}
+                }
+                const phone = parsedShipping?.phone || data.user?.phone || '';
+                const email = data.user?.email || parsedShipping?.email || '';
+                const ipAddress = (data as any).ipAddress || '';
+
+                riskEvaluation = await this.blacklistService.evaluateRiskForCustomer({
+                    phone,
+                    email,
+                    ipAddress
+                });
+            }
+
+            const enrichedData = {
+                ...data,
+                orderSummaries: enrichedSummaries,
+                riskScore: riskEvaluation.riskScore,
+                riskLevel: riskEvaluation.riskLevel,
+                policyDecision: riskEvaluation.policyDecision,
+                fulfillmentHold: riskEvaluation.fulfillmentHold,
+                riskReviewStatus: riskEvaluation.riskReviewStatus,
+                isBlacklisted: riskEvaluation.isBlacklisted,
+                isSuspicious: riskEvaluation.isSuspicious,
+                riskReason: riskEvaluation.reason
+            };
+
+            return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', enrichedData);
         } catch (error: unknown) {
             if (error instanceof HttpException) throw error;
             const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';

@@ -239,4 +239,100 @@ export class BlacklistService {
       order: { createdAt: 'DESC' },
     });
   }
+
+  async evaluateRiskForCustomer(params: {
+    phone?: string;
+    email?: string;
+    ipAddress?: string;
+  }): Promise<{
+    riskScore: number;
+    riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+    policyDecision: 'ALLOW' | 'MANUAL_REVIEW' | 'HARD_BLOCK';
+    fulfillmentHold: boolean;
+    riskReviewStatus: 'NOT_REQUIRED' | 'PENDING_REVIEW' | 'HARD_BLOCKED';
+    isBlacklisted: boolean;
+    isSuspicious: boolean;
+    reason?: string;
+  }> {
+    const cleanPhone = (params.phone || '').replace(/\D/g, '');
+    const cleanEmail = (params.email || '').trim().toLowerCase();
+    const cleanIp = (params.ipAddress || '').trim();
+
+    if (!cleanPhone && !cleanEmail && !cleanIp) {
+      return {
+        riskScore: 0,
+        riskLevel: 'LOW',
+        policyDecision: 'ALLOW',
+        fulfillmentHold: false,
+        riskReviewStatus: 'NOT_REQUIRED',
+        isBlacklisted: false,
+        isSuspicious: false,
+      };
+    }
+
+    const now = new Date();
+    const activeEntries = await this.dataSource.getRepository(BlacklistEntity).find({
+      where: { status: BlacklistStatusEnum.ACTIVE },
+    });
+
+    let matchedEntry: BlacklistEntity | null = null;
+
+    for (const entry of activeEntries) {
+      if (entry.expiresAt && entry.expiresAt <= now) continue;
+
+      if (entry.subjectType === BlacklistSubjectTypeEnum.PHONE && cleanPhone) {
+        const itemDigits = (entry.displayValue || '').replace(/\D/g, '');
+        if (itemDigits && (cleanPhone.endsWith(itemDigits) || itemDigits.endsWith(cleanPhone))) {
+          matchedEntry = entry;
+          if (entry.severity === BlacklistSeverityEnum.HARD_BLOCK) break;
+        }
+      }
+
+      if (entry.customerEmail && cleanEmail && entry.customerEmail.toLowerCase() === cleanEmail) {
+        matchedEntry = entry;
+        if (entry.severity === BlacklistSeverityEnum.HARD_BLOCK) break;
+      }
+
+      if (cleanIp) {
+        if (entry.subjectType === BlacklistSubjectTypeEnum.EXACT_IP && entry.ipAddress === cleanIp) {
+          matchedEntry = entry;
+          if (entry.severity === BlacklistSeverityEnum.HARD_BLOCK) break;
+        }
+
+        if (
+          entry.subjectType === BlacklistSubjectTypeEnum.CIDR &&
+          entry.networkAddress &&
+          entry.prefixLength &&
+          this.ipSecurity.checkIpInCidr(cleanIp, entry.networkAddress, entry.prefixLength)
+        ) {
+          matchedEntry = entry;
+          if (entry.severity === BlacklistSeverityEnum.HARD_BLOCK) break;
+        }
+      }
+    }
+
+    if (matchedEntry) {
+      const isHardBlock = matchedEntry.severity === BlacklistSeverityEnum.HARD_BLOCK;
+      return {
+        riskScore: isHardBlock ? 100 : 60,
+        riskLevel: isHardBlock ? 'CRITICAL' : 'HIGH',
+        policyDecision: isHardBlock ? 'HARD_BLOCK' : 'MANUAL_REVIEW',
+        fulfillmentHold: true,
+        riskReviewStatus: isHardBlock ? 'HARD_BLOCKED' : 'PENDING_REVIEW',
+        isBlacklisted: isHardBlock,
+        isSuspicious: !isHardBlock,
+        reason: matchedEntry.note || matchedEntry.reasonCode || 'Risk flagged in blacklist database',
+      };
+    }
+
+    return {
+      riskScore: 0,
+      riskLevel: 'LOW',
+      policyDecision: 'ALLOW',
+      fulfillmentHold: false,
+      riskReviewStatus: 'NOT_REQUIRED',
+      isBlacklisted: false,
+      isSuspicious: false,
+    };
+  }
 }

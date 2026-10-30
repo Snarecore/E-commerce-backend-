@@ -20,6 +20,35 @@ import { AuditTargetType } from '../../audit-log/constants/audit-target-type.enu
 
 @Injectable()
 export class ProductService {
+    static computeStockMetrics(product: { quantity?: number; sizeStock?: any; quantityAlert?: number }): {
+        totalStock: number;
+        stockStatus: 'OUT_OF_STOCK' | 'LOW_STOCK' | 'IN_STOCK';
+        isOutOfStock: boolean;
+        isLowStock: boolean;
+    } {
+        let total = Number(product?.quantity) || 0;
+        if (product?.sizeStock && typeof product.sizeStock === 'object') {
+            const sizeValues = Object.values(product.sizeStock);
+            if (sizeValues.length > 0) {
+                total = Number(sizeValues.reduce((sum: number, q: any) => sum + (Number(q) || 0), 0));
+            }
+        }
+        const alertThreshold = Number(product?.quantityAlert ?? 5);
+        let stockStatus: 'OUT_OF_STOCK' | 'LOW_STOCK' | 'IN_STOCK' = 'IN_STOCK';
+        if (total <= 0) {
+            stockStatus = 'OUT_OF_STOCK';
+        } else if (total <= alertThreshold) {
+            stockStatus = 'LOW_STOCK';
+        }
+
+        return {
+            totalStock: total,
+            stockStatus,
+            isOutOfStock: stockStatus === 'OUT_OF_STOCK',
+            isLowStock: stockStatus === 'LOW_STOCK'
+        };
+    }
+
     constructor(
         private readonly spaceService: SpaceService,
         private readonly repository: ProductRepository,
@@ -220,8 +249,10 @@ export class ProductService {
             }
 
             const enrichedData = (result?.data ?? []).map((product) => {
+                const stockMetrics = ProductService.computeStockMetrics(product);
                 const item = {
                     ...product,
+                    ...stockMetrics,
                     productImages: imagesByProductMap.get(product.id) || []
                 };
                 delete (item as any).cost;
@@ -321,10 +352,14 @@ export class ProductService {
                 imagesByProductId.set(img.productId, list);
             }
 
-            const enrichedData = result?.data?.map((product) => ({
-                ...product,
-                productImages: imagesByProductId.get(product.id) ?? []
-            }));
+            const enrichedData = result?.data?.map((product) => {
+                const stockMetrics = ProductService.computeStockMetrics(product);
+                return {
+                    ...product,
+                    ...stockMetrics,
+                    productImages: imagesByProductId.get(product.id) ?? []
+                };
+            });
 
             const payload = {
                 data: enrichedData,
@@ -352,8 +387,10 @@ export class ProductService {
                 productId: id,
             });
 
+            const stockMetrics = ProductService.computeStockMetrics(data);
             const payload: ProductInterface = {
                 ...data,
+                ...stockMetrics,
                 productImages,
             };
             delete (payload as any).cost;
@@ -381,8 +418,10 @@ export class ProductService {
                 productId: id,
             });
 
+            const stockMetrics = ProductService.computeStockMetrics(data);
             const payload: ProductInterface = {
                 ...data,
+                ...stockMetrics,
                 productImages,
             };
 

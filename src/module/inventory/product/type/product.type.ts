@@ -31,6 +31,10 @@ export interface ProductInterface {
 	isProductSectionFour: boolean;
 	isProductSectionFive: boolean;
 	isProductSectionSix: boolean;
+	totalStock?: number;
+	stockStatus?: 'OUT_OF_STOCK' | 'LOW_STOCK' | 'IN_STOCK';
+	isOutOfStock?: boolean;
+	isLowStock?: boolean;
 	productImages?: ProductImageInterface[];
 }
 

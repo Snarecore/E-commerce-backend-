@@ -35,6 +35,24 @@ export class BlacklistController {
     private readonly phoneHashService: PhoneHashService,
   ) {}
 
+  @Get('evaluate')
+  async evaluateCustomerRisk(
+    @Query('phone') phone?: string,
+    @Query('email') email?: string,
+    @Query('ip') ip?: string,
+  ) {
+    const data = await this.blacklistService.evaluateRiskForCustomer({
+      phone,
+      email,
+      ipAddress: ip,
+    });
+    return {
+      statusCode: 200,
+      message: 'Risk evaluated successfully',
+      data,
+    };
+  }
+
   @Get()
   async getBlacklist(@Query() query: any) {
     const data = await this.blacklistService.listBlacklists(query);

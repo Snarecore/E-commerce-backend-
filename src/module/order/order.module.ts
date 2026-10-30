@@ -12,6 +12,7 @@ import { NotificationModule } from '../notification/notification.module';
 import { CouponModule } from '../coupon/coupon.module';
 import { MegaDiscountModule } from '../setting/mega-discount/mega-discount.module';
 import { SocketModule } from '../socket/socket.module';
+import { RiskModule } from '../risk/risk.module';
 
 @Module({
 	imports: [
@@ -19,7 +20,8 @@ import { SocketModule } from '../socket/socket.module';
 		NotificationModule,
 		CouponModule,
 		MegaDiscountModule,
-		SocketModule
+		SocketModule,
+		RiskModule
 	],
 	controllers: [OrdersController],
 	providers: [

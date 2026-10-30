@@ -108,7 +108,7 @@ export class OrdersController {
 	async findCustomerOrderList(
 		@Query() dto: OrdersFilterDto,
 		@Req() req: Request
-	): Promise<ApiResponse<{ data: OrdersInterface[]; total: number; page: number; limit: number; pageCount: number }>> {
+	): Promise<ApiResponse<{ data: OrdersInterface[]; total: number; page: number; limit: number; pageCount: number; statusCounts?: Record<string, number> }>> {
 		return await this.service.findCustomerOrderList(dto, req?.user);
 	}
 
