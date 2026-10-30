@@ -28,38 +28,79 @@ export class BlacklistService {
     value: string,
     type: 'phone' | 'ip'
   ): Promise<boolean> {
-    const now = new Date();
-    if (type === 'phone') {
-      const entry = await queryRunner.manager.findOne(BlacklistEntity, {
-        where: {
-          subjectType: BlacklistSubjectTypeEnum.PHONE,
-          valueHash: value,
-          severity: BlacklistSeverityEnum.HARD_BLOCK,
-          status: BlacklistStatusEnum.ACTIVE,
-        },
-      });
-      if (entry && (!entry.expiresAt || entry.expiresAt > now)) {
-        return true;
+    try {
+      const now = new Date();
+      if (type === 'phone') {
+        const entry = await queryRunner.manager.findOne(BlacklistEntity, {
+          where: {
+            subjectType: BlacklistSubjectTypeEnum.PHONE,
+            valueHash: value,
+            severity: BlacklistSeverityEnum.HARD_BLOCK,
+            status: BlacklistStatusEnum.ACTIVE,
+          },
+        });
+        if (entry && (!entry.expiresAt || entry.expiresAt > now)) {
+          return true;
+        }
+        return false;
+      } else {
+        const activeIpEntries = await queryRunner.manager.find(BlacklistEntity, {
+          where: [
+            {
+              subjectType: BlacklistSubjectTypeEnum.EXACT_IP,
+              ipAddress: value,
+              severity: BlacklistSeverityEnum.HARD_BLOCK,
+              status: BlacklistStatusEnum.ACTIVE,
+            },
+            {
+              subjectType: BlacklistSubjectTypeEnum.CIDR,
+              severity: BlacklistSeverityEnum.HARD_BLOCK,
+              status: BlacklistStatusEnum.ACTIVE,
+            },
+          ],
+        });
+
+        for (const entry of activeIpEntries) {
+          if (entry.expiresAt && entry.expiresAt <= now) continue;
+          if (entry.subjectType === BlacklistSubjectTypeEnum.EXACT_IP) return true;
+          if (
+            entry.subjectType === BlacklistSubjectTypeEnum.CIDR &&
+            entry.networkAddress &&
+            entry.prefixLength
+          ) {
+            if (this.ipSecurity.checkIpInCidr(value, entry.networkAddress, entry.prefixLength)) {
+              return true;
+            }
+          }
+        }
+        return false;
       }
+    } catch (err) {
+      console.warn('[BlacklistService] checkIsHardBlockedInTx error:', err instanceof Error ? err.message : err);
       return false;
-    } else {
-      const activeIpEntries = await queryRunner.manager.find(BlacklistEntity, {
+    }
+  }
+
+  async checkIsSuspiciousInTx(queryRunner: QueryRunner, ip: string, _type: 'ip' = 'ip'): Promise<boolean> {
+    try {
+      const now = new Date();
+      const activeEntries = await queryRunner.manager.find(BlacklistEntity, {
         where: [
           {
             subjectType: BlacklistSubjectTypeEnum.EXACT_IP,
-            ipAddress: value,
-            severity: BlacklistSeverityEnum.HARD_BLOCK,
+            ipAddress: ip,
+            severity: BlacklistSeverityEnum.SUSPICIOUS_FLAG,
             status: BlacklistStatusEnum.ACTIVE,
           },
           {
             subjectType: BlacklistSubjectTypeEnum.CIDR,
-            severity: BlacklistSeverityEnum.HARD_BLOCK,
+            severity: BlacklistSeverityEnum.SUSPICIOUS_FLAG,
             status: BlacklistStatusEnum.ACTIVE,
           },
         ],
       });
 
-      for (const entry of activeIpEntries) {
+      for (const entry of activeEntries) {
         if (entry.expiresAt && entry.expiresAt <= now) continue;
         if (entry.subjectType === BlacklistSubjectTypeEnum.EXACT_IP) return true;
         if (
@@ -67,47 +108,16 @@ export class BlacklistService {
           entry.networkAddress &&
           entry.prefixLength
         ) {
-          if (this.ipSecurity.checkIpInCidr(value, entry.networkAddress, entry.prefixLength)) {
+          if (this.ipSecurity.checkIpInCidr(ip, entry.networkAddress, entry.prefixLength)) {
             return true;
           }
         }
       }
       return false;
+    } catch (err) {
+      console.warn('[BlacklistService] checkIsSuspiciousInTx error:', err instanceof Error ? err.message : err);
+      return false;
     }
-  }
-
-  async checkIsSuspiciousInTx(queryRunner: QueryRunner, ip: string, _type: 'ip' = 'ip'): Promise<boolean> {
-    const now = new Date();
-    const activeEntries = await queryRunner.manager.find(BlacklistEntity, {
-      where: [
-        {
-          subjectType: BlacklistSubjectTypeEnum.EXACT_IP,
-          ipAddress: ip,
-          severity: BlacklistSeverityEnum.SUSPICIOUS_FLAG,
-          status: BlacklistStatusEnum.ACTIVE,
-        },
-        {
-          subjectType: BlacklistSubjectTypeEnum.CIDR,
-          severity: BlacklistSeverityEnum.SUSPICIOUS_FLAG,
-          status: BlacklistStatusEnum.ACTIVE,
-        },
-      ],
-    });
-
-    for (const entry of activeEntries) {
-      if (entry.expiresAt && entry.expiresAt <= now) continue;
-      if (entry.subjectType === BlacklistSubjectTypeEnum.EXACT_IP) return true;
-      if (
-        entry.subjectType === BlacklistSubjectTypeEnum.CIDR &&
-        entry.networkAddress &&
-        entry.prefixLength
-      ) {
-        if (this.ipSecurity.checkIpInCidr(ip, entry.networkAddress, entry.prefixLength)) {
-          return true;
-        }
-      }
-    }
-    return false;
   }
 
   async createBlacklistWithAudit(params: {
@@ -230,14 +240,19 @@ export class BlacklistService {
     }
   }
 
-  async listBlacklists(query?: { status?: BlacklistStatusEnum; type?: BlacklistSubjectTypeEnum }) {
-    const where: any = {};
-    if (query?.status) where.status = query.status;
-    if (query?.type) where.subjectType = query.type;
-    return this.dataSource.getRepository(BlacklistEntity).find({
-      where,
-      order: { createdAt: 'DESC' },
-    });
+  async listBlacklists(query?: { status?: BlacklistStatusEnum; type?: BlacklistSubjectTypeEnum }): Promise<BlacklistEntity[]> {
+    try {
+      const where: any = {};
+      if (query?.status) where.status = query.status;
+      if (query?.type) where.subjectType = query.type;
+      return await this.dataSource.getRepository(BlacklistEntity).find({
+        where,
+        order: { createdAt: 'DESC' },
+      });
+    } catch (error) {
+      console.warn('[BlacklistService] listBlacklists failed gracefully:', error instanceof Error ? error.message : error);
+      return [];
+    }
   }
 
   async evaluateRiskForCustomer(params: {
@@ -254,85 +269,85 @@ export class BlacklistService {
     isSuspicious: boolean;
     reason?: string;
   }> {
+    const defaultLowRisk = {
+      riskScore: 0,
+      riskLevel: 'LOW' as const,
+      policyDecision: 'ALLOW' as const,
+      fulfillmentHold: false,
+      riskReviewStatus: 'NOT_REQUIRED' as const,
+      isBlacklisted: false,
+      isSuspicious: false,
+      reason: undefined,
+    };
+
     const cleanPhone = (params.phone || '').replace(/\D/g, '');
     const cleanEmail = (params.email || '').trim().toLowerCase();
     const cleanIp = (params.ipAddress || '').trim();
 
     if (!cleanPhone && !cleanEmail && !cleanIp) {
-      return {
-        riskScore: 0,
-        riskLevel: 'LOW',
-        policyDecision: 'ALLOW',
-        fulfillmentHold: false,
-        riskReviewStatus: 'NOT_REQUIRED',
-        isBlacklisted: false,
-        isSuspicious: false,
-      };
+      return defaultLowRisk;
     }
 
-    const now = new Date();
-    const activeEntries = await this.dataSource.getRepository(BlacklistEntity).find({
-      where: { status: BlacklistStatusEnum.ACTIVE },
-    });
+    try {
+      const now = new Date();
+      const activeEntries = await this.dataSource.getRepository(BlacklistEntity).find({
+        where: { status: BlacklistStatusEnum.ACTIVE },
+      });
 
-    let matchedEntry: BlacklistEntity | null = null;
+      let matchedEntry: BlacklistEntity | null = null;
 
-    for (const entry of activeEntries) {
-      if (entry.expiresAt && entry.expiresAt <= now) continue;
+      for (const entry of activeEntries) {
+        if (entry.expiresAt && entry.expiresAt <= now) continue;
 
-      if (entry.subjectType === BlacklistSubjectTypeEnum.PHONE && cleanPhone) {
-        const itemDigits = (entry.displayValue || '').replace(/\D/g, '');
-        if (itemDigits && (cleanPhone.endsWith(itemDigits) || itemDigits.endsWith(cleanPhone))) {
-          matchedEntry = entry;
-          if (entry.severity === BlacklistSeverityEnum.HARD_BLOCK) break;
+        if (entry.subjectType === BlacklistSubjectTypeEnum.PHONE && cleanPhone) {
+          const itemDigits = (entry.displayValue || '').replace(/\D/g, '');
+          if (itemDigits && (cleanPhone.endsWith(itemDigits) || itemDigits.endsWith(cleanPhone))) {
+            matchedEntry = entry;
+            if (entry.severity === BlacklistSeverityEnum.HARD_BLOCK) break;
+          }
         }
-      }
 
-      if (entry.customerEmail && cleanEmail && entry.customerEmail.toLowerCase() === cleanEmail) {
-        matchedEntry = entry;
-        if (entry.severity === BlacklistSeverityEnum.HARD_BLOCK) break;
-      }
-
-      if (cleanIp) {
-        if (entry.subjectType === BlacklistSubjectTypeEnum.EXACT_IP && entry.ipAddress === cleanIp) {
+        if (entry.customerEmail && cleanEmail && entry.customerEmail.toLowerCase() === cleanEmail) {
           matchedEntry = entry;
           if (entry.severity === BlacklistSeverityEnum.HARD_BLOCK) break;
         }
 
-        if (
-          entry.subjectType === BlacklistSubjectTypeEnum.CIDR &&
-          entry.networkAddress &&
-          entry.prefixLength &&
-          this.ipSecurity.checkIpInCidr(cleanIp, entry.networkAddress, entry.prefixLength)
-        ) {
-          matchedEntry = entry;
-          if (entry.severity === BlacklistSeverityEnum.HARD_BLOCK) break;
+        if (cleanIp) {
+          if (entry.subjectType === BlacklistSubjectTypeEnum.EXACT_IP && entry.ipAddress === cleanIp) {
+            matchedEntry = entry;
+            if (entry.severity === BlacklistSeverityEnum.HARD_BLOCK) break;
+          }
+
+          if (
+            entry.subjectType === BlacklistSubjectTypeEnum.CIDR &&
+            entry.networkAddress &&
+            entry.prefixLength &&
+            this.ipSecurity.checkIpInCidr(cleanIp, entry.networkAddress, entry.prefixLength)
+          ) {
+            matchedEntry = entry;
+            if (entry.severity === BlacklistSeverityEnum.HARD_BLOCK) break;
+          }
         }
       }
-    }
 
-    if (matchedEntry) {
-      const isHardBlock = matchedEntry.severity === BlacklistSeverityEnum.HARD_BLOCK;
-      return {
-        riskScore: isHardBlock ? 100 : 60,
-        riskLevel: isHardBlock ? 'CRITICAL' : 'HIGH',
-        policyDecision: isHardBlock ? 'HARD_BLOCK' : 'MANUAL_REVIEW',
-        fulfillmentHold: true,
-        riskReviewStatus: isHardBlock ? 'HARD_BLOCKED' : 'PENDING_REVIEW',
-        isBlacklisted: isHardBlock,
-        isSuspicious: !isHardBlock,
-        reason: matchedEntry.note || matchedEntry.reasonCode || 'Risk flagged in blacklist database',
-      };
-    }
+      if (matchedEntry) {
+        const isHardBlock = matchedEntry.severity === BlacklistSeverityEnum.HARD_BLOCK;
+        return {
+          riskScore: isHardBlock ? 100 : 60,
+          riskLevel: isHardBlock ? 'CRITICAL' : 'HIGH',
+          policyDecision: isHardBlock ? 'HARD_BLOCK' : 'MANUAL_REVIEW',
+          fulfillmentHold: true,
+          riskReviewStatus: isHardBlock ? 'HARD_BLOCKED' : 'PENDING_REVIEW',
+          isBlacklisted: isHardBlock,
+          isSuspicious: !isHardBlock,
+          reason: matchedEntry.note || matchedEntry.reasonCode || 'Risk flagged in blacklist database',
+        };
+      }
 
-    return {
-      riskScore: 0,
-      riskLevel: 'LOW',
-      policyDecision: 'ALLOW',
-      fulfillmentHold: false,
-      riskReviewStatus: 'NOT_REQUIRED',
-      isBlacklisted: false,
-      isSuspicious: false,
-    };
+      return defaultLowRisk;
+    } catch (error) {
+      console.warn('[BlacklistService] evaluateRiskForCustomer failed gracefully:', error instanceof Error ? error.message : error);
+      return defaultLowRisk;
+    }
   }
 }

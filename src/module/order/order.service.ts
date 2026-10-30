@@ -1,5 +1,5 @@
 import { ProductPricingResolver } from "../../utils/pricing.engine";
-import { HttpException, HttpStatus, Injectable, OnModuleInit, Optional } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ResponseUtils, ApiResponse } from '../../utils/response.utils';
 import Stripe from 'stripe';
@@ -66,6 +66,7 @@ import { SocketService } from '../socket/socket.service';
 import { SocketEvent, SOCKET_ROOMS } from '../socket/socket.constants';
 import { BlacklistService } from '../risk/services/blacklist.service';
 import {
+    BlacklistEntity,
     BlacklistStatusEnum,
     BlacklistSubjectTypeEnum,
     BlacklistSeverityEnum
@@ -73,6 +74,7 @@ import {
 
 @Injectable()
 export class OrdersService {
+    private readonly logger = new Logger(OrdersService.name);
     private stripe: Stripe;
 
     constructor(
@@ -898,9 +900,15 @@ export class OrdersService {
             const [orders, total] = await qb.getManyAndCount();
             const pageCount = Math.ceil(total / limit);
 
-            const activeBlacklists = this.blacklistService
-                ? await this.blacklistService.listBlacklists({ status: BlacklistStatusEnum.ACTIVE })
-                : [];
+            let activeBlacklists: BlacklistEntity[] = [];
+            if (this.blacklistService) {
+                try {
+                    activeBlacklists = await this.blacklistService.listBlacklists({ status: BlacklistStatusEnum.ACTIVE });
+                } catch (riskErr) {
+                    this.logger.warn(`Failed to retrieve active blacklists: ${riskErr instanceof Error ? riskErr.message : riskErr}`);
+                    activeBlacklists = [];
+                }
+            }
 
             const enrichedData = (orders || []).map((order) => {
                 const orderSummaries = order.orderSummaries || [];
@@ -1133,19 +1141,23 @@ export class OrdersService {
             };
 
             if (this.blacklistService) {
-                let parsedShipping = data.shippingAddress;
-                if (typeof parsedShipping === 'string') {
-                    try { parsedShipping = JSON.parse(parsedShipping); } catch {}
-                }
-                const phone = parsedShipping?.phone || data.user?.phone || '';
-                const email = data.user?.email || parsedShipping?.email || '';
-                const ipAddress = (data as any).ipAddress || '';
+                try {
+                    let parsedShipping = data.shippingAddress;
+                    if (typeof parsedShipping === 'string') {
+                        try { parsedShipping = JSON.parse(parsedShipping); } catch {}
+                    }
+                    const phone = parsedShipping?.phone || data.user?.phone || '';
+                    const email = data.user?.email || parsedShipping?.email || '';
+                    const ipAddress = (data as any).ipAddress || '';
 
-                riskEvaluation = await this.blacklistService.evaluateRiskForCustomer({
-                    phone,
-                    email,
-                    ipAddress
-                });
+                    riskEvaluation = await this.blacklistService.evaluateRiskForCustomer({
+                        phone,
+                        email,
+                        ipAddress
+                    });
+                } catch (riskErr) {
+                    this.logger.warn(`Failed to evaluate customer risk for order ${cleanId}: ${riskErr instanceof Error ? riskErr.message : riskErr}`);
+                }
             }
 
             const enrichedData = {

@@ -6,9 +6,9 @@ import {
   Index,
 } from 'typeorm';
 
-@Entity('audit_logs')
-@Index('idx_audit_actor', ['actorId', 'createdAt'])
-@Index('idx_audit_entity', ['entityType', 'entityId'])
+@Entity('risk_audit_logs')
+@Index('idx_risk_audit_actor', ['actorId', 'createdAt'])
+@Index('idx_risk_audit_entity', ['entityType', 'entityId'])
 export class AuditLogEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
