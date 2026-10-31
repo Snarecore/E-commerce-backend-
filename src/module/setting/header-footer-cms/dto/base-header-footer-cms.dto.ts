@@ -47,4 +47,13 @@ export class BaseHeaderFooterCmsDto {
 	@IsOptional()
 	@Type(() => FooterLinkDto)
 	footerSectionThree: FooterLinkDto[];
+
+	@IsOptional()
+	primaryColor?: string;
+
+	@IsOptional()
+	secondaryColor?: string;
+
+	@IsOptional()
+	themeConfig?: any;
 }

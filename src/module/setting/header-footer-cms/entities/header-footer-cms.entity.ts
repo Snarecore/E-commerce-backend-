@@ -41,4 +41,13 @@ export class HeaderFooterCms extends AbstractEntity {
 
 	@Column({ type: 'json', nullable: true })
 	footerSectionThree: { value: string; link: string }[];
+
+	@Column({ type: 'varchar', length: 50, nullable: true, default: '#218DAE' })
+	primaryColor: string;
+
+	@Column({ type: 'varchar', length: 50, nullable: true, default: '#1D7693' })
+	secondaryColor: string;
+
+	@Column({ type: 'json', nullable: true })
+	themeConfig: any;
 }

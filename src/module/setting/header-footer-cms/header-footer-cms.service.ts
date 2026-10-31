@@ -66,4 +66,39 @@ export class HeaderFooterCmsService {
             throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
+
+    async updateTheme(
+        data: { primaryColor?: string; secondaryColor?: string; themeConfig?: any }
+    ): Promise<ApiResponse<any>> {
+        try {
+            const isExists = await this.repository.findOneByQuery();
+            if (!isExists) {
+                const created = await this.repository.create({
+                    ...data,
+                    bannerText: data.themeConfig?.bannerText || 'Welcome to Fashion Time',
+                    helpline: '',
+                    footerDescription: '',
+                    copyrightText: '',
+                    contactEmail: '',
+                    contactPhone: '',
+                    contactAddress: '',
+                    footerSectionTwoTitle: '',
+                    footerSectionThreeTitle: '',
+                    footerSectionTwo: [],
+                    footerSectionThree: [],
+                } as any);
+                return ResponseUtils.successResponseHandler(201, 'Theme saved successfully.', 'data', created);
+            } else {
+                const updated = await this.repository.update(isExists.id, {
+                    primaryColor: data.primaryColor ?? isExists.primaryColor,
+                    secondaryColor: data.secondaryColor ?? isExists.secondaryColor,
+                    themeConfig: data.themeConfig ?? isExists.themeConfig,
+                } as any);
+                return ResponseUtils.successResponseHandler(200, 'Theme updated successfully.', 'data', updated);
+            }
+        } catch (error: unknown) {
+            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
+            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
 }
