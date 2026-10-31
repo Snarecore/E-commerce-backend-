@@ -93,6 +93,7 @@ export class HeaderFooterCmsService {
                     primaryColor: data.primaryColor ?? isExists.primaryColor,
                     secondaryColor: data.secondaryColor ?? isExists.secondaryColor,
                     themeConfig: data.themeConfig ?? isExists.themeConfig,
+                    bannerText: data.themeConfig?.bannerText !== undefined ? data.themeConfig.bannerText : isExists.bannerText,
                 } as any);
                 return ResponseUtils.successResponseHandler(200, 'Theme updated successfully.', 'data', updated);
             }
