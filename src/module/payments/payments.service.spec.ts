@@ -32,6 +32,7 @@ describe('PaymentsService - Payment Retry & Expiry', () => {
         mockOrderRepo = {
             findOne: jest.fn(),
             save: jest.fn().mockImplementation((e) => Promise.resolve(e)),
+            update: jest.fn().mockResolvedValue({ affected: 1 }),
         };
 
         mockPaymentRepo = {

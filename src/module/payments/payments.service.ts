@@ -634,7 +634,7 @@ export class PaymentsService {
         await paymentRepo.save(paymentAttempt);
 
         order.paymentIntentId = paymentIntent.id;
-        await orderRepo.save(order);
+        await orderRepo.update(order.id, { paymentIntentId: paymentIntent.id });
 
         if (!paymentIntent.client_secret) {
             throw new InternalServerErrorException('Stripe client secret was not returned by gateway.');
@@ -761,8 +761,9 @@ export class PaymentsService {
 
         // Update order overall payment window if not set (25 min total: 20 min gateway session + 5 min grace)
         if (!order.orderPaymentExpiresAt) {
-            order.orderPaymentExpiresAt = new Date(Date.now() + 25 * 60 * 1000);
-            await orderRepo.save(order);
+            const newExpiry = new Date(Date.now() + 25 * 60 * 1000);
+            order.orderPaymentExpiresAt = newExpiry;
+            await orderRepo.update(order.id, { orderPaymentExpiresAt: newExpiry });
         }
 
         return {
@@ -1040,8 +1041,9 @@ export class PaymentsService {
 
         // Harmonize order payment expiry window (25 min total: 20 min session + 5 min grace)
         if (!order.orderPaymentExpiresAt || order.orderPaymentExpiresAt < new Date()) {
-            order.orderPaymentExpiresAt = new Date(Date.now() + 25 * 60 * 1000);
-            await orderRepo.save(order);
+            const newExpiry = new Date(Date.now() + 25 * 60 * 1000);
+            order.orderPaymentExpiresAt = newExpiry;
+            await orderRepo.update(order.id, { orderPaymentExpiresAt: newExpiry });
         }
 
         return {
