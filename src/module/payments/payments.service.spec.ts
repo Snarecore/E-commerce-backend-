@@ -10,10 +10,11 @@ import { Orders } from '../order/entity/order.entity';
 import { Payments } from './entities/payment.entity';
 import { PaymentRefunds } from './entities/payment-refund.entity';
 import { PaymentAuditLogs } from './entities/payment-audit-log.entity';
+import { PaymentOutboxEvents } from './entities/payment-outbox-event.entity';
 import { Product } from '../inventory/product/entities/product.entity';
 import { OrderSummary } from '../order-summary/entity/order-summary.entity';
 import { OrderStatus, PaymentStatus } from '../../enums/order-status.enum';
-import { PaymentAttemptStatus, PaymentGateway, RefundStatus } from './enums/payment.enum';
+import { PaymentAttemptStatus, PaymentGateway, RefundStatus, OutboxStatus } from './enums/payment.enum';
 import { Role } from '../../enums/role.enum';
 
 describe('PaymentsService - Payment Retry & Expiry', () => {
@@ -91,6 +92,21 @@ describe('PaymentsService - Payment Retry & Expiry', () => {
             }),
         };
 
+        const mockOutboxRepo = {
+            findOne: jest.fn(),
+            createQueryBuilder: jest.fn().mockReturnValue({
+                where: jest.fn().mockReturnThis(),
+                andWhere: jest.fn().mockReturnThis(),
+                orderBy: jest.fn().mockReturnThis(),
+                skip: jest.fn().mockReturnThis(),
+                take: jest.fn().mockReturnThis(),
+                getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
+                update: jest.fn().mockReturnThis(),
+                set: jest.fn().mockReturnThis(),
+                execute: jest.fn().mockResolvedValue({ affected: 1 }),
+            }),
+        };
+
         mockQueryRunner = {
             connect: jest.fn().mockResolvedValue(undefined),
             startTransaction: jest.fn().mockResolvedValue(undefined),
@@ -112,6 +128,7 @@ describe('PaymentsService - Payment Retry & Expiry', () => {
                 if (entity === Payments) return mockPaymentRepo;
                 if (entity === PaymentRefunds) return mockRefundRepo;
                 if (entity === PaymentAuditLogs) return mockAuditRepo;
+                if (entity === PaymentOutboxEvents) return mockOutboxRepo;
                 return { find: jest.fn().mockResolvedValue([]), createQueryBuilder: jest.fn() };
             }),
             createQueryRunner: jest.fn().mockReturnValue(mockQueryRunner),
@@ -931,6 +948,196 @@ describe('PaymentsService - Payment Retry & Expiry', () => {
                         id: 'pay-att-1',
                         status: PaymentAttemptStatus.FAILED,
                         failureReason: 'Card declined: Insufficient funds',
+                    })
+                );
+            });
+        });
+    });
+
+    describe('Phase 4: Admin Verified Reconciliation & Dead-Letter Replay', () => {
+        let mockStripe: any;
+
+        beforeEach(() => {
+            mockStripe = {
+                paymentIntents: {
+                    create: jest.fn(),
+                    retrieve: jest.fn(),
+                },
+            };
+            (service as any).stripe = mockStripe;
+        });
+
+        describe('adminVerifiedReconciliation', () => {
+            it('should return immediately if payment is already marked as PAID', async () => {
+                const mockPayment = {
+                    id: 'pay-1',
+                    status: PaymentAttemptStatus.PAID,
+                };
+                mockPaymentRepo.findOne.mockResolvedValue(mockPayment);
+
+                const result = await service.adminVerifiedReconciliation('pay-1');
+
+                expect(result.success).toBe(true);
+                expect(result.message).toContain('already marked as PAID');
+                expect(mockStripe.paymentIntents.retrieve).not.toHaveBeenCalled();
+            });
+
+            it('should reconcile Stripe payment with exact minor unit match, update DB, and log sanitized audit trail', async () => {
+                const mockDbPayment = {
+                    id: 'pay-stripe-1',
+                    tranId: 'pi_test_reconcile_123',
+                    orderId: 'ord-1',
+                    amount: '75.00',
+                    currency: 'USD',
+                    gateway: PaymentGateway.STRIPE,
+                    status: PaymentAttemptStatus.PENDING,
+                };
+                const mockDbOrder = {
+                    id: 'ord-1',
+                    orderId: 'ORD-75',
+                    totalAmount: '75.00',
+                    currency: 'USD',
+                    paymentStatus: PaymentStatus.UNPAID,
+                    status: OrderStatus.PENDING,
+                };
+
+                mockPaymentRepo.findOne.mockResolvedValue(mockDbPayment);
+                mockOrderRepo.findOne.mockResolvedValue(mockDbOrder);
+
+                mockStripe.paymentIntents.retrieve.mockResolvedValue({
+                    id: 'pi_test_reconcile_123',
+                    amount: 7500,
+                    currency: 'usd',
+                    status: 'succeeded',
+                    client_secret: 'pi_secret_SHOULD_BE_SANITIZED',
+                });
+
+                mockQueryRunner.manager.findOne.mockImplementation((cls: any) => {
+                    if (cls === Orders) return Promise.resolve({ ...mockDbOrder });
+                    if (cls === Payments) return Promise.resolve({ ...mockDbPayment });
+                    return Promise.resolve(null);
+                });
+
+                const result = await service.adminVerifiedReconciliation('pay-stripe-1', { id: 'admin-1', role: 'admin' });
+
+                expect(result.success).toBe(true);
+                expect(result.message).toContain('reconciled and confirmed');
+                expect(mockQueryRunner.manager.save).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        paymentStatus: PaymentStatus.PAID,
+                        status: OrderStatus.ORDER_PLACED,
+                    })
+                );
+                expect(mockQueryRunner.commitTransaction).toHaveBeenCalled();
+            });
+
+            it('should flag needsAdminReview if reconciled Stripe amount has a mismatch', async () => {
+                const mockDbPayment = {
+                    id: 'pay-stripe-2',
+                    tranId: 'pi_mismatch_123',
+                    orderId: 'ord-2',
+                    amount: '100.00',
+                    currency: 'USD',
+                    gateway: PaymentGateway.STRIPE,
+                    status: PaymentAttemptStatus.PENDING,
+                };
+                const mockDbOrder = {
+                    id: 'ord-2',
+                    orderId: 'ORD-100',
+                    totalAmount: '100.00',
+                    currency: 'USD',
+                    paymentStatus: PaymentStatus.UNPAID,
+                    status: OrderStatus.PENDING,
+                };
+
+                mockPaymentRepo.findOne.mockResolvedValue(mockDbPayment);
+                mockOrderRepo.findOne.mockResolvedValue(mockDbOrder);
+
+                // Settled 5000 cents ($50) instead of $100
+                mockStripe.paymentIntents.retrieve.mockResolvedValue({
+                    id: 'pi_mismatch_123',
+                    amount: 5000,
+                    currency: 'usd',
+                    status: 'succeeded',
+                });
+
+                const result = await service.adminVerifiedReconciliation('pay-stripe-2', { id: 'admin-1' });
+
+                expect(result.success).toBe(false);
+                expect(result.discrepancy).toBe('AMOUNT_MISMATCH');
+                expect(mockPaymentRepo.save).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        needsAdminReview: true,
+                    })
+                );
+            });
+
+            it('should mark attempt CANCELLED if Stripe reports canceled', async () => {
+                const mockDbPayment = {
+                    id: 'pay-stripe-3',
+                    tranId: 'pi_canceled_123',
+                    orderId: 'ord-3',
+                    amount: '50.00',
+                    currency: 'USD',
+                    gateway: PaymentGateway.STRIPE,
+                    status: PaymentAttemptStatus.PENDING,
+                };
+                const mockDbOrder = {
+                    id: 'ord-3',
+                    orderId: 'ORD-3',
+                    totalAmount: '50.00',
+                    currency: 'USD',
+                    paymentStatus: PaymentStatus.UNPAID,
+                };
+
+                mockPaymentRepo.findOne.mockResolvedValue(mockDbPayment);
+                mockOrderRepo.findOne.mockResolvedValue(mockDbOrder);
+
+                mockStripe.paymentIntents.retrieve.mockResolvedValue({
+                    id: 'pi_canceled_123',
+                    amount: 5000,
+                    currency: 'usd',
+                    status: 'canceled',
+                });
+
+                const result = await service.adminVerifiedReconciliation('pay-stripe-3', { id: 'admin-1' });
+
+                expect(result.success).toBe(false);
+                expect(result.message).toContain('Stripe confirmed payment is canceled');
+                expect(mockPaymentRepo.save).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        status: PaymentAttemptStatus.CANCELLED,
+                    })
+                );
+            });
+        });
+
+        describe('replayOutboxEvent', () => {
+            it('should atomically re-queue dead-letter outbox event and record audit log', async () => {
+                const mockEvent = {
+                    id: 'outbox-failed-1',
+                    eventType: 'ORDER_CONFIRMATION',
+                    aggregateType: 'ORDER',
+                    aggregateId: 'ORD-1',
+                    status: OutboxStatus.FAILED,
+                    retryCount: 5,
+                    replayCount: 0,
+                    failureReason: 'Downstream webhook timeout',
+                };
+
+                const outboxRepo = mockDataSource.getRepository(PaymentOutboxEvents);
+                outboxRepo.findOne.mockResolvedValue(mockEvent);
+
+                const result = await service.replayOutboxEvent('outbox-failed-1', { id: 'admin-1', role: 'admin' });
+
+                expect(result.success).toBe(true);
+                expect(result.message).toContain('re-queued for delivery');
+                expect(mockAuditRepo.save).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        action: 'REPLAY_OUTBOX_EVENT',
+                        actorId: 'admin-1',
+                        previousState: OutboxStatus.FAILED,
+                        newState: OutboxStatus.PENDING,
                     })
                 );
             });

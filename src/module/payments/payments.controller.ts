@@ -382,4 +382,40 @@ export class PaymentsController {
             adminUserId
         );
     }
+
+    /**
+     * Admin Verified Gateway-First Reconciliation (Zero-lock gateway check -> amount/currency verification -> DB confirmation).
+     */
+    @Post('admin/:paymentId/reconcile')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles(Role.ADMIN)
+    async adminReconcile(
+        @Param('paymentId') paymentId: string,
+        @Req() req: RequestWithRawBody
+    ) {
+        return this.paymentsService.adminVerifiedReconciliation(paymentId, req.user);
+    }
+
+    /**
+     * Retrieves paginated dead-letter outbox events.
+     */
+    @Get('admin/outbox/dead-letter')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles(Role.ADMIN)
+    async getOutboxDeadLetterEvents(@Query() query: any) {
+        return this.paymentsService.getOutboxDeadLetterEvents(query);
+    }
+
+    /**
+     * Replays a dead-letter outbox event with atomic conditional check and immutable audit trail.
+     */
+    @Post('admin/outbox/:eventId/replay')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles(Role.ADMIN)
+    async replayOutboxEvent(
+        @Param('eventId') eventId: string,
+        @Req() req: RequestWithRawBody
+    ) {
+        return this.paymentsService.replayOutboxEvent(eventId, req.user);
+    }
 }

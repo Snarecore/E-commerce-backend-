@@ -27,7 +27,8 @@ import { Payments } from './entities/payment.entity';
 import { PaymentEvents } from './entities/payment-event.entity';
 import { PaymentRefunds } from './entities/payment-refund.entity';
 import { PaymentAuditLogs } from './entities/payment-audit-log.entity';
-import { PaymentAttemptStatus, PaymentEventSource, PaymentGateway, PaymentMethodType, RefundStatus } from './enums/payment.enum';
+import { PaymentOutboxEvents } from './entities/payment-outbox-event.entity';
+import { PaymentAttemptStatus, PaymentEventSource, PaymentGateway, PaymentMethodType, RefundStatus, OutboxStatus } from './enums/payment.enum';
 import { SslcommerzService } from './services/sslcommerz.service';
 import { PaymentConfirmationService } from './services/payment-confirmation.service';
 import { PaymentOutboxService } from './services/payment-outbox.service';
@@ -1743,5 +1744,383 @@ export class PaymentsService {
             limit,
             pageCount: Math.ceil(total / limit)
         });
+    }
+
+    /**
+     * Sanitizes gateway metadata before recording to PaymentAuditLogs (strips card/secret data).
+     */
+    private sanitizeGatewayMetadata(raw: any): Record<string, any> {
+        if (!raw || typeof raw !== 'object') return {};
+        const sanitized: Record<string, any> = {};
+        const sensitiveKeys = [
+            'card_number', 'card_no', 'cvv', 'cvc', 'client_secret', 'secret',
+            'token', 'access_token', 'password', 'pin', 'sessionkey', 'SessionKey',
+            'bank_gw', 'gw_version'
+        ];
+        for (const [key, val] of Object.entries(raw)) {
+            if (sensitiveKeys.some(s => key.toLowerCase().includes(s))) {
+                continue;
+            }
+            if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
+                sanitized[key] = this.sanitizeGatewayMetadata(val);
+            } else {
+                sanitized[key] = val;
+            }
+        }
+        return sanitized;
+    }
+
+    /**
+     * Admin Verified Gateway-First Reconciliation (No Direct / Blind Force-Paid).
+     * 1. Performs zero-DB-lock gateway query (Stripe / SSLCommerz).
+     * 2. Authoritatively verifies minor unit amount & currency.
+     * 3. Confirms payment in a short-lived (< 5ms) DB transaction with row locks.
+     * 4. Sanitizes sensitive gateway data before recording in PaymentAuditLogs.
+     */
+    async adminVerifiedReconciliation(
+        paymentId: string,
+        adminUser?: any
+    ): Promise<{ success: boolean; message: string; payment?: any; discrepancy?: string }> {
+        const paymentRepo = this.dataSource.getRepository(Payments);
+        const orderRepo = this.dataSource.getRepository(Orders);
+
+        const payment = await paymentRepo.findOne({
+            where: [{ id: paymentId }, { tranId: paymentId }],
+            relations: ['order']
+        });
+
+        if (!payment) {
+            throw new NotFoundException(`Payment record not found: ${paymentId}`);
+        }
+
+        const adminUserId = adminUser?.id || adminUser?.userId || 'admin-system';
+        const adminRole = adminUser?.role || 'admin';
+
+        // Idempotency: If already marked as PAID, exit cleanly
+        if (payment.status === PaymentAttemptStatus.PAID) {
+            return {
+                success: true,
+                message: 'Payment is already marked as PAID.',
+                payment
+            };
+        }
+
+        const order = payment.order || (payment.orderId ? await orderRepo.findOne({ where: { id: payment.orderId } }) : null);
+        if (!order) {
+            throw new NotFoundException(`Associated order not found for payment ${paymentId}`);
+        }
+
+        // 1. Gateway-Specific Verification (ZERO DB LOCK)
+        let isGatewayPaid = false;
+        let gatewayRawResponse: any = null;
+        let gatewayAmountMinor: bigint | null = null;
+        let gatewayCurrency: string = '';
+
+        if (payment.gateway === PaymentGateway.STRIPE) {
+            if (!payment.tranId || !payment.tranId.startsWith('pi_')) {
+                throw new BadRequestException(`Invalid Stripe PaymentIntent ID for tranId: "${payment.tranId}"`);
+            }
+
+            try {
+                const intent = await this.stripe.paymentIntents.retrieve(payment.tranId);
+                gatewayRawResponse = intent;
+
+                if (intent.status === 'succeeded') {
+                    isGatewayPaid = true;
+                    gatewayAmountMinor = BigInt(intent.amount);
+                    gatewayCurrency = (intent.currency || 'USD').toUpperCase();
+                } else if (intent.status === 'canceled') {
+                    payment.status = PaymentAttemptStatus.CANCELLED;
+                    payment.failureReason = 'Payment canceled on Stripe.';
+                    payment.needsAdminReview = false;
+                    await paymentRepo.save(payment);
+
+                    const auditRepo = this.dataSource.getRepository(PaymentAuditLogs);
+                    const auditLog = auditRepo.create({
+                        paymentId: payment.id,
+                        action: 'ADMIN_RECONCILIATION_CANCELED',
+                        actorId: adminUserId,
+                        actorRole: adminRole,
+                        previousState: payment.status,
+                        newState: PaymentAttemptStatus.CANCELLED,
+                        reason: 'Gateway confirmed payment is canceled',
+                        metadata: this.sanitizeGatewayMetadata(intent)
+                    });
+                    await auditRepo.save(auditLog);
+
+                    return {
+                        success: false,
+                        message: 'Stripe confirmed payment is canceled.',
+                        payment
+                    };
+                } else {
+                    return {
+                        success: false,
+                        message: `Stripe PaymentIntent is in "${intent.status}" state. Funds are not settled.`,
+                        payment,
+                        discrepancy: `Gateway Status: ${intent.status}`
+                    };
+                }
+            } catch (err: any) {
+                this.logger.error(`[Admin Reconcile] Stripe query failed for ${payment.tranId}: ${err?.message}`);
+                throw new BadRequestException(`Failed to query Stripe gateway: ${err?.message}`);
+            }
+        } else if (payment.gateway === PaymentGateway.SSLCOMMERZ) {
+            try {
+                const queryRes = await this.sslcommerzService.queryTransaction(payment.tranId);
+                gatewayRawResponse = queryRes;
+                const element = queryRes?.element?.[0];
+
+                if (element && (element.status === 'VALID' || element.status === 'VALIDATED') && element.val_id) {
+                    isGatewayPaid = true;
+                    const parsedGwAmount = CurrencyUtils.toMinorUnitsBigInt(String(element.amount || 0), (element.currency || 'BDT').toUpperCase());
+                    gatewayAmountMinor = parsedGwAmount;
+                    gatewayCurrency = (element.currency || 'BDT').toUpperCase();
+                } else {
+                    return {
+                        success: false,
+                        message: `SSLCommerz reports transaction status: "${element?.status || 'UNKNOWN'}". Funds are not confirmed.`,
+                        payment,
+                        discrepancy: `Gateway Status: ${element?.status || 'UNKNOWN'}`
+                    };
+                }
+            } catch (err: any) {
+                this.logger.error(`[Admin Reconcile] SSLCommerz query failed for ${payment.tranId}: ${err?.message}`);
+                throw new BadRequestException(`Failed to query SSLCommerz gateway: ${err?.message}`);
+            }
+        } else {
+            throw new BadRequestException(`Reconciliation not supported for gateway "${payment.gateway}"`);
+        }
+
+        if (!isGatewayPaid || gatewayAmountMinor === null) {
+            return {
+                success: false,
+                message: 'Payment not confirmed by gateway.',
+                payment
+            };
+        }
+
+        // 2. Strict Amount & Currency Invariant Validation
+        const expectedCurrency = (order.currency || payment.currency || 'USD').toUpperCase();
+        const expectedMinor = CurrencyUtils.toMinorUnitsBigInt(String(order.totalAmount), expectedCurrency);
+
+        if (expectedCurrency !== gatewayCurrency) {
+            payment.needsAdminReview = true;
+            payment.adminReviewReason = `CURRENCY_MISMATCH: Expected ${expectedCurrency}, Gateway reported ${gatewayCurrency}`;
+            await paymentRepo.save(payment);
+
+            return {
+                success: false,
+                message: `Currency mismatch! Expected ${expectedCurrency}, got ${gatewayCurrency}`,
+                payment,
+                discrepancy: 'CURRENCY_MISMATCH'
+            };
+        }
+
+        if (expectedMinor !== gatewayAmountMinor) {
+            payment.needsAdminReview = true;
+            payment.adminReviewReason = `AMOUNT_MISMATCH: Expected minor units ${expectedMinor}, Gateway reported ${gatewayAmountMinor}`;
+            await paymentRepo.save(payment);
+
+            return {
+                success: false,
+                message: `Amount mismatch! Order requires ${expectedMinor} minor units, but gateway settled ${gatewayAmountMinor}`,
+                payment,
+                discrepancy: 'AMOUNT_MISMATCH'
+            };
+        }
+
+        // 3. Short-Lived Database Transaction (< 5ms)
+        const queryRunner = this.dataSource.createQueryRunner();
+        await queryRunner.connect();
+        await queryRunner.startTransaction();
+
+        try {
+            const lockedOrder = await queryRunner.manager.findOne(Orders, {
+                where: { id: order.id },
+                lock: { mode: 'pessimistic_write' }
+            });
+
+            const lockedPayment = await queryRunner.manager.findOne(Payments, {
+                where: { id: payment.id },
+                lock: { mode: 'pessimistic_write' }
+            });
+
+            if (!lockedOrder || !lockedPayment) {
+                await queryRunner.rollbackTransaction();
+                throw new NotFoundException('Order or payment record disappeared during reconciliation.');
+            }
+
+            if (lockedPayment.status === PaymentAttemptStatus.PAID) {
+                await queryRunner.rollbackTransaction();
+                return { success: true, message: 'Payment was already reconciled by concurrent worker.', payment: lockedPayment };
+            }
+
+            lockedPayment.status = PaymentAttemptStatus.PAID;
+            lockedPayment.paidAt = new Date();
+            lockedPayment.needsAdminReview = false;
+            lockedPayment.adminReviewReason = null;
+            await queryRunner.manager.save(lockedPayment);
+
+            lockedOrder.status = OrderStatus.ORDER_PLACED;
+            lockedOrder.paymentStatus = PaymentStatus.PAID;
+            lockedOrder.statusHistory = [
+                ...(lockedOrder.statusHistory || []),
+                {
+                    status: OrderStatus.ORDER_PLACED,
+                    timestamp: new Date().toISOString(),
+                    updatedBy: adminUserId,
+                    note: `Payment verified and reconciled by admin via ${payment.gateway}`
+                }
+            ];
+            await queryRunner.manager.save(lockedOrder);
+
+            // Enqueue Transactional Outbox Event
+            await PaymentOutboxService.enqueueEvent(
+                queryRunner,
+                'PAYMENT',
+                lockedPayment.id,
+                'PAYMENT_CONFIRMED',
+                {
+                    paymentId: lockedPayment.id,
+                    orderId: lockedOrder.orderId,
+                    tranId: lockedPayment.tranId,
+                    amount: lockedPayment.amount,
+                    currency: lockedPayment.currency,
+                    reconciledBy: adminUserId
+                }
+            );
+
+            // Audit Log with Sanitized Gateway Metadata
+            const sanitizedMeta = this.sanitizeGatewayMetadata(gatewayRawResponse);
+            const auditLog = queryRunner.manager.create(PaymentAuditLogs, {
+                paymentId: lockedPayment.id,
+                action: 'ADMIN_VERIFIED_RECONCILIATION',
+                actorId: adminUserId,
+                actorRole: adminRole,
+                previousState: payment.status,
+                newState: PaymentAttemptStatus.PAID,
+                reason: `Verified reconciliation by admin via ${payment.gateway}`,
+                metadata: {
+                    tranId: lockedPayment.tranId,
+                    gateway: payment.gateway,
+                    gatewayMetadata: sanitizedMeta
+                }
+            });
+            await queryRunner.manager.save(auditLog);
+
+            await queryRunner.commitTransaction();
+            this.logger.log(`[Admin Reconcile] Successfully reconciled payment ${payment.id} for order ${order.orderId}`);
+
+            return {
+                success: true,
+                message: `Payment successfully reconciled and confirmed via ${payment.gateway}.`,
+                payment: lockedPayment
+            };
+        } catch (txErr: any) {
+            await queryRunner.rollbackTransaction();
+            throw txErr;
+        } finally {
+            await queryRunner.release();
+        }
+    }
+
+    /**
+     * Retrieves paginated list of failed/dead-letter outbox events.
+     */
+    async getOutboxDeadLetterEvents(query: any) {
+        const page = Math.max(1, Number(query?.page) || 1);
+        const limit = Math.min(100, Math.max(1, Number(query?.limit) || 20));
+        const skip = (page - 1) * limit;
+
+        const outboxRepo = this.dataSource.getRepository(PaymentOutboxEvents);
+        const qb = outboxRepo.createQueryBuilder('event')
+            .where('event.status = :status OR event.retryCount >= 5', { status: OutboxStatus.FAILED });
+
+        if (query?.eventType && query.eventType !== 'ALL') {
+            qb.andWhere('event.eventType = :eventType', { eventType: query.eventType });
+        }
+
+        qb.orderBy('event.updatedAt', 'DESC')
+          .skip(skip)
+          .take(limit);
+
+        const [events, total] = await qb.getManyAndCount();
+        return ResponseUtils.successResponseHandler(200, 'Dead-letter outbox events retrieved successfully', 'data', {
+            data: events,
+            total,
+            page,
+            limit,
+            pageCount: Math.ceil(total / limit)
+        });
+    }
+
+    /**
+     * Admin Replays a Dead-Letter Outbox Event.
+     * Enforces atomic conditional update (WHERE status = 'FAILED'), audit logging, and lease reset.
+     */
+    async replayOutboxEvent(
+        eventId: string,
+        adminUser?: any
+    ): Promise<{ success: boolean; message: string; eventId: string }> {
+        const outboxRepo = this.dataSource.getRepository(PaymentOutboxEvents);
+        const event = await outboxRepo.findOne({ where: { id: eventId } });
+
+        if (!event) {
+            throw new NotFoundException(`Outbox event not found: ${eventId}`);
+        }
+
+        const adminUserId = adminUser?.id || adminUser?.userId || 'admin-system';
+        const adminRole = adminUser?.role || 'admin';
+
+        // Atomic Conditional Guard: UPDATE ... WHERE id = :id AND (status = 'FAILED' OR retryCount >= 5)
+        const result = await outboxRepo.createQueryBuilder()
+            .update(PaymentOutboxEvents)
+            .set({
+                status: OutboxStatus.PENDING,
+                retryCount: 0,
+                replayCount: () => 'replayCount + 1',
+                nextAttemptAt: new Date(),
+                leaseToken: null,
+                leaseExpiresAt: null
+            })
+            .where('id = :id AND (status = :failedStatus OR retryCount >= 5)', {
+                id: eventId,
+                failedStatus: OutboxStatus.FAILED
+            })
+            .execute();
+
+        if (result.affected === 0) {
+            throw new BadRequestException('Event cannot be replayed. It is either not in FAILED state or currently locked by another worker.');
+        }
+
+        // Immutable Replay Audit Log
+        const auditRepo = this.dataSource.getRepository(PaymentAuditLogs);
+        const auditLog = auditRepo.create({
+            paymentId: null,
+            action: 'REPLAY_OUTBOX_EVENT',
+            actorId: adminUserId,
+            actorRole: adminRole,
+            previousState: event.status,
+            newState: OutboxStatus.PENDING,
+            reason: `Admin requested dead-letter outbox event replay (Replay #${event.replayCount + 1})`,
+            metadata: {
+                eventId: event.id,
+                eventType: event.eventType,
+                aggregateType: event.aggregateType,
+                aggregateId: event.aggregateId,
+                previousError: event.failureReason,
+                replayCount: event.replayCount + 1,
+                timestamp: new Date().toISOString()
+            }
+        });
+        await auditRepo.save(auditLog);
+
+        this.logger.log(`[Outbox Replay] Event ${eventId} successfully re-queued by admin ${adminUserId}`);
+        return {
+            success: true,
+            message: `Outbox event ${eventId} successfully re-queued for delivery.`,
+            eventId
+        };
     }
 }
