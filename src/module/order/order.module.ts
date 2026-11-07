@@ -13,6 +13,8 @@ import { CouponModule } from '../coupon/coupon.module';
 import { MegaDiscountModule } from '../setting/mega-discount/mega-discount.module';
 import { SocketModule } from '../socket/socket.module';
 import { RiskModule } from '../risk/risk.module';
+import { OrderExpiryWorker } from './order-expiry.worker';
+import { PaymentsModule } from '../payments/payments.module';
 
 @Module({
 	imports: [
@@ -21,7 +23,8 @@ import { RiskModule } from '../risk/risk.module';
 		CouponModule,
 		MegaDiscountModule,
 		SocketModule,
-		RiskModule
+		RiskModule,
+		PaymentsModule
 	],
 	controllers: [OrdersController],
 	providers: [
@@ -30,7 +33,8 @@ import { RiskModule } from '../risk/risk.module';
 		UniqueCodeGeneratorService, 
 		UniqueCodeGeneratorRepository, 
 		OrderSummaryRepository,
-		ProductRepository
+		ProductRepository,
+		OrderExpiryWorker
 	],
 	exports: [OrdersService, OrdersRepository]
 })

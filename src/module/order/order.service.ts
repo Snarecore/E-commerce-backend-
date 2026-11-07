@@ -3,6 +3,7 @@ import { HttpException, HttpStatus, Injectable, Logger, OnModuleInit, Optional }
 import { ConfigService } from '@nestjs/config';
 import { ResponseUtils, ApiResponse } from '../../utils/response.utils';
 import Stripe from 'stripe';
+import * as crypto from 'crypto';
 import { Between, DataSource, FindOptionsOrder, In, LessThanOrEqual, MoreThanOrEqual, Like } from 'typeorm';
 import { OrdersRepository } from './order.repository';
 import { CreateOrdersDto } from './dto/create-order.dto';
@@ -232,14 +233,49 @@ export class OrdersService {
         }
     }
 
+    /**
+     * Builds deterministic SHA-256 fingerprint of customer checkout intent
+     * (items, variants/sizes, quantities, coupon, and delivery destination).
+     */
+    private buildCustomerIntentFingerprint(dto: CreateOrdersDto, userId: string): string {
+        const sortedItems = [...(dto.items || [])]
+            .map((it) => ({
+                productId: String(it.productId || (it as any).id || ''),
+                quantity: Number(it.quantity || 1),
+                size: String((it as any).size || (it as any).selectedSize || '')
+            }))
+            .sort((a, b) => a.productId.localeCompare(b.productId) || a.size.localeCompare(b.size));
+
+        const canonicalPayload = {
+            userId: String(userId || ''),
+            items: sortedItems,
+            couponCode: String(dto.couponCode || '').trim().toUpperCase(),
+            shippingAddress: {
+                address: String(dto.shippingAddress?.address || '').trim(),
+                city: String(dto.shippingAddress?.city || '').trim(),
+                phone: String(dto.shippingAddress?.phone || '').trim()
+            }
+        };
+
+        return crypto.createHash('sha256').update(JSON.stringify(canonicalPayload)).digest('hex');
+    }
+
     async create(dto: CreateOrdersDto, userId: string): Promise<ApiResponse<OrdersInterface>> {
         try {
-            // 1. Idempotency Check
+            // 1. Idempotency Check with Customer Intent Fingerprint Verification
+            const intentFingerprint = this.buildCustomerIntentFingerprint(dto, userId);
+
             if (dto.idempotencyKey) {
                 const existingOrder = await this.repository.findOneByQuery({
                     idempotencyKey: dto.idempotencyKey
                 });
                 if (existingOrder) {
+                    if (existingOrder.customerIntentFingerprint && existingOrder.customerIntentFingerprint !== intentFingerprint) {
+                        throw new HttpException(
+                            'Idempotency Conflict: A previous order exists with this idempotency key but with different cart items or details.',
+                            HttpStatus.CONFLICT
+                        );
+                    }
                     return ResponseUtils.successResponseHandler(
                         201,
                         'Order already exists for this idempotency key.',
@@ -264,12 +300,29 @@ export class OrdersService {
                 rawPaymentIntentInput.toUpperCase() === 'COD' ||
                 (!paymentMethodInput && !rawPaymentIntentInput);
 
-            const finalPaymentMethod = isCOD ? 'COD' : dto.paymentMethod || 'Online';
+            const isSSLCommerz =
+                paymentMethodInput === 'SSLCOMMERZ' ||
+                rawPaymentIntentInput.toUpperCase() === 'SSLCOMMERZ';
+
+            const isOrderFirstStripe =
+                rawPaymentIntentInput.toUpperCase() === 'PENDING_STRIPE' ||
+                rawPaymentIntentInput.toUpperCase() === 'ONLINE' ||
+                (paymentMethodInput === 'ONLINE' && (!rawPaymentIntentInput || rawPaymentIntentInput.toUpperCase() === 'PENDING_STRIPE' || rawPaymentIntentInput.toUpperCase() === 'ONLINE'));
+
+            const finalPaymentMethod = isCOD ? 'COD' : isSSLCommerz ? 'SSLCOMMERZ' : dto.paymentMethod || 'Online';
             let finalPaymentIntentId: string | null = null;
             let finalPaymentStatus: PaymentStatus = PaymentStatus.PENDING;
 
             if (isCOD) {
                 // Completely bypass Stripe for COD
+                finalPaymentIntentId = null;
+                finalPaymentStatus = PaymentStatus.PENDING;
+            } else if (isSSLCommerz) {
+                // Completely bypass Stripe for SSLCommerz (will be paid via SSLCommerz gateway session)
+                finalPaymentIntentId = null;
+                finalPaymentStatus = PaymentStatus.PENDING;
+            } else if (isOrderFirstStripe) {
+                // Order-First flow for Stripe: pre-create order and reserve stock first; Stripe session is initiated subsequently
                 finalPaymentIntentId = null;
                 finalPaymentStatus = PaymentStatus.PENDING;
             } else {
@@ -309,303 +362,389 @@ export class OrdersService {
                 }
             }
 
-            // 3. Process Items
+            // 3. Process Items & Cart Aggregation with Positive Integer Checks
             const rawItems = dto.items && dto.items.length > 0 ? dto.items : dto.products || [];
             if (!rawItems || rawItems.length === 0) {
                 throw new HttpException('Order must contain at least one item.', HttpStatus.BAD_REQUEST);
             }
 
-            // 4. Execute Atomic Database Transaction
-            const queryRunner = this.dataSource.createQueryRunner();
-            await queryRunner.connect();
-            await queryRunner.startTransaction();
-
-            try {
-                let megaDiscountRecord: MegaDiscount | null = null;
-                try {
-                    megaDiscountRecord = await queryRunner.manager.findOne(MegaDiscount, {
-                        where: { id: SINGLETON_MEGA_DISCOUNT_ID }
-                    });
-                } catch {
-                    megaDiscountRecord = null;
+            // Aggregate requirements by Product ID and Size (eliminates lost updates and variant drifts)
+            const aggregatedMap = new Map<string, { totalQty: number; sizeMap: Map<string, number> }>();
+            for (const itemDto of rawItems) {
+                const pid = String(itemDto.productId || itemDto.id || itemDto.product || '').trim();
+                if (!pid) {
+                    throw new HttpException('Product ID is missing in order item.', HttpStatus.BAD_REQUEST);
                 }
+                const qty = Number(itemDto.quantity);
+                if (!Number.isInteger(qty) || qty <= 0) {
+                    throw new HttpException(`Invalid quantity for product ${pid}. Must be an integer >= 1.`, HttpStatus.BAD_REQUEST);
+                }
+                const selectedSize = String((itemDto as any).size || (itemDto as any).selectedSize || (itemDto as any).sizeName || (itemDto as any).colorSize || '').trim();
 
-                const isMegaDiscountApplied = Boolean(megaDiscountRecord?.isActive && Number(megaDiscountRecord?.discountPercentage) > 0);
-                const megaDiscountPercentage = isMegaDiscountApplied ? Number(megaDiscountRecord?.discountPercentage) : null;
+                if (!aggregatedMap.has(pid)) {
+                    aggregatedMap.set(pid, { totalQty: 0, sizeMap: new Map() });
+                }
+                const entry = aggregatedMap.get(pid)!;
+                entry.totalQty += qty;
+                if (selectedSize) {
+                    entry.sizeMap.set(selectedSize, (entry.sizeMap.get(selectedSize) || 0) + qty);
+                }
+            }
 
-                let subtotal = 0;
-                const preparedItems: Array<{
-                    product: Product;
-                    quantity: number;
-                    unitPrice: number;
-                    selectedSize?: string;
-                }> = [];
+            const sortedProductIds = Array.from(aggregatedMap.keys()).sort(); // 🔒 Deterministic Clustered PK Order (ASC)
 
-                // Fix: Bulk fetch all products in one IN query instead of N+1
-                const productIds = rawItems
-                    .map(itemDto => itemDto.productId || itemDto.id || itemDto.product)
-                    .filter(Boolean);
+            // 4. Execute Atomic Database Transaction with Controlled Deadlock / Lock-Timeout Retry Loop
+            const MAX_RETRIES = 3;
+            let attempt = 0;
+            let savedOrderResult: Orders | null = null;
+            let preparedItemsResult: Array<{ product: Product; quantity: number; unitPrice: number; selectedSize?: string }> = [];
 
-                const fetchedProducts = await queryRunner.manager.find(Product, {
-                    where: { id: In(productIds), isDeleted: false }
-                });
-                const productMap = new Map<string, Product>(
-                    fetchedProducts.map(p => [p.id, p])
-                );
+            while (attempt < MAX_RETRIES) {
+                attempt++;
+                const queryRunner = this.dataSource.createQueryRunner();
+                let isConnected = false;
 
-                for (const itemDto of rawItems) {
-                    const productId = itemDto.productId || itemDto.id || itemDto.product;
-                    if (!productId) {
-                        throw new HttpException('Product ID is missing in order item.', HttpStatus.BAD_REQUEST);
+                try {
+                    await queryRunner.connect();
+                    isConnected = true;
+                    await queryRunner.startTransaction();
+
+                    // Step A: Sequential Clustered-PK Row Locks in Strict ASC Order
+                    const lockedProductMap = new Map<string, Product>();
+                    for (const pid of sortedProductIds) {
+                        const lockedProduct = await queryRunner.manager.findOne(Product, {
+                            where: { id: pid, isDeleted: false },
+                            lock: { mode: 'pessimistic_write' }
+                        });
+
+                        if (!lockedProduct) {
+                            throw new HttpException(`Product with ID "${pid}" not found or inactive.`, HttpStatus.BAD_REQUEST);
+                        }
+                        lockedProductMap.set(pid, lockedProduct);
                     }
 
-                    const qty = Number(itemDto.quantity) || 0;
-                    if (qty <= 0) {
-                        throw new HttpException(`Invalid quantity for product ${productId}.`, HttpStatus.BAD_REQUEST);
+                    // Step B: Domain Consistency & Stock Sufficiency Validation
+                    for (const pid of sortedProductIds) {
+                        const product = lockedProductMap.get(pid)!;
+                        const req = aggregatedMap.get(pid)!;
+
+                        const availableStock = (product.quantity === null || product.quantity === undefined)
+                            ? Number.MAX_SAFE_INTEGER
+                            : Number(product.quantity);
+
+                        if (availableStock < req.totalQty) {
+                            throw new HttpException(
+                                `Insufficient stock for product "${product.name}". Requested: ${req.totalQty}, Available: ${availableStock}.`,
+                                HttpStatus.BAD_REQUEST
+                            );
+                        }
+
+                        // Size Variant Consistency Check
+                        if (product.sizeStock && typeof product.sizeStock === 'object' && Object.keys(product.sizeStock).length > 0) {
+                            for (const [sizeName, neededQty] of req.sizeMap.entries()) {
+                                if (!(sizeName in product.sizeStock)) {
+                                    throw new HttpException(
+                                        `Size variant "${sizeName}" is invalid for product "${product.name}".`,
+                                        HttpStatus.BAD_REQUEST
+                                    );
+                                }
+                                const currentVariantQty = Number(product.sizeStock[sizeName]) || 0;
+                                if (currentVariantQty < neededQty) {
+                                    throw new HttpException(
+                                        `Insufficient stock for size "${sizeName}" of product "${product.name}". Requested: ${neededQty}, Available: ${currentVariantQty}.`,
+                                        HttpStatus.BAD_REQUEST
+                                    );
+                                }
+                            }
+                        }
                     }
 
-                    const selectedSize = ((itemDto as any).size || (itemDto as any).selectedSize || (itemDto as any).sizeName || (itemDto as any).colorSize || '').trim();
-
-                    const product = productMap.get(productId) ?? null;
-
-                    if (!product) {
-                        throw new HttpException(`Product with ID ${productId} not found.`, HttpStatus.NOT_FOUND);
+                    // Step C: MegaDiscount & Pricing Resolution
+                    let megaDiscountRecord: MegaDiscount | null = null;
+                    try {
+                        megaDiscountRecord = await queryRunner.manager.findOne(MegaDiscount, {
+                            where: { id: SINGLETON_MEGA_DISCOUNT_ID }
+                        });
+                    } catch {
+                        megaDiscountRecord = null;
                     }
 
-                    const availableStock = (product.quantity === null || product.quantity === undefined)
-                        ? Number.MAX_SAFE_INTEGER
-                        : product.quantity;
+                    const isMegaDiscountApplied = Boolean(megaDiscountRecord?.isActive && Number(megaDiscountRecord?.discountPercentage) > 0);
+                    const megaDiscountPercentage = isMegaDiscountApplied ? Number(megaDiscountRecord?.discountPercentage) : null;
 
-                    if (availableStock < qty) {
-                        throw new HttpException(
-                            `Insufficient stock for product "${product.name}". Requested: ${qty}, Available: ${availableStock}.`,
-                            HttpStatus.BAD_REQUEST
+                    let subtotal = 0;
+                    const preparedItems: Array<{
+                        product: Product;
+                        quantity: number;
+                        unitPrice: number;
+                        selectedSize?: string;
+                    }> = [];
+
+                    for (const itemDto of rawItems) {
+                        const pid = String(itemDto.productId || itemDto.id || itemDto.product).trim();
+                        const qty = Number(itemDto.quantity);
+                        const selectedSize = ((itemDto as any).size || (itemDto as any).selectedSize || (itemDto as any).sizeName || (itemDto as any).colorSize || '').trim();
+                        const product = lockedProductMap.get(pid)!;
+
+                        const unitPrice = ProductPricingResolver.resolveUnitPrice({
+                            price: Number(product.price) || 0,
+                            discountType: product.discountType,
+                            discountAmount: Number(product.discountAmount) || 0
+                        }, megaDiscountRecord);
+
+                        subtotal += unitPrice * qty;
+
+                        preparedItems.push({
+                            product,
+                            quantity: qty,
+                            unitPrice,
+                            selectedSize: selectedSize || undefined
+                        });
+                    }
+
+                    // Delivery Charge Rule
+                    let deliveryCharge = 120;
+                    const city = (dto.shippingAddress?.city || '').toLowerCase();
+                    if (city.includes('dhaka')) {
+                        deliveryCharge = 60;
+                    }
+
+                    const uniqueOrderId = await this.uniqueCodeGeneratorService.getUniqueOrderId();
+
+                    let discountAmount = 0;
+                    let couponId: string | null = null;
+                    let couponCode: string | null = null;
+
+                    if (dto.couponCode && this.couponService) {
+                        const couponRes = await this.couponService.redeemCouponInTransaction(
+                            queryRunner,
+                            dto.couponCode,
+                            subtotal,
+                            deliveryCharge,
+                            userId,
+                            uniqueOrderId
+                        );
+                        couponId = couponRes.couponId;
+                        couponCode = couponRes.couponCode;
+                        discountAmount = couponRes.discountAmount;
+                    }
+
+                    const subtotalRounded = Math.round((subtotal + Number.EPSILON) * 100) / 100;
+                    const totalAmount = Math.max(0, Math.round((subtotalRounded + deliveryCharge - discountAmount + Number.EPSILON) * 100) / 100);
+
+                    // Online payment amount security verification (prevents client price tampering)
+                    if (finalPaymentMethod !== 'COD' && finalPaymentMethod !== 'SSLCOMMERZ' && !isOrderFirstStripe && finalPaymentIntentId && !finalPaymentIntentId.startsWith('cs_')) {
+                        try {
+                            const stripeClient = this.getStripeClient();
+                            const intent = await stripeClient.paymentIntents.retrieve(finalPaymentIntentId);
+                            if (intent && intent.amount !== undefined && intent.amount !== null) {
+                                const paidCents = Number(intent.amount) || 0;
+                                const expectedCents = Math.round(totalAmount * 100);
+                                if (paidCents < expectedCents - 50) {
+                                    throw new HttpException(
+                                        `Payment verification failed: Amount paid ($${(paidCents / 100).toFixed(2)}) is less than required total ($${totalAmount.toFixed(2)}).`,
+                                        HttpStatus.BAD_REQUEST
+                                    );
+                                }
+                            }
+                        } catch (err: unknown) {
+                            if (err instanceof HttpException) throw err;
+                        }
+                    }
+
+                    const nowIso = new Date().toISOString();
+
+                    const initialStatusHistory = [
+                        {
+                            status: OrderStatus.PENDING,
+                            timestamp: nowIso,
+                            updatedBy: 'system',
+                            note: couponCode
+                                ? `Order submitted with coupon ${couponCode} (-৳${discountAmount}) - Pending Admin Approval`
+                                : 'Order submitted by customer - Pending Admin Approval'
+                        }
+                    ];
+
+                    const orderEntity = queryRunner.manager.create(Orders, {
+                        orderId: uniqueOrderId,
+                        userId,
+                        paymentMethod: finalPaymentMethod,
+                        paymentIntentId: finalPaymentIntentId,
+                        totalAmount,
+                        subtotal: subtotalRounded,
+                        deliveryCharge,
+                        couponId,
+                        couponCode,
+                        discountAmount,
+                        megaDiscountApplied: isMegaDiscountApplied,
+                        megaDiscountPercentage: megaDiscountPercentage,
+                        currency: dto.currency || 'BDT',
+                        status: OrderStatus.PENDING,
+                        paymentStatus: finalPaymentStatus,
+                        shippingAddress: dto.shippingAddress || null,
+                        specialNote: dto.specialNote || null,
+                        idempotencyKey: dto.idempotencyKey || null,
+                        customerIntentFingerprint: intentFingerprint,
+                        authoritativeSnapshot: {
+                            subtotal: subtotalRounded,
+                            deliveryCharge,
+                            discountAmount,
+                            totalAmount,
+                            calculatedItems: preparedItems.map(p => ({
+                                productId: p.product.id,
+                                unitPrice: p.unitPrice,
+                                quantity: p.quantity,
+                                size: p.selectedSize || ''
+                            }))
+                        },
+                        orderPaymentExpiresAt: new Date(Date.now() + 25 * 60 * 1000), // Harmonized 25 min window
+                        statusHistory: initialStatusHistory
+                    } as any);
+
+                    const savedOrder = await queryRunner.manager.save(orderEntity);
+
+                    for (const prepItem of preparedItems) {
+                        const unitCostPrice = Number(prepItem.product.cost) > 0 ? Number(prepItem.product.cost) : 0;
+                        const totalCost = Number((unitCostPrice * prepItem.quantity).toFixed(2));
+                        const costSource = Number(prepItem.product.cost) > 0 ? CostSource.SNAPSHOT : CostSource.UNKNOWN;
+
+                        const summaryEntity = queryRunner.manager.create(OrderSummary, {
+                            orderId: savedOrder.id,
+                            productId: prepItem.product.id,
+                            productName: prepItem.product.name,
+                            productImage: prepItem.product.featuredImage || '',
+                            price: prepItem.unitPrice,
+                            quantity: prepItem.quantity,
+                            unitCostPrice,
+                            totalCost,
+                            costSource,
+                            snapshotMainCategoryId: prepItem.product.mainCategoryId || null,
+                            snapshotFirstCategoryId: prepItem.product.firstCategoryId || null,
+                            snapshotSecondCategoryId: prepItem.product.secondCategoryId || null,
+                            size: prepItem.selectedSize || null,
+                            selectedSize: prepItem.selectedSize || null
+                        } as any);
+                        await queryRunner.manager.save(summaryEntity);
+                    }
+
+                    // Step D: Atomic Stock Deductions in Strict ASC Primary Key Order
+                    for (const pid of sortedProductIds) {
+                        const product = lockedProductMap.get(pid)!;
+                        const req = aggregatedMap.get(pid)!;
+
+                        let updatedSizeStock = product.sizeStock;
+                        if (updatedSizeStock && typeof updatedSizeStock === 'object') {
+                            updatedSizeStock = { ...updatedSizeStock };
+                            for (const [sizeName, qtyNeeded] of req.sizeMap.entries()) {
+                                const currentVariantQty = Number(updatedSizeStock[sizeName]) || 0;
+                                updatedSizeStock[sizeName] = Math.max(0, currentVariantQty - qtyNeeded);
+                            }
+                        }
+
+                        const newTotalQty = (product.quantity !== null && product.quantity !== undefined)
+                            ? Math.max(0, (product.quantity || 0) - req.totalQty)
+                            : 0;
+
+                        await queryRunner.manager.update(Product, product.id, {
+                            quantity: newTotalQty,
+                            sizeStock: updatedSizeStock
+                        });
+
+                        product.quantity = newTotalQty;
+                        product.sizeStock = updatedSizeStock;
+                    }
+
+                    if (this.notificationService) {
+                        const customerName = dto.shippingAddress?.name || 'Customer';
+                        await this.notificationService.createAdminOrderNotification(
+                            queryRunner.manager,
+                            {
+                                orderId: savedOrder.id,
+                                orderNumber: savedOrder.orderId,
+                                customerName,
+                                totalAmount: savedOrder.totalAmount,
+                                paymentMethod: finalPaymentMethod
+                            }
                         );
                     }
 
-                    if (selectedSize && product.sizeStock && typeof product.sizeStock === 'object') {
-                        const sizeStockQty = Number(product.sizeStock[selectedSize]) || 0;
-                        if (sizeStockQty < qty) {
-                            throw new HttpException(
-                                `Insufficient stock for size "${selectedSize}" of product "${product.name}". Requested: ${qty}, Available: ${sizeStockQty}.`,
-                                HttpStatus.BAD_REQUEST
-                            );
+                    await queryRunner.commitTransaction();
+                    savedOrderResult = savedOrder;
+                    preparedItemsResult = preparedItems;
+                    break; // Succeeded! Exit retry loop
+                } catch (error: any) {
+                    if (isConnected && queryRunner.isTransactionActive !== false) {
+                        try {
+                            await queryRunner.rollbackTransaction();
+                        } catch (rbErr: any) {
+                            this.logger.error(`[Order Create] Failed to rollback transaction: ${rbErr?.message}`);
                         }
                     }
 
-                    const unitPrice = ProductPricingResolver.resolveUnitPrice({
-                        price: Number(product.price) || 0,
-                        discountType: product.discountType,
-                        discountAmount: Number(product.discountAmount) || 0
-                    }, megaDiscountRecord);
+                    const driverError = error?.driverError || error;
+                    const errno = driverError?.errno || error?.errno;
+                    const code = driverError?.code || error?.code;
+                    const isDeadlock = errno === 1213 || code === 'ER_LOCK_DEADLOCK';
+                    const isLockTimeout = errno === 1205 || code === 'ER_LOCK_WAIT_TIMEOUT';
 
-                    subtotal += unitPrice * qty;
-
-                    preparedItems.push({
-                        product,
-                        quantity: qty,
-                        unitPrice,
-                        selectedSize: selectedSize || undefined
-                    });
-                }
-
-                // Delivery Charge Rule
-                let deliveryCharge = 120;
-                const city = (dto.shippingAddress?.city || '').toLowerCase();
-                if (city.includes('dhaka')) {
-                    deliveryCharge = 60;
-                }
-
-                const uniqueOrderId = await this.uniqueCodeGeneratorService.getUniqueOrderId();
-
-                let discountAmount = 0;
-                let couponId: string | null = null;
-                let couponCode: string | null = null;
-
-                if (dto.couponCode && this.couponService) {
-                    const couponRes = await this.couponService.redeemCouponInTransaction(
-                        queryRunner,
-                        dto.couponCode,
-                        subtotal,
-                        deliveryCharge,
-                        userId,
-                        uniqueOrderId
-                    );
-                    couponId = couponRes.couponId;
-                    couponCode = couponRes.couponCode;
-                    discountAmount = couponRes.discountAmount;
-                }
-
-                const subtotalRounded = Math.round((subtotal + Number.EPSILON) * 100) / 100;
-                const totalAmount = Math.max(0, Math.round((subtotalRounded + deliveryCharge - discountAmount + Number.EPSILON) * 100) / 100);
-
-                // Online payment amount security verification (prevents client price tampering)
-                if (finalPaymentMethod !== 'COD' && finalPaymentIntentId && !finalPaymentIntentId.startsWith('cs_')) {
-                    try {
-                        const stripeClient = this.getStripeClient();
-                        const intent = await stripeClient.paymentIntents.retrieve(finalPaymentIntentId);
-                        if (intent && intent.amount !== undefined && intent.amount !== null) {
-                            const paidCents = Number(intent.amount) || 0;
-                            const expectedCents = Math.round(totalAmount * 100);
-                            if (paidCents < expectedCents - 50) {
-                                throw new HttpException(
-                                    `Payment verification failed: Amount paid ($${(paidCents / 100).toFixed(2)}) is less than required total ($${totalAmount.toFixed(2)}).`,
-                                    HttpStatus.BAD_REQUEST
-                                );
-                            }
-                        }
-                    } catch (err: unknown) {
-                        if (err instanceof HttpException) throw err;
+                    if ((isDeadlock || isLockTimeout) && attempt < MAX_RETRIES) {
+                        this.logger.warn(`[Order Create Concurrency] Contention detected (errno: ${errno}, code: ${code}) on attempt ${attempt}/${MAX_RETRIES}. Retrying with jittered exponential backoff...`);
+                        const jitter = Math.floor(Math.random() * 50) + attempt * 50; // 50ms - 150ms backoff
+                        await new Promise((resolve) => setTimeout(resolve, jitter));
+                        continue;
                     }
-                }
-
-                const nowIso = new Date().toISOString();
-
-                const initialStatusHistory = [
-                    {
-                        status: OrderStatus.PENDING,
-                        timestamp: nowIso,
-                        updatedBy: 'system',
-                        note: couponCode
-                            ? `Order submitted with coupon ${couponCode} (-৳${discountAmount}) - Pending Admin Approval`
-                            : 'Order submitted by customer - Pending Admin Approval'
-                    }
-                ];
-
-                const orderEntity = queryRunner.manager.create(Orders, {
-                    orderId: uniqueOrderId,
-                    userId,
-                    paymentMethod: finalPaymentMethod,
-                    paymentIntentId: finalPaymentIntentId,
-                    totalAmount,
-                    subtotal: subtotalRounded,
-                    deliveryCharge,
-                    couponId,
-                    couponCode,
-                    discountAmount,
-                    megaDiscountApplied: isMegaDiscountApplied,
-                    megaDiscountPercentage: megaDiscountPercentage,
-                    currency: dto.currency || 'BDT',
-                    status: OrderStatus.PENDING,
-                    paymentStatus: finalPaymentStatus,
-                    shippingAddress: dto.shippingAddress || null,
-                    specialNote: dto.specialNote || null,
-                    idempotencyKey: dto.idempotencyKey || null,
-                    statusHistory: initialStatusHistory
-                } as any);
-
-                const savedOrder = await queryRunner.manager.save(orderEntity);
-
-                for (const prepItem of preparedItems) {
-                    const unitCostPrice = Number(prepItem.product.cost) > 0 ? Number(prepItem.product.cost) : 0;
-                    const totalCost = Number((unitCostPrice * prepItem.quantity).toFixed(2));
-                    const costSource = Number(prepItem.product.cost) > 0 ? CostSource.SNAPSHOT : CostSource.UNKNOWN;
-
-                    const summaryEntity = queryRunner.manager.create(OrderSummary, {
-                        orderId: savedOrder.id,
-                        productId: prepItem.product.id,
-                        productName: prepItem.product.name,
-                        productImage: prepItem.product.featuredImage || '',
-                        price: prepItem.unitPrice,
-                        quantity: prepItem.quantity,
-                        unitCostPrice,
-                        totalCost,
-                        costSource,
-                        snapshotMainCategoryId: prepItem.product.mainCategoryId || null,
-                        snapshotFirstCategoryId: prepItem.product.firstCategoryId || null,
-                        snapshotSecondCategoryId: prepItem.product.secondCategoryId || null,
-                        size: prepItem.selectedSize || null,
-                        selectedSize: prepItem.selectedSize || null
-                    } as any);
-                    await queryRunner.manager.save(summaryEntity);
-
-                    // Atomic Stock Deduct inside Transaction
-                    if (prepItem.product.quantity !== null && prepItem.product.quantity !== undefined) {
-                        let updatedSizeStock = prepItem.product.sizeStock;
-                        if (updatedSizeStock && typeof updatedSizeStock === 'object' && prepItem.selectedSize && updatedSizeStock[prepItem.selectedSize] !== undefined) {
-                            const currentSizeQty = Number(updatedSizeStock[prepItem.selectedSize]) || 0;
-                            updatedSizeStock = {
-                                ...updatedSizeStock,
-                                [prepItem.selectedSize]: Math.max(0, currentSizeQty - prepItem.quantity)
-                            };
-                        }
-
-                        const newTotalQty = Math.max(0, (prepItem.product.quantity || 0) - prepItem.quantity);
-
-                        const updateResult = await queryRunner.manager
-                            .createQueryBuilder()
-                            .update(Product)
-                            .set({
-                                quantity: newTotalQty,
-                                sizeStock: updatedSizeStock
-                            })
-                            .where("id = :id AND quantity >= :qty AND (isDeleted = false OR isDeleted IS NULL)", {
-                                id: prepItem.product.id,
-                                qty: prepItem.quantity
-                            })
-                            .execute();
-
-                        if (updateResult.affected === 0) {
-                            throw new HttpException(
-                                `Insufficient stock to fulfill product "${prepItem.product.name}".`,
-                                HttpStatus.BAD_REQUEST
-                            );
+                    throw error;
+                } finally {
+                    if (isConnected && queryRunner.isReleased !== true) {
+                        try {
+                            await queryRunner.release();
+                        } catch (relErr: any) {
+                            this.logger.error(`[Order Create] Failed to release query runner: ${relErr?.message}`);
                         }
                     }
                 }
-
-                if (this.notificationService) {
-                    const customerName = dto.shippingAddress?.name || 'Customer';
-                    await this.notificationService.createAdminOrderNotification(
-                        queryRunner.manager,
-                        {
-                            orderId: savedOrder.id,
-                            orderNumber: savedOrder.orderId,
-                            customerName,
-                            totalAmount: savedOrder.totalAmount,
-                            paymentMethod: finalPaymentMethod
-                        }
-                    );
-                }
-
-                await queryRunner.commitTransaction();
-
-                if (this.socketService) {
-                    try {
-                        this.socketService.emitToRoom(SOCKET_ROOMS.ADMIN_ROOM, SocketEvent.ORDER_CREATED, {
-                            orderId: savedOrder.id,
-                            orderNumber: savedOrder.orderId,
-                            totalAmount: savedOrder.totalAmount,
-                            createdAt: savedOrder.createdAt ? new Date(savedOrder.createdAt).toISOString() : new Date().toISOString()
-                        });
-
-                        for (const prepItem of preparedItems) {
-                            if (prepItem.product?.id) {
-                                this.socketService.emitToRoom(
-                                    SOCKET_ROOMS.PRODUCT(prepItem.product.id),
-                                    SocketEvent.STOCK_UPDATED,
-                                    {
-                                        productId: prepItem.product.id,
-                                        sizeStock: prepItem.product.sizeStock || null,
-                                        totalQuantity: Math.max(0, (prepItem.product.quantity || 0) - prepItem.quantity)
-                                    }
-                                );
-                            }
-                        }
-                    } catch (socketErr) {
-                        // Socket emission failure must not abort successful DB response
-                    }
-                }
-
-                return ResponseUtils.successResponseHandler(201, 'Order created successfully.', 'data', savedOrder);
-            } catch (error) {
-                await queryRunner.rollbackTransaction();
-                throw error;
-            } finally {
-                await queryRunner.release();
             }
+
+            if (!savedOrderResult) {
+                throw new HttpException('Unable to complete order transaction due to repeated concurrency contention.', HttpStatus.CONFLICT);
+            }
+
+            if (this.socketService) {
+                try {
+                    this.socketService.emitToRoom(SOCKET_ROOMS.ADMIN_ROOM, SocketEvent.ORDER_CREATED, {
+                        orderId: savedOrderResult.id,
+                        orderNumber: savedOrderResult.orderId,
+                        totalAmount: savedOrderResult.totalAmount,
+                        createdAt: savedOrderResult.createdAt ? new Date(savedOrderResult.createdAt).toISOString() : new Date().toISOString()
+                    });
+
+                    for (const prepItem of preparedItemsResult) {
+                        if (prepItem.product?.id) {
+                            this.socketService.emitToRoom(
+                                SOCKET_ROOMS.PRODUCT(prepItem.product.id),
+                                SocketEvent.STOCK_UPDATED,
+                                {
+                                    productId: prepItem.product.id,
+                                    sizeStock: prepItem.product.sizeStock || null,
+                                    totalQuantity: prepItem.product.quantity || 0
+                                }
+                            );
+                        }
+                    }
+                } catch (socketErr) {
+                    // Socket emission failure must not abort successful DB response
+                }
+            }
+
+            return ResponseUtils.successResponseHandler(201, 'Order created successfully.', 'data', savedOrderResult);
         } catch (error: unknown) {
             if (error instanceof HttpException) throw error;
+            const driverError = (error as any)?.driverError || error;
+            const errno = driverError?.errno || (error as any)?.errno;
+            const code = driverError?.code || (error as any)?.code;
+            if (errno === 1213 || code === 'ER_LOCK_DEADLOCK' || errno === 1205 || code === 'ER_LOCK_WAIT_TIMEOUT') {
+                throw new HttpException('High concurrency detected on stock reservation. Please try placing your order again in a few moments.', HttpStatus.CONFLICT);
+            }
             const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
             throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
         }
@@ -623,7 +762,8 @@ export class OrdersService {
         try {
             const order = await queryRunner.manager.findOne(Orders, {
                 where: { id },
-                relations: ['orderSummaries']
+                relations: ['orderSummaries'],
+                lock: { mode: 'pessimistic_write' }
             });
 
             if (!order) {
@@ -656,41 +796,52 @@ export class OrdersService {
                 );
             }
 
-            // 3. Stock State Transition (Pessimistic Write Lock)
+            // 3. Stock State Transition (Pessimistic Write Lock in ASC Clustered-PK Order)
             const wasDeducted = DEDUCTED_STATUS_GROUP.has(currentStatus);
             const willBeRestocked = RESTOCKED_STATUS_GROUP.has(targetStatus);
 
             if (wasDeducted && willBeRestocked) {
                 const summaries = order.orderSummaries || [];
+                const restockMap = new Map<string, { totalQty: number; sizeMap: Map<string, number> }>();
+
                 for (const item of summaries) {
                     if (!item.productId) continue;
+                    const pid = String(item.productId);
+                    const qty = Math.max(1, Number(item.quantity) || 1);
+                    const size = (item.size || (item as any).selectedSize || '').trim();
 
+                    if (!restockMap.has(pid)) {
+                        restockMap.set(pid, { totalQty: 0, sizeMap: new Map() });
+                    }
+                    const entry = restockMap.get(pid)!;
+                    entry.totalQty += qty;
+                    if (size) {
+                        entry.sizeMap.set(size, (entry.sizeMap.get(size) || 0) + qty);
+                    }
+                }
+
+                const sortedProductIds = Array.from(restockMap.keys()).sort();
+                for (const pid of sortedProductIds) {
                     const product = await queryRunner.manager.findOne(Product, {
-                        where: { id: item.productId },
+                        where: { id: pid },
                         lock: { mode: 'pessimistic_write' }
                     });
 
                     if (product) {
+                        const req = restockMap.get(pid)!;
                         const currentQty = Number(product.quantity) || 0;
-                        const restockQty = Number(item.quantity) || 1;
                         let updatedSizeStock = product.sizeStock;
 
-                        const selectedSize = (item as any).size || (item as any).selectedSize || '';
-                        if (
-                            updatedSizeStock &&
-                            typeof updatedSizeStock === 'object' &&
-                            selectedSize &&
-                            updatedSizeStock[selectedSize] !== undefined
-                        ) {
-                            const curSizeQty = Number(updatedSizeStock[selectedSize]) || 0;
-                            updatedSizeStock = {
-                                ...updatedSizeStock,
-                                [selectedSize]: curSizeQty + restockQty
-                            };
+                        if (updatedSizeStock && typeof updatedSizeStock === 'object') {
+                            updatedSizeStock = { ...updatedSizeStock };
+                            for (const [sizeName, qtyToReturn] of req.sizeMap.entries()) {
+                                const curSizeQty = Number(updatedSizeStock[sizeName]) || 0;
+                                updatedSizeStock[sizeName] = curSizeQty + qtyToReturn;
+                            }
                         }
 
                         await queryRunner.manager.update(Product, product.id, {
-                            quantity: currentQty + restockQty,
+                            quantity: currentQty + req.totalQty,
                             sizeStock: updatedSizeStock
                         });
                     }
@@ -783,12 +934,24 @@ export class OrdersService {
 
             return ResponseUtils.successResponseHandler(200, 'Order status updated successfully.', 'data', updatedOrder);
         } catch (error: unknown) {
-            await queryRunner.rollbackTransaction();
+            if (queryRunner.isTransactionActive !== false) {
+                try {
+                    await queryRunner.rollbackTransaction();
+                } catch (rbErr: any) {
+                    this.logger.error(`[Order Status Update] Failed to rollback transaction: ${rbErr?.message}`);
+                }
+            }
             if (error instanceof HttpException) throw error;
             const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
             throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
         } finally {
-            await queryRunner.release();
+            if (queryRunner.isReleased !== true) {
+                try {
+                    await queryRunner.release();
+                } catch (relErr: any) {
+                    this.logger.error(`[Order Status Update] Failed to release query runner: ${relErr?.message}`);
+                }
+            }
         }
     }
 
@@ -851,6 +1014,7 @@ export class OrdersService {
             const qb = this.repository.createQueryBuilder('order')
                 .leftJoinAndSelect('order.orderSummaries', 'orderSummaries')
                 .leftJoinAndSelect('order.user', 'user')
+                .leftJoinAndSelect('order.payments', 'payments')
                 .where('order.isDeleted = false');
 
             if (dto.userId) {
@@ -863,6 +1027,27 @@ export class OrdersService {
 
             if (dto.paymentStatus) {
                 qb.andWhere('order.paymentStatus = :paymentStatus', { paymentStatus: dto.paymentStatus });
+            }
+
+            if (dto.paymentMethod) {
+                qb.andWhere('(order.paymentMethod = :paymentMethod OR payments.paymentMethod = :paymentMethod)', {
+                    paymentMethod: dto.paymentMethod
+                });
+            }
+
+            if (dto.trxId) {
+                const cleanTrx = dto.trxId.trim();
+                qb.andWhere('(payments.bankTranId LIKE :cleanTrx OR payments.tranId LIKE :cleanTrx)', {
+                    cleanTrx: `%${cleanTrx}%`
+                });
+            }
+
+            if (dto.search && dto.search.trim()) {
+                const term = `%${dto.search.trim()}%`;
+                qb.andWhere(
+                    '(order.orderId LIKE :term OR payments.bankTranId LIKE :term OR payments.tranId LIKE :term OR JSON_UNQUOTE(JSON_EXTRACT(order.shippingAddress, "$.phone")) LIKE :term OR JSON_UNQUOTE(JSON_EXTRACT(order.shippingAddress, "$.name")) LIKE :term)',
+                    { term }
+                );
             }
 
             if (dto.orderId) {
@@ -1081,7 +1266,7 @@ export class OrdersService {
                     { id: cleanId, isDeleted: false },
                     { orderId: cleanId, isDeleted: false }
                 ],
-                relations: ['orderSummaries', 'user']
+                relations: ['orderSummaries', 'user', 'payments']
             });
             if (!data) {
                 throw new HttpException('Data not found!', HttpStatus.NOT_FOUND);

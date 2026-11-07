@@ -40,8 +40,16 @@ describe('OrdersService', () => {
                 find: jest.fn().mockImplementation((entityClass) => {
                     return Promise.resolve([]);
                 }),
-                findOne: jest.fn().mockImplementation((entityClass, options) => {
-                    return Promise.resolve(null);
+                findOne: jest.fn().mockImplementation(async (entityClass, options) => {
+                    if (entityClass === Product || options?.where?.id) {
+                        const targetId = options?.where?.id;
+                        const products = await queryRunnerMock.manager.find(Product);
+                        if (Array.isArray(products) && products.length > 0) {
+                            const match = products.find((p: any) => p.id === targetId);
+                            if (match) return match;
+                        }
+                    }
+                    return null;
                 }),
                 create: jest.fn((entityClass, data) => data),
                 save: jest.fn((data) => Promise.resolve({ id: 'saved-id-1', ...data })),
@@ -356,5 +364,148 @@ describe('OrdersService', () => {
         );
         expect(result.statusCode).toBe(200);
         expect(queryRunnerMock.commitTransaction).toHaveBeenCalled();
+    });
+
+    it('TEST 13: Order-First Stripe flow creates order in PENDING status without calling Stripe API upfront', async () => {
+        const product = {
+            id: 'product-order-first',
+            name: 'Order-First Item',
+            price: 1500,
+            quantity: 10,
+            discountType: 'NONE',
+            discountAmount: 0,
+            vendorId: 'vendor-1'
+        };
+
+        queryRunnerMock.manager.find.mockResolvedValue([product]);
+
+        const dto = {
+            paymentMethod: 'Online',
+            paymentIntentId: 'PENDING_STRIPE',
+            items: [{ productId: 'product-order-first', quantity: 1 }],
+            shippingAddress: { city: 'Dhaka', name: 'Zaman', phone: '01900000000', address: 'Dhanmondi' }
+        };
+
+        const result = await service.create(dto as any, 'user-1');
+        const data = result.data as any;
+
+        expect(result.statusCode).toBe(201);
+        expect(data.paymentMethod).toBe('Online');
+        expect(data.paymentStatus).toBe(PaymentStatus.PENDING);
+        expect(data.paymentIntentId).toBeNull();
+        expect((service as any).stripe.paymentIntents.retrieve).not.toHaveBeenCalled();
+        expect(queryRunnerMock.commitTransaction).toHaveBeenCalled();
+    });
+
+    it('TEST 14: Deadlock ER_LOCK_DEADLOCK triggers exponential backoff retry and succeeds on next attempt', async () => {
+        const product = {
+            id: 'product-deadlock',
+            name: 'Deadlock Test Item',
+            price: 800,
+            quantity: 5,
+            discountType: 'NONE',
+            discountAmount: 0
+        };
+
+        let attemptsMade = 0;
+        queryRunnerMock.manager.findOne.mockImplementation(async (entityClass: any, options: any) => {
+            if (entityClass === Product || options?.where?.id === 'product-deadlock') {
+                attemptsMade++;
+                if (attemptsMade === 1) {
+                    const deadlockErr: any = new Error('Deadlock found when trying to get lock; try restarting transaction');
+                    deadlockErr.errno = 1213;
+                    deadlockErr.code = 'ER_LOCK_DEADLOCK';
+                    throw deadlockErr;
+                }
+                return product;
+            }
+            return null;
+        });
+
+        const dto = {
+            paymentMethod: 'COD',
+            items: [{ productId: 'product-deadlock', quantity: 1 }],
+            shippingAddress: { city: 'Dhaka', name: 'Customer', phone: '01700000000', address: 'Gulshan' }
+        };
+
+        const result = await service.create(dto as any, 'user-1');
+
+        expect(result.statusCode).toBe(201);
+        expect(attemptsMade).toBeGreaterThanOrEqual(2);
+        expect(queryRunnerMock.rollbackTransaction).toHaveBeenCalledTimes(1);
+        expect(queryRunnerMock.commitTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('TEST 15: Lock wait timeout ER_LOCK_WAIT_TIMEOUT exhausts all 3 retries and throws 409 Conflict', async () => {
+        let attemptsMade = 0;
+        queryRunnerMock.manager.findOne.mockImplementation(async () => {
+            attemptsMade++;
+            const timeoutErr: any = new Error('Lock wait timeout exceeded; try restarting transaction');
+            timeoutErr.errno = 1205;
+            timeoutErr.code = 'ER_LOCK_WAIT_TIMEOUT';
+            throw timeoutErr;
+        });
+
+        const dto = {
+            paymentMethod: 'COD',
+            items: [{ productId: 'product-timeout', quantity: 1 }]
+        };
+
+        await expect(service.create(dto as any, 'user-1')).rejects.toThrow(
+            'High concurrency detected on stock reservation. Please try placing your order again in a few moments.'
+        );
+        expect(attemptsMade).toBe(3);
+        expect(queryRunnerMock.rollbackTransaction).toHaveBeenCalledTimes(3);
+    });
+
+    it('TEST 16: Order cancellation with multiple items of same product aggregates total and sizeStock restock in strict ASC order', async () => {
+        const existingOrder = {
+            id: 'order-multi',
+            status: OrderStatus.PENDING,
+            statusHistory: [],
+            orderSummaries: [
+                { productId: 'prod-z', quantity: 2, size: 'M' },
+                { productId: 'prod-a', quantity: 1, size: 'L' },
+                { productId: 'prod-z', quantity: 3, size: 'XL' }
+            ]
+        };
+
+        const prodA = { id: 'prod-a', quantity: 10, sizeStock: { L: 5 } };
+        const prodZ = { id: 'prod-z', quantity: 20, sizeStock: { M: 4, XL: 2 } };
+
+        const lockedOrderList: string[] = [];
+        queryRunnerMock.manager.findOne.mockImplementation((entityClass: any, options: any) => {
+            if (options?.where?.id === 'order-multi') return Promise.resolve(existingOrder);
+            if (options?.where?.id === 'prod-a') {
+                lockedOrderList.push('prod-a');
+                return Promise.resolve(prodA);
+            }
+            if (options?.where?.id === 'prod-z') {
+                lockedOrderList.push('prod-z');
+                return Promise.resolve(prodZ);
+            }
+            return Promise.resolve(null);
+        });
+
+        const result = await service.updateOrderStatus('order-multi', {
+            newStatus: OrderStatus.CANCELLED,
+            note: 'Multi-item cancellation'
+        });
+
+        expect(result.statusCode).toBe(200);
+        // Strict ASC Clustered PK ordering: 'prod-a' must be locked before 'prod-z'
+        expect(lockedOrderList).toEqual(['prod-a', 'prod-z']);
+        // prod-a restock: 10 + 1 = 11, sizeStock.L = 5 + 1 = 6
+        expect(queryRunnerMock.manager.update).toHaveBeenCalledWith(
+            Product,
+            'prod-a',
+            { quantity: 11, sizeStock: { L: 6 } }
+        );
+        // prod-z aggregated restock: 20 + 2 (M) + 3 (XL) = 25, sizeStock: M: 4+2=6, XL: 2+3=5
+        expect(queryRunnerMock.manager.update).toHaveBeenCalledWith(
+            Product,
+            'prod-z',
+            { quantity: 25, sizeStock: { M: 6, XL: 5 } }
+        );
     });
 });

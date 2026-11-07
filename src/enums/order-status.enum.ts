@@ -19,5 +19,8 @@ export enum PaymentStatus {
     PENDING = 'Pending',
     PAID = 'Paid',
     UNPAID = 'Unpaid',
-    FAILED = 'Failed'
+    FAILED = 'Failed',
+    REVIEW_REQUIRED = 'Review Required',
+    PARTIALLY_REFUNDED = 'Partially Refunded',
+    REFUNDED = 'Refunded'
 }

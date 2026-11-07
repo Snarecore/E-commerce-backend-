@@ -3,6 +3,7 @@ import { Column, Entity, Index, JoinColumn, ManyToOne, OneToMany } from 'typeorm
 import { OrderStatus, PaymentStatus } from '../../../enums/order-status.enum';
 import { OrderSummary } from '../../order-summary/entity/order-summary.entity';
 import { User } from '../../user/entities/user.entity';
+import { Payments } from '../../payments/entities/payment.entity';
 
 @Entity('orders')
 @Index('IDX_orders_orderId', ['orderId'])
@@ -98,6 +99,18 @@ export class Orders extends AbstractEntity {
         default: PaymentStatus.PENDING
     })
     paymentStatus: PaymentStatus;
+
+    @Column({ type: 'varchar', length: 64, nullable: true })
+    customerIntentFingerprint: string | null;
+
+    @Column({ type: 'json', nullable: true })
+    authoritativeSnapshot: Record<string, any> | null;
+
+    @Column({ type: 'timestamp', nullable: true })
+    orderPaymentExpiresAt: Date | null;
+
+    @OneToMany(() => Payments, (payment) => payment.order)
+    payments: Payments[];
 
     @OneToMany(() => OrderSummary, summary => summary.order)
     orderSummaries: OrderSummary[];

@@ -1,11 +1,13 @@
 import {
     IsArray,
     IsEnum,
+    IsInt,
     IsNotEmpty,
     IsNumber,
     IsObject,
     IsOptional,
     IsString,
+    Min,
     ValidateNested
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -37,7 +39,8 @@ export class OrderItemDto {
     price?: number;
 
     @IsNotEmpty()
-    @IsNumber()
+    @IsInt()
+    @Min(1)
     quantity: number;
 
     @IsOptional()

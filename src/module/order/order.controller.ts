@@ -141,8 +141,9 @@ export class OrdersController {
 		return await this.service.findOne(id, req?.user);
 	}
 
-	@Public()
 	@Delete(':id')
+	@UseGuards(JwtAuthGuard, RolesGuard)
+	@Roles(Role.ADMIN)
 	async remove(@Param('id') id: string): Promise<ApiResponse<boolean>> {
 		return await this.service.remove(id);
 	}

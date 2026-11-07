@@ -17,4 +17,13 @@ export class OrdersFilterDto extends FilterDto {
 
     @IsOptional()
     paymentStatus?: PaymentStatus;
+
+    @IsOptional()
+    search?: string;
+
+    @IsOptional()
+    trxId?: string;
+
+    @IsOptional()
+    paymentMethod?: string;
 }
