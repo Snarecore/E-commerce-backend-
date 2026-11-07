@@ -33,6 +33,7 @@ import { SslcommerzService } from './services/sslcommerz.service';
 import { PaymentConfirmationService } from './services/payment-confirmation.service';
 import { PaymentOutboxService } from './services/payment-outbox.service';
 import { CurrencyUtils } from '../../utils/currency.utils';
+import { GatewaySanitizer } from './utils/gateway-sanitizer.util';
 import { randomUUID } from 'crypto';
 
 @Injectable()
@@ -1747,27 +1748,11 @@ export class PaymentsService {
     }
 
     /**
-     * Sanitizes gateway metadata before recording to PaymentAuditLogs (strips card/secret data).
+     * Sanitizes gateway metadata before recording to PaymentAuditLogs.
+     * Delegates to GatewaySanitizer with active-path cycle protection and Luhn validation.
      */
     private sanitizeGatewayMetadata(raw: any): Record<string, any> {
-        if (!raw || typeof raw !== 'object') return {};
-        const sanitized: Record<string, any> = {};
-        const sensitiveKeys = [
-            'card_number', 'card_no', 'cvv', 'cvc', 'client_secret', 'secret',
-            'token', 'access_token', 'password', 'pin', 'sessionkey', 'SessionKey',
-            'bank_gw', 'gw_version'
-        ];
-        for (const [key, val] of Object.entries(raw)) {
-            if (sensitiveKeys.some(s => key.toLowerCase().includes(s))) {
-                continue;
-            }
-            if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
-                sanitized[key] = this.sanitizeGatewayMetadata(val);
-            } else {
-                sanitized[key] = val;
-            }
-        }
-        return sanitized;
+        return GatewaySanitizer.sanitizeDefensive(raw) || {};
     }
 
     /**
@@ -1844,7 +1829,7 @@ export class PaymentsService {
                         previousState: payment.status,
                         newState: PaymentAttemptStatus.CANCELLED,
                         reason: 'Gateway confirmed payment is canceled',
-                        metadata: this.sanitizeGatewayMetadata(intent)
+                        metadata: GatewaySanitizer.extractStripeAuditMetadata(intent)
                     });
                     await auditRepo.save(auditLog);
 
@@ -1991,8 +1976,11 @@ export class PaymentsService {
                 }
             );
 
-            // Audit Log with Sanitized Gateway Metadata
-            const sanitizedMeta = this.sanitizeGatewayMetadata(gatewayRawResponse);
+            // Audit Log with Gateway-Specific Allowlisted Metadata
+            const safeGatewayMetadata = payment.gateway === PaymentGateway.STRIPE
+                ? GatewaySanitizer.extractStripeAuditMetadata(gatewayRawResponse)
+                : GatewaySanitizer.extractSslcommerzAuditMetadata(gatewayRawResponse);
+
             const auditLog = queryRunner.manager.create(PaymentAuditLogs, {
                 paymentId: lockedPayment.id,
                 action: 'ADMIN_VERIFIED_RECONCILIATION',
@@ -2004,7 +1992,7 @@ export class PaymentsService {
                 metadata: {
                     tranId: lockedPayment.tranId,
                     gateway: payment.gateway,
-                    gatewayMetadata: sanitizedMeta
+                    gatewayMetadata: safeGatewayMetadata
                 }
             });
             await queryRunner.manager.save(auditLog);
