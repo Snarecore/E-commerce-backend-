@@ -16,6 +16,7 @@ import { PaymentOutboxEvents } from './entities/payment-outbox-event.entity';
 import { PaymentOutboxDeliveryAttempt } from './entities/payment-outbox-delivery-attempt.entity';
 import { PaymentWebhookInboxService } from './services/payment-webhook-inbox.service';
 import { PaymentOutboxService } from './services/payment-outbox.service';
+import { EmailServiceModule } from '../email-service/email-sender.module';
 
 @Module({
     imports: [
@@ -29,7 +30,8 @@ import { PaymentOutboxService } from './services/payment-outbox.service';
             PaymentOutboxEvents,
             PaymentOutboxDeliveryAttempt
         ]),
-        ConfigModule
+        ConfigModule,
+        EmailServiceModule
     ],
     controllers: [PaymentsController],
     providers: [

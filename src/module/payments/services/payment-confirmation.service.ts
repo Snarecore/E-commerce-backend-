@@ -1,4 +1,4 @@
-import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, NotFoundException, Optional } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { Orders } from '../../order/entity/order.entity';
 import { Payments } from '../entities/payment.entity';
@@ -13,6 +13,7 @@ import { PaymentStateMachine } from '../utils/payment-state-machine';
 import { PaymentOutboxService } from './payment-outbox.service';
 import { Product } from '../../inventory/product/entities/product.entity';
 import { OrderSummary } from '../../order-summary/entity/order-summary.entity';
+import { EmailService } from '../../email-service/email-sender.service';
 
 @Injectable()
 export class PaymentConfirmationService {
@@ -20,7 +21,8 @@ export class PaymentConfirmationService {
 
     constructor(
         private readonly dataSource: DataSource,
-        private readonly sslcommerzService: SslcommerzService
+        private readonly sslcommerzService: SslcommerzService,
+        @Optional() private readonly emailService?: EmailService
     ) {}
 
     /**
@@ -488,6 +490,42 @@ export class PaymentConfirmationService {
 
             await queryRunner.commitTransaction();
             this.logger.log(`[Payment Confirmation] Successfully confirmed payment for tranId: ${tranId}, Order: ${lockedOrder.orderId}`);
+
+            // Asynchronous, Non-blocking Order Status & Payment Confirmation Email Dispatch
+            if (this.emailService) {
+                try {
+                    const recipientEmail =
+                        lockedOrder.shippingAddress?.email ||
+                        (lockedOrder as any).customerEmail ||
+                        (lockedOrder as any).email ||
+                        lockedOrder.user?.email;
+
+                    if (recipientEmail && typeof recipientEmail === 'string' && recipientEmail.includes('@')) {
+                        const customerName =
+                            lockedOrder.shippingAddress?.name ||
+                            lockedOrder.user?.name ||
+                            'Valued Customer';
+
+                        const frontendUrl = process.env.FRONTEND_PUBLIC_URL || 'http://localhost:3000';
+
+                        this.emailService.sendOrderStatusUpdateEmail({
+                            to: recipientEmail.trim(),
+                            orderId: lockedOrder.orderId || lockedOrder.id,
+                            customerName,
+                            status: OrderStatus.ORDER_PLACED,
+                            totalAmount: lockedOrder.totalAmount,
+                            paymentMethod: lockedPayment.paymentMethod || 'Online Payment',
+                            note: `Payment confirmed via ${lockedPayment.paymentMethod || 'SSLCommerz'} (Tran ID: ${tranId}). Your order is now officially confirmed and sent to fulfillment.`,
+                            shippingAddress: lockedOrder.shippingAddress,
+                            viewOrderUrl: `${frontendUrl}/order-confirmation/${lockedOrder.orderId || lockedOrder.id}`
+                        }).catch((emailErr) => {
+                            this.logger.warn(`[Payment Confirmation] Failed to dispatch payment receipt email: ${emailErr?.message}`);
+                        });
+                    }
+                } catch (emailPrepErr: any) {
+                    this.logger.warn(`[Payment Confirmation] Error preparing email dispatch: ${emailPrepErr?.message}`);
+                }
+            }
 
             return {
                 success: true,
