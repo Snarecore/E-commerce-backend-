@@ -83,6 +83,10 @@ export class ShippingAddressDto {
     @IsOptional()
     @IsString()
     city?: string;
+
+    @IsOptional()
+    @IsString()
+    email?: string;
 }
 
 export class CreateOrdersDto {
@@ -129,6 +133,14 @@ export class CreateOrdersDto {
     @IsOptional()
     @IsString()
     address?: string;
+
+    @IsOptional()
+    @IsString()
+    email?: string;
+
+    @IsOptional()
+    @IsString()
+    customerEmail?: string;
 
     @IsOptional()
     @IsArray()

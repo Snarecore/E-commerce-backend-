@@ -15,6 +15,7 @@ import { SocketModule } from '../socket/socket.module';
 import { RiskModule } from '../risk/risk.module';
 import { OrderExpiryWorker } from './order-expiry.worker';
 import { PaymentsModule } from '../payments/payments.module';
+import { EmailServiceModule } from '../email-service/email-sender.module';
 
 @Module({
 	imports: [
@@ -24,7 +25,8 @@ import { PaymentsModule } from '../payments/payments.module';
 		MegaDiscountModule,
 		SocketModule,
 		RiskModule,
-		PaymentsModule
+		PaymentsModule,
+		EmailServiceModule
 	],
 	controllers: [OrdersController],
 	providers: [

@@ -72,6 +72,7 @@ import {
     BlacklistSubjectTypeEnum,
     BlacklistSeverityEnum
 } from '../risk/entity/blacklist.entity';
+import { EmailService } from '../email-service/email-sender.service';
 
 @Injectable()
 export class OrdersService {
@@ -90,7 +91,8 @@ export class OrdersService {
         @Optional() private readonly megaDiscountRepository?: MegaDiscountRepository,
         @Optional() private readonly auditLogService?: AuditLogService,
         @Optional() private readonly socketService?: SocketService,
-        @Optional() private readonly blacklistService?: BlacklistService
+        @Optional() private readonly blacklistService?: BlacklistService,
+        @Optional() private readonly emailService?: EmailService
     ) {}
 
     private getStripeClient(): Stripe {
@@ -565,6 +567,15 @@ export class OrdersService {
                         }
                     ];
 
+                    const consolidatedShippingAddress = {
+                        ...(dto.shippingAddress || {}),
+                        name: dto.shippingAddress?.name || dto.name || '',
+                        phone: dto.shippingAddress?.phone || dto.phone || '',
+                        address: dto.shippingAddress?.address || dto.address || '',
+                        city: dto.shippingAddress?.city || '',
+                        email: dto.shippingAddress?.email || dto.email || dto.customerEmail || ''
+                    };
+
                     const orderEntity = queryRunner.manager.create(Orders, {
                         orderId: uniqueOrderId,
                         userId,
@@ -581,7 +592,7 @@ export class OrdersService {
                         currency: dto.currency || 'BDT',
                         status: OrderStatus.PENDING,
                         paymentStatus: finalPaymentStatus,
-                        shippingAddress: dto.shippingAddress || null,
+                        shippingAddress: consolidatedShippingAddress,
                         specialNote: dto.specialNote || null,
                         idempotencyKey: dto.idempotencyKey || null,
                         customerIntentFingerprint: intentFingerprint,
@@ -736,6 +747,58 @@ export class OrdersService {
                 }
             }
 
+            // Asynchronous, Non-blocking Order Confirmation Email Dispatch
+            if (this.emailService) {
+                try {
+                    const recipientEmail =
+                        savedOrderResult.shippingAddress?.email ||
+                        dto.email ||
+                        (dto as any).customerEmail ||
+                        (savedOrderResult.user as any)?.email;
+
+                    if (recipientEmail && typeof recipientEmail === 'string' && recipientEmail.includes('@')) {
+                        const customerName =
+                            savedOrderResult.shippingAddress?.name ||
+                            dto.name ||
+                            (savedOrderResult.user as any)?.name ||
+                            'Valued Customer';
+
+                        const frontendUrl =
+                            this.configService?.get<string>('FRONTEND_PUBLIC_URL') ||
+                            process.env.FRONTEND_PUBLIC_URL ||
+                            'http://localhost:3000';
+
+                        const emailItems = (preparedItemsResult || []).map((p: any) => ({
+                            name: p.product?.name || 'Fashion Item',
+                            quantity: p.quantity || 1,
+                            price: p.unitPrice || 0,
+                            size: p.selectedSize || undefined,
+                            productImage: p.product?.featuredImage || ''
+                        }));
+
+                        this.emailService.sendOrderConfirmationEmail({
+                            to: recipientEmail.trim(),
+                            orderId: savedOrderResult.orderId || savedOrderResult.id,
+                            customerName,
+                            totalAmount: savedOrderResult.totalAmount,
+                            subtotal: savedOrderResult.subtotal,
+                            deliveryCharge: savedOrderResult.deliveryCharge,
+                            discountAmount: savedOrderResult.discountAmount,
+                            paymentMethod: savedOrderResult.paymentMethod || 'COD',
+                            paymentStatus: savedOrderResult.paymentStatus || 'Pending',
+                            shippingAddress: savedOrderResult.shippingAddress,
+                            items: emailItems,
+                            createdAt: savedOrderResult.createdAt ? new Date(savedOrderResult.createdAt).toLocaleDateString('en-US', { dateStyle: 'medium' }) : undefined,
+                            viewOrderUrl: `${frontendUrl}/order-confirmation/${savedOrderResult.orderId || savedOrderResult.id}`
+                        }).catch((emailErr) => {
+                            this.logger.warn(`[Order Create] Failed to send order confirmation email: ${emailErr?.message}`);
+                        });
+                    }
+                } catch (emailPrepErr: any) {
+                    this.logger.warn(`[Order Create] Error preparing order confirmation email: ${emailPrepErr?.message}`);
+                }
+            }
+
             return ResponseUtils.successResponseHandler(201, 'Order created successfully.', 'data', savedOrderResult);
         } catch (error: unknown) {
             if (error instanceof HttpException) throw error;
@@ -762,7 +825,7 @@ export class OrdersService {
         try {
             const order = await queryRunner.manager.findOne(Orders, {
                 where: { id },
-                relations: ['orderSummaries'],
+                relations: ['orderSummaries', 'user'],
                 lock: { mode: 'pessimistic_write' }
             });
 
@@ -932,6 +995,49 @@ export class OrdersService {
                 );
             }
 
+            // Asynchronous, Non-blocking Order Status Update Email Dispatch
+            if (this.emailService) {
+                try {
+                    const recipientEmail =
+                        updatedOrder.shippingAddress?.email ||
+                        (updatedOrder as any).customerEmail ||
+                        (updatedOrder as any).email ||
+                        updatedOrder.user?.email;
+
+                    if (recipientEmail && typeof recipientEmail === 'string' && recipientEmail.includes('@')) {
+                        const customerName =
+                            updatedOrder.shippingAddress?.name ||
+                            updatedOrder.user?.name ||
+                            'Valued Customer';
+
+                        const frontendUrl =
+                            this.configService?.get<string>('FRONTEND_PUBLIC_URL') ||
+                            process.env.FRONTEND_PUBLIC_URL ||
+                            'http://localhost:3000';
+
+                        this.emailService.sendOrderStatusUpdateEmail({
+                            to: recipientEmail.trim(),
+                            orderId: updatedOrder.orderId || updatedOrder.id,
+                            customerName,
+                            status: targetStatus,
+                            previousStatus: currentStatus,
+                            totalAmount: updatedOrder.totalAmount,
+                            paymentMethod: updatedOrder.paymentMethod,
+                            note: historyNote,
+                            courierName: updatedOrder.courierName,
+                            trackingId: updatedOrder.trackingId,
+                            courierTrackingLink: updatedOrder.courierTrackingLink,
+                            shippingAddress: updatedOrder.shippingAddress,
+                            viewOrderUrl: `${frontendUrl}/customer-dashboard?tab=order`
+                        }).catch((emailErr) => {
+                            this.logger.warn(`[Order Status Update] Failed to send status update email: ${emailErr?.message}`);
+                        });
+                    }
+                } catch (statusEmailPrepErr: any) {
+                    this.logger.warn(`[Order Status Update] Error preparing status update email: ${statusEmailPrepErr?.message}`);
+                }
+            }
+
             return ResponseUtils.successResponseHandler(200, 'Order status updated successfully.', 'data', updatedOrder);
         } catch (error: unknown) {
             if (queryRunner.isTransactionActive !== false) {
@@ -993,6 +1099,48 @@ export class OrdersService {
                     updatedOrder.status || 'Shipped',
                     `Courier updated: ${dto.courierName} (Tracking ID: ${dto.trackingId})`
                 );
+            }
+
+            // Asynchronous, Non-blocking Courier Update Email Dispatch
+            if (this.emailService) {
+                try {
+                    const recipientEmail =
+                        updatedOrder.shippingAddress?.email ||
+                        (updatedOrder as any).customerEmail ||
+                        (updatedOrder as any).email ||
+                        updatedOrder.user?.email;
+
+                    if (recipientEmail && typeof recipientEmail === 'string' && recipientEmail.includes('@')) {
+                        const customerName =
+                            updatedOrder.shippingAddress?.name ||
+                            updatedOrder.user?.name ||
+                            'Valued Customer';
+
+                        const frontendUrl =
+                            this.configService?.get<string>('FRONTEND_PUBLIC_URL') ||
+                            process.env.FRONTEND_PUBLIC_URL ||
+                            'http://localhost:3000';
+
+                        this.emailService.sendOrderStatusUpdateEmail({
+                            to: recipientEmail.trim(),
+                            orderId: updatedOrder.orderId || updatedOrder.id,
+                            customerName,
+                            status: updatedOrder.status || 'Shipped',
+                            totalAmount: updatedOrder.totalAmount,
+                            paymentMethod: updatedOrder.paymentMethod,
+                            note: `Shipment Tracking Updated: Courier ${dto.courierName} (Tracking ID: ${dto.trackingId})`,
+                            courierName: dto.courierName,
+                            trackingId: dto.trackingId,
+                            courierTrackingLink: dto.courierTrackingLink,
+                            shippingAddress: updatedOrder.shippingAddress,
+                            viewOrderUrl: `${frontendUrl}/customer-dashboard?tab=order`
+                        }).catch((emailErr) => {
+                            this.logger.warn(`[Courier Update] Failed to send courier update email: ${emailErr?.message}`);
+                        });
+                    }
+                } catch (courierEmailPrepErr: any) {
+                    this.logger.warn(`[Courier Update] Error preparing courier update email: ${courierEmailPrepErr?.message}`);
+                }
             }
 
             return ResponseUtils.successResponseHandler(200, 'Courier information updated successfully.', 'data', updatedOrder);

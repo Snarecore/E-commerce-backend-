@@ -508,4 +508,124 @@ describe('OrdersService', () => {
             { quantity: 25, sizeStock: { M: 6, XL: 5 } }
         );
     });
+
+    it('TEST 17: Order creation dispatches order confirmation email when email is provided', async () => {
+        const mockProduct = {
+            id: 'prod-email',
+            name: 'Email Test Product',
+            price: 1500,
+            quantity: 10,
+            featuredImage: 'https://example.com/item.jpg'
+        };
+
+        queryRunnerMock.manager.findOne.mockImplementation((entityClass: any, options: any) => {
+            if (options?.where?.id === 'prod-email') return Promise.resolve(mockProduct);
+            return Promise.resolve(null);
+        });
+
+        const sendOrderConfirmationEmailMock = jest.fn().mockResolvedValue({ success: true, message: 'Sent' });
+        (service as any).emailService = {
+            sendOrderConfirmationEmail: sendOrderConfirmationEmailMock,
+            sendOrderStatusUpdateEmail: jest.fn()
+        };
+
+        const result = await service.create({
+            paymentMethod: 'COD',
+            items: [{ productId: 'prod-email', quantity: 1 }],
+            shippingAddress: {
+                name: 'Majba Customer',
+                phone: '01812345678',
+                email: 'customer@test.com',
+                address: 'Dhanmondi',
+                city: 'Dhaka'
+            }
+        } as any, 'user-123');
+
+        expect(result.statusCode).toBe(201);
+        expect(sendOrderConfirmationEmailMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+                to: 'customer@test.com',
+                customerName: 'Majba Customer',
+                orderId: 'BB123456',
+                paymentMethod: 'COD'
+            })
+        );
+    });
+
+    it('TEST 18: Order status update dispatches status update email when customer email is present', async () => {
+        const existingOrder: any = {
+            id: 'order-status-test',
+            orderId: 'BB998877',
+            status: OrderStatus.PENDING,
+            totalAmount: 1800,
+            paymentMethod: 'COD',
+            shippingAddress: {
+                name: 'Majba Customer',
+                email: 'customer@test.com',
+                address: 'Gulshan',
+                city: 'Dhaka'
+            },
+            statusHistory: []
+        };
+
+        queryRunnerMock.manager.findOne.mockImplementation((entityClass: any, options: any) => {
+            if (options?.where?.id === 'order-status-test') return Promise.resolve(existingOrder);
+            return Promise.resolve(null);
+        });
+
+        const sendOrderStatusUpdateEmailMock = jest.fn().mockResolvedValue({ success: true, message: 'Sent' });
+        (service as any).emailService = {
+            sendOrderConfirmationEmail: jest.fn(),
+            sendOrderStatusUpdateEmail: sendOrderStatusUpdateEmailMock
+        };
+
+        const result = await service.updateOrderStatus('order-status-test', {
+            newStatus: OrderStatus.ORDER_PLACED,
+            note: 'Approved by admin'
+        });
+
+        expect(result.statusCode).toBe(200);
+        expect(sendOrderStatusUpdateEmailMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+                to: 'customer@test.com',
+                orderId: 'BB998877',
+                status: OrderStatus.ORDER_PLACED
+            })
+        );
+    });
+
+    it('TEST 19: Email dispatch failure is non-blocking and does not fail order creation', async () => {
+        const mockProduct = {
+            id: 'prod-email-resilient',
+            name: 'Resilience Test Product',
+            price: 1200,
+            quantity: 5
+        };
+
+        queryRunnerMock.manager.findOne.mockImplementation((entityClass: any, options: any) => {
+            if (options?.where?.id === 'prod-email-resilient') return Promise.resolve(mockProduct);
+            return Promise.resolve(null);
+        });
+
+        // Simulating SMTP failure (e.g. ECONNREFUSED or network timeout)
+        const sendOrderConfirmationEmailMock = jest.fn().mockRejectedValue(new Error('SMTP Connection Timed Out'));
+        (service as any).emailService = {
+            sendOrderConfirmationEmail: sendOrderConfirmationEmailMock,
+            sendOrderStatusUpdateEmail: jest.fn()
+        };
+
+        const result = await service.create({
+            paymentMethod: 'COD',
+            items: [{ productId: 'prod-email-resilient', quantity: 1 }],
+            shippingAddress: {
+                name: 'Resilient Customer',
+                email: 'error-prone@test.com',
+                phone: '01700000000'
+            }
+        } as any, 'user-resilient');
+
+        // Order transaction must still succeed with 201 Created
+        expect(result.statusCode).toBe(201);
+        expect(sendOrderConfirmationEmailMock).toHaveBeenCalled();
+    });
 });
