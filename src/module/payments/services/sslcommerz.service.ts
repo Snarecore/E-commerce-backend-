@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { SslcommerzConfig } from '../../../configs/sslcommerz.config';
 import axios from 'axios';
 
 export interface SslcommerzInitParams {
@@ -16,6 +17,10 @@ export interface SslcommerzInitParams {
     failUrl: string;
     cancelUrl: string;
     ipnUrl: string;
+    valueA?: string;
+    valueB?: string;
+    valueC?: string;
+    valueD?: string;
 }
 
 export interface SslcommerzValidationResponse {
@@ -89,28 +94,38 @@ export class SslcommerzService {
     private readonly queryUrl: string;
 
     constructor(private readonly configService: ConfigService) {
-        this.storeId =
-            this.configService.get<string>('SSLCOMMERZ_STORE_ID') ||
-            process.env.SSLCOMMERZ_STORE_ID ||
-            'testbox';
-        this.storePassword =
-            this.configService.get<string>('SSLCOMMERZ_STORE_PASSWORD') ||
-            process.env.SSLCOMMERZ_STORE_PASSWORD ||
-            'qwerty';
-        this.isLive =
-            (this.configService.get<string>('SSLCOMMERZ_IS_LIVE') || process.env.SSLCOMMERZ_IS_LIVE) === 'true';
-
-        if (this.isLive) {
-            this.sessionUrl = 'https://securepay.sslcommerz.com/gwprocess/v4/api.php';
-            this.validationUrl = 'https://securepay.sslcommerz.com/validator/api/validationserverAPI.php';
-            this.queryUrl = 'https://securepay.sslcommerz.com/validator/api/merchantTransIDvalidationAPI.php';
-        } else {
-            this.sessionUrl = 'https://sandbox.sslcommerz.com/gwprocess/v4/api.php';
-            this.validationUrl = 'https://sandbox.sslcommerz.com/validator/api/validationserverAPI.php';
-            this.queryUrl = 'https://sandbox.sslcommerz.com/validator/api/merchantTransIDvalidationAPI.php';
+        let cfg = this.configService.get<SslcommerzConfig>('sslcommerz');
+        if (!cfg || typeof cfg !== 'object' || !cfg.storeId) {
+            const rawStoreId = this.configService.get<string>('SSLCOMMERZ_STORE_ID') || process.env.SSLCOMMERZ_STORE_ID;
+            const rawPassword = this.configService.get<string>('SSLCOMMERZ_STORE_PASSWORD') || process.env.SSLCOMMERZ_STORE_PASSWORD;
+            if (rawStoreId && rawPassword) {
+                const rawIsLive = this.configService.get<any>('SSLCOMMERZ_IS_LIVE') ?? process.env.SSLCOMMERZ_IS_LIVE;
+                const isLive = String(rawIsLive).trim().toLowerCase() === 'true';
+                cfg = {
+                    storeId: rawStoreId,
+                    storePassword: rawPassword,
+                    isLive,
+                    sessionUrl: isLive ? 'https://securepay.sslcommerz.com/gwprocess/v4/api.php' : 'https://sandbox.sslcommerz.com/gwprocess/v4/api.php',
+                    validationUrl: isLive ? 'https://securepay.sslcommerz.com/validator/api/validationserverAPI.php' : 'https://sandbox.sslcommerz.com/validator/api/validationserverAPI.php',
+                    queryUrl: isLive ? 'https://securepay.sslcommerz.com/validator/api/merchantTransIDvalidationAPI.php' : 'https://sandbox.sslcommerz.com/validator/api/merchantTransIDvalidationAPI.php',
+                };
+            }
         }
 
-        this.logger.log(`SSLCommerz initialized in [${this.isLive ? 'LIVE' : 'SANDBOX'}] mode with storeId: "${this.storeId}"`);
+        if (!cfg || !cfg.storeId) {
+            throw new Error('[FATAL CONFIG] SslcommerzConfig is missing from ConfigModule.');
+        }
+
+        this.storeId = cfg.storeId;
+        this.storePassword = cfg.storePassword;
+        this.isLive = cfg.isLive;
+        this.sessionUrl = cfg.sessionUrl;
+        this.validationUrl = cfg.validationUrl;
+        this.queryUrl = cfg.queryUrl;
+
+        // 🔒 Credentials Sanitization (Never log secrets or full credentials)
+        const maskedStore = (this.storeId && this.storeId.length > 4) ? `${this.storeId.slice(0, 3)}****` : '****';
+        this.logger.log(`SSLCommerz initialized in [${this.isLive ? 'LIVE' : 'SANDBOX'}] mode for store: "${maskedStore}"`);
     }
 
     getStoreId(): string {
@@ -154,6 +169,12 @@ export class SslcommerzService {
         formData.append('product_name', `Order-${params.orderId}`);
         formData.append('product_category', 'Fashion');
         formData.append('product_profile', 'general');
+
+        // Custom pass-through parameters (returned by SSLCommerz upon callback)
+        if (params.valueA) formData.append('value_a', params.valueA);
+        if (params.valueB) formData.append('value_b', params.valueB);
+        if (params.valueC) formData.append('value_c', params.valueC);
+        if (params.valueD) formData.append('value_d', params.valueD);
 
         try {
             const response = await axios.post(this.sessionUrl, formData.toString(), {

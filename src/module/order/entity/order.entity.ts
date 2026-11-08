@@ -106,6 +106,15 @@ export class Orders extends AbstractEntity {
     @Column({ type: 'json', nullable: true })
     authoritativeSnapshot: Record<string, any> | null;
 
+    @Column({ type: 'boolean', default: false })
+    isExchanged: boolean;
+
+    @Column({ type: 'int', default: 0 })
+    exchangeCount: number;
+
+    @Column({ type: 'timestamp', nullable: true })
+    exchangedAt: Date | null;
+
     @Column({ type: 'timestamp', nullable: true })
     orderPaymentExpiresAt: Date | null;
 

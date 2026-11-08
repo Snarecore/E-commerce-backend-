@@ -22,6 +22,7 @@ import { OrderSummary } from '../../order-summary/entity/order-summary.entity';
 import { OrderStatus, PaymentStatus } from '../../../enums/order-status.enum';
 import { PaymentAttemptStatus, PaymentGateway, RefundStatus, OutboxStatus, PaymentEventSource } from '../enums/payment.enum';
 import { Role } from '../../../enums/role.enum';
+import { CustomThrottlerGuard } from '../../../guards/custom-throttler.guard';
 import Stripe from 'stripe';
 
 describe('Phase 5: 16 Failure Injection Chaos Tests', () => {
@@ -134,6 +135,7 @@ describe('Phase 5: 16 Failure Injection Chaos Tests', () => {
                     orderBy: jest.fn().mockReturnThis(),
                     take: jest.fn().mockReturnThis(),
                     setLock: jest.fn().mockReturnThis(),
+                    setOnLocked: jest.fn().mockReturnThis(),
                     getMany: jest.fn().mockResolvedValue([]),
                     update: jest.fn().mockReturnThis(),
                     set: jest.fn().mockReturnThis(),
@@ -177,6 +179,7 @@ describe('Phase 5: 16 Failure Injection Chaos Tests', () => {
             get: jest.fn().mockImplementation((key: string) => {
                 if (key === 'STRIPE_SECRET_KEY') return 'sk_test_mock_chaos';
                 if (key === 'STRIPE_WEBHOOK_SECRET') return 'whsec_chaos_test';
+                if (key === 'BACKEND_PUBLIC_URL') return 'http://localhost:5000/api/v1';
                 if (key === 'FRONTEND_PUBLIC_URL') return 'http://localhost:3000';
                 return null;
             }),
@@ -202,7 +205,10 @@ describe('Phase 5: 16 Failure Injection Chaos Tests', () => {
                 { provide: ConfigService, useValue: mockConfigService },
                 { provide: PaymentWebhookInboxService, useValue: mockWebhookInboxService },
             ],
-        }).compile();
+        })
+        .overrideGuard(CustomThrottlerGuard)
+        .useValue({ canActivate: () => true })
+        .compile();
 
         paymentsService = module.get<PaymentsService>(PaymentsService);
         confirmationService = module.get<PaymentConfirmationService>(PaymentConfirmationService);
@@ -418,6 +424,7 @@ describe('Phase 5: 16 Failure Injection Chaos Tests', () => {
             orderBy: jest.fn().mockReturnThis(),
             take: jest.fn().mockReturnThis(),
             setLock: jest.fn().mockReturnThis(),
+            setOnLocked: jest.fn().mockReturnThis(),
             getMany: jest.fn().mockResolvedValueOnce([expiredEvent]),
         };
 
@@ -438,7 +445,8 @@ describe('Phase 5: 16 Failure Injection Chaos Tests', () => {
 
         await outboxService.processOutbox();
 
-        expect(selectBuilder.setLock).toHaveBeenCalledWith('pessimistic_write', undefined, ['SKIP LOCKED']);
+        expect(selectBuilder.setLock).toHaveBeenCalledWith('pessimistic_write');
+        expect(selectBuilder.setOnLocked).toHaveBeenCalledWith('skip_locked');
         expect(updateBuilder.set).toHaveBeenCalledWith(
             expect.objectContaining({
                 status: OutboxStatus.PROCESSING,

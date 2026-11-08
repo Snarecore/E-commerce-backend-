@@ -24,6 +24,15 @@ export class OrderSummary extends AbstractEntity {
     @Column({ type: "varchar", nullable: true })
     selectedSize: string;
 
+    @Column({ type: 'boolean', default: false })
+    isExchanged: boolean;
+
+    @Column({ type: 'int', default: 0 })
+    exchangeCount: number;
+
+    @Column({ type: 'varchar', length: 50, nullable: true })
+    originalSize: string | null;
+
 
     @Column({ type: 'decimal', precision: 10, scale: 2, nullable: false })
     price: number;

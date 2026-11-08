@@ -155,6 +155,7 @@ describe('PaymentsService - Payment Retry & Expiry', () => {
                 if (key === 'STRIPE_SECRET_KEY') return 'sk_test_123';
                 if (key === 'STRIPE_WEBHOOK_SECRET') return 'whsec_test_123';
                 if (key === 'BACKEND_PUBLIC_URL') return 'http://localhost:5000/api/v1';
+                if (key === 'FRONTEND_PUBLIC_URL') return 'http://localhost:3000';
                 return null;
             }),
         };
@@ -375,6 +376,23 @@ describe('PaymentsService - Payment Retry & Expiry', () => {
             expect(result.attemptNumber).toBe(2);
             expect(result.tranId).toContain('SSLCZ-ORD-1001-A2-');
             expect(mockPaymentRepo.save).toHaveBeenCalled();
+        });
+
+        it('should strictly return backendBaseUrl from config without hardcoded code fallbacks', async () => {
+            const backendUrl = service.getBackendBaseUrl();
+            expect(backendUrl).toBe('http://localhost:5000/api/v1');
+        });
+
+        it('should prioritize explicit frontendCallbackUrl if provided in DTO when trusted', async () => {
+            process.env.ALLOWED_ORIGINS = 'https://myshop.com,http://localhost:3000';
+            const frontendUrl = service.getFrontendBaseUrl('https://myshop.com');
+            expect(frontendUrl).toBe('https://myshop.com');
+        });
+
+        it('should reject untrusted explicit frontendCallbackUrl (Open Redirect Prevention)', async () => {
+            process.env.ALLOWED_ORIGINS = 'https://myshop.com,http://localhost:3000';
+            const frontendUrl = service.getFrontendBaseUrl('https://malicious-phishing-site.com');
+            expect(frontendUrl).toBe('http://localhost:3000');
         });
     });
 

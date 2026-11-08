@@ -11,6 +11,7 @@ import {
     Req,
     Res,
     BadRequestException,
+    PayloadTooLargeException,
     UseGuards,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
@@ -18,6 +19,8 @@ import { ConfigService } from '@nestjs/config';
 import { Public } from '../../decorators/public.decorator';
 import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
 import { RolesGuard } from '../../guards/role.guard';
+import { CustomThrottlerGuard } from '../../guards/custom-throttler.guard';
+import { TransactionIdUtil } from './utils/transaction-id.util';
 import { Roles } from '../../decorators/role.decorator';
 import { Role } from '../../enums/role.enum';
 import { CONFIG } from '../../utils/config';
@@ -43,12 +46,8 @@ export class PaymentsController {
         private readonly configService: ConfigService
     ) {}
 
-    private getFrontendBaseUrl(): string {
-        return (
-            this.configService.get<string>('FRONTEND_PUBLIC_URL') ||
-            process.env.FRONTEND_PUBLIC_URL ||
-            'http://localhost:3000'
-        );
+    private getFrontendBaseUrl(explicitUrl?: string): string {
+        return this.paymentsService.getFrontendBaseUrl(explicitUrl);
     }
 
     // ==========================================
@@ -121,7 +120,7 @@ export class PaymentsController {
         @Body() dto: SslcommerzInitDto,
         @Req() req: RequestWithRawBody
     ): Promise<{ gatewayPageUrl: string; tranId: string; orderId: string }> {
-        return this.paymentsService.initiateSslcommerzPayment(dto, req.user);
+        return this.paymentsService.initiateSslcommerzPayment(dto, req.user, req);
     }
 
     /**
@@ -136,7 +135,7 @@ export class PaymentsController {
     ): Promise<void> {
         const valId = body?.val_id;
         const tranId = body?.tran_id;
-        const frontendUrl = this.getFrontendBaseUrl();
+        const frontendUrl = this.getFrontendBaseUrl(body?.value_a);
 
         if (!valId || !tranId) {
             res.redirect(303, `${frontendUrl}/cart?error=missing_payment_parameters`);
@@ -168,7 +167,7 @@ export class PaymentsController {
         @Res() res: Response
     ): Promise<void> {
         const tranId = body?.tran_id;
-        const frontendUrl = this.getFrontendBaseUrl();
+        const frontendUrl = this.getFrontendBaseUrl(body?.value_a);
         let targetId = tranId || '';
 
         if (tranId) {
@@ -197,7 +196,7 @@ export class PaymentsController {
         @Res() res: Response
     ): Promise<void> {
         const tranId = body?.tran_id;
-        const frontendUrl = this.getFrontendBaseUrl();
+        const frontendUrl = this.getFrontendBaseUrl(body?.value_a);
         let targetId = tranId || '';
 
         if (tranId) {
@@ -218,17 +217,37 @@ export class PaymentsController {
 
     /**
      * Server-to-Server Asynchronous IPN Webhook from SSLCommerz.
-     * Fast-ACK via Durable Webhook Inbox pattern: stores raw webhook and ACKs immediately in < 2ms.
+     * Fast-ACK via Durable Webhook Inbox pattern: stores raw webhook and ACKs immediately after durable commit.
      */
     @Public()
+    @UseGuards(CustomThrottlerGuard)
     @Post('sslcommerz/ipn')
     @HttpCode(HttpStatus.OK)
-    async handleSslcommerzIpn(@Body() body: any): Promise<{ received: boolean; status: string; idempotencyKey?: string }> {
-        const valId = body?.val_id;
-        const tranId = body?.tran_id;
+    async handleSslcommerzIpn(
+        @Body() body: any,
+        @Req() req: RequestWithRawBody
+    ): Promise<{ received: boolean; status: string; idempotencyKey?: string }> {
+        // 1. Defense-in-depth physical stream/buffer check
+        if (req.rawBody && req.rawBody.length > 10240) {
+            throw new PayloadTooLargeException('Payload exceeds maximum permitted size of 10KB.');
+        }
+
+        const valId = String(body?.val_id || '').trim();
+        const tranId = String(body?.tran_id || '').trim();
 
         if (!valId || !tranId) {
             throw new BadRequestException('Invalid IPN payload. val_id and tran_id are required.');
+        }
+
+        // 2. In-Memory format and length validation (Zero DB overhead)
+        if (!TransactionIdUtil.isValidFormat(tranId)) {
+            throw new BadRequestException('Malformed or unrecognized transaction identifier format.');
+        }
+
+        // 3. Targeted indexed B-Tree point lookup to prevent inbox spam
+        const isKnown = await this.paymentsService.isKnownPaymentTransaction(tranId);
+        if (!isKnown) {
+            throw new BadRequestException('Transaction does not originate from this host.');
         }
 
         const ingestRes = await this.paymentWebhookInboxService.ingestWebhook(
@@ -282,7 +301,7 @@ export class PaymentsController {
         @Param('orderId') orderId: string,
         @Req() req: RequestWithRawBody
     ) {
-        return this.paymentsService.retryPayment(orderId, req.user);
+        return this.paymentsService.retryPayment(orderId, req.user, req);
     }
 
     /**

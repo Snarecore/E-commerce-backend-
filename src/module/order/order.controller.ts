@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards, Req, Headers } from '@nestjs/common';
 import { CONFIG } from '../../utils/config';
 import { ApiResponse } from '../../utils/response.utils';
 import { CreateOrdersDto } from './dto/create-order.dto';
@@ -9,6 +9,7 @@ import { OrdersService } from './order.service';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { UpdateCourierDto } from './dto/update-courier.dto';
 import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../../guards/optional-jwt-auth.guard';
 import { RolesGuard } from '../../guards/role.guard';
 import { Roles } from '../../decorators/role.decorator';
 import { Role } from '../../enums/role.enum';
@@ -139,6 +140,16 @@ export class OrdersController {
 	async findOne(@Param('id') id: string, @Req() req: Request): Promise<ApiResponse<OrdersInterface>> {
 		// @ts-ignore
 		return await this.service.findOne(id, req?.user);
+	}
+
+	@UseGuards(OptionalJwtAuthGuard)
+	@Post(':id/restore-cart')
+	async restoreCart(
+		@Param('id') id: string,
+		@Headers('x-guest-order-token') guestToken: string,
+		@Req() req: any
+	): Promise<ApiResponse<any>> {
+		return await this.service.generateCartRestorePayload(id, req?.user, guestToken);
 	}
 
 	@Delete(':id')

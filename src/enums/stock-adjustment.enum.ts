@@ -1,0 +1,24 @@
+export enum AdjustmentStatus {
+    DRAFT = 'DRAFT',
+    PENDING_APPROVAL = 'PENDING_APPROVAL',
+    COMPLETED = 'COMPLETED',
+    REJECTED = 'REJECTED',
+    CANCELLED = 'CANCELLED'
+}
+
+export enum AdjustmentReason {
+    ADDITION = 'ADDITION',
+    DAMAGED = 'DAMAGED',
+    LOST = 'LOST',
+    THEFT = 'THEFT',
+    AUDIT_SURPLUS = 'AUDIT_SURPLUS',
+    AUDIT_DEFICIT = 'AUDIT_DEFICIT',
+    SAMPLE_GIFT = 'SAMPLE_GIFT',
+    OTHER = 'OTHER'
+}
+
+export enum AdjustmentMode {
+    ADDITION = 'ADDITION',
+    SUBTRACTION = 'SUBTRACTION',
+    EXACT_COUNT = 'EXACT_COUNT'
+}

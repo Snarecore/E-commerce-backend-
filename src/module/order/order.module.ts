@@ -16,6 +16,7 @@ import { RiskModule } from '../risk/risk.module';
 import { OrderExpiryWorker } from './order-expiry.worker';
 import { PaymentsModule } from '../payments/payments.module';
 import { EmailServiceModule } from '../email-service/email-sender.module';
+import { InventoryEngineModule } from '../inventory-engine/inventory-engine.module';
 
 @Module({
 	imports: [
@@ -26,7 +27,8 @@ import { EmailServiceModule } from '../email-service/email-sender.module';
 		SocketModule,
 		RiskModule,
 		PaymentsModule,
-		EmailServiceModule
+		EmailServiceModule,
+		InventoryEngineModule
 	],
 	controllers: [OrdersController],
 	providers: [

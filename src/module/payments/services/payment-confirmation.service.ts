@@ -125,27 +125,62 @@ export class PaymentConfirmationService {
         // Mathematical string/decimal precision validation
         const valAmount = String(validationData?.amount || '0');
         const isAmountMatch = CurrencyUtils.isAmountEqual(initialPayment.amount, valAmount);
-
-        if (!isAmountMatch) {
-            this.logger.error(
-                `[Security Alert] Amount tampering detected! DB Amount: ${initialPayment.amount}, Gateway Amount: ${valAmount} for tranId: ${tranId}`
-            );
-            return {
-                success: false,
-                message: 'Security validation failed: Amount mismatch',
-                orderId: initialPayment.orderId,
-                paymentStatus: 'REJECTED'
-            };
-        }
-
         const isCurrencyMatch = (validationData?.currency || '').toUpperCase() === (initialPayment.currency || 'BDT').toUpperCase();
-        if (!isCurrencyMatch) {
-            this.logger.error(`[Security Alert] Currency mismatch: expected ${initialPayment.currency}, got ${validationData?.currency}`);
+
+        if (!isAmountMatch || !isCurrencyMatch) {
+            const discrepancyType = !isAmountMatch ? 'AMOUNT_MISMATCH' : 'CURRENCY_MISMATCH';
+            this.logger.error(
+                `[Financial Discrepancy] ${discrepancyType}! Expected: ${initialPayment.amount} ${initialPayment.currency}, Gateway: ${valAmount} ${validationData?.currency} for tranId: ${tranId}, valId: ${valId}. Holding for admin reconciliation.`
+            );
+
+            // 🛡️ Do NOT discard captured funds or mark FAILED; flag for immediate admin reconciliation
+            const discRunner = this.dataSource.createQueryRunner();
+            await discRunner.connect();
+            await discRunner.startTransaction();
+            try {
+                const lockedOrder = await discRunner.manager.findOne(Orders, {
+                    where: { id: initialPayment.orderId },
+                    lock: { mode: 'pessimistic_write' }
+                });
+                const lockedPayment = await discRunner.manager.findOne(Payments, {
+                    where: { id: initialPayment.id },
+                    lock: { mode: 'pessimistic_write' }
+                });
+
+                if (lockedPayment) {
+                    lockedPayment.status = PaymentAttemptStatus.PROCESSING;
+                    lockedPayment.needsAdminReview = true;
+                    lockedPayment.adminReviewReason = `PAYMENT_CAPTURED_RECONCILIATION_REQUIRED:${discrepancyType}`;
+                    lockedPayment.valId = valId;
+                    lockedPayment.bankTranId = validationData.bank_tran_id || null;
+                    lockedPayment.cardType = validationData.card_type || null;
+                    lockedPayment.maskedAccountNo = validationData.card_no || null;
+                    await discRunner.manager.save(lockedPayment);
+                }
+
+                if (lockedOrder) {
+                    lockedOrder.paymentStatus = PaymentStatus.REVIEW_REQUIRED;
+                    await discRunner.manager.save(lockedOrder);
+                }
+
+                if (lockedPayment) {
+                    await this.recordPaymentEvent(discRunner, lockedPayment, 'PAYMENT_CAPTURED_DISCREPANCY_FLAGGED', source, status, validationData);
+                }
+
+                await discRunner.commitTransaction();
+            } catch (discErr: any) {
+                await discRunner.rollbackTransaction();
+                this.logger.error(`[Financial Discrepancy Flagging Failed] ${discErr?.message}`);
+            } finally {
+                await discRunner.release();
+            }
+
             return {
                 success: false,
-                message: 'Security validation failed: Currency mismatch',
+                message: `Payment captured on gateway but financial discrepancy detected (${discrepancyType}). Scheduled for admin reconciliation.`,
                 orderId: initialPayment.orderId,
-                paymentStatus: 'REJECTED'
+                humanOrderId,
+                paymentStatus: 'REVIEW_REQUIRED'
             };
         }
 
@@ -491,41 +526,10 @@ export class PaymentConfirmationService {
             await queryRunner.commitTransaction();
             this.logger.log(`[Payment Confirmation] Successfully confirmed payment for tranId: ${tranId}, Order: ${lockedOrder.orderId}`);
 
-            // Asynchronous, Non-blocking Order Status & Payment Confirmation Email Dispatch
-            if (this.emailService) {
-                try {
-                    const recipientEmail =
-                        lockedOrder.shippingAddress?.email ||
-                        (lockedOrder as any).customerEmail ||
-                        (lockedOrder as any).email ||
-                        lockedOrder.user?.email;
-
-                    if (recipientEmail && typeof recipientEmail === 'string' && recipientEmail.includes('@')) {
-                        const customerName =
-                            lockedOrder.shippingAddress?.name ||
-                            lockedOrder.user?.name ||
-                            'Valued Customer';
-
-                        const frontendUrl = process.env.FRONTEND_PUBLIC_URL || 'http://localhost:3000';
-
-                        this.emailService.sendOrderStatusUpdateEmail({
-                            to: recipientEmail.trim(),
-                            orderId: lockedOrder.orderId || lockedOrder.id,
-                            customerName,
-                            status: OrderStatus.ORDER_PLACED,
-                            totalAmount: lockedOrder.totalAmount,
-                            paymentMethod: lockedPayment.paymentMethod || 'Online Payment',
-                            note: `Payment confirmed via ${lockedPayment.paymentMethod || 'SSLCommerz'} (Tran ID: ${tranId}). Your order is now officially confirmed and sent to fulfillment.`,
-                            shippingAddress: lockedOrder.shippingAddress,
-                            viewOrderUrl: `${frontendUrl}/order-confirmation/${lockedOrder.orderId || lockedOrder.id}`
-                        }).catch((emailErr) => {
-                            this.logger.warn(`[Payment Confirmation] Failed to dispatch payment receipt email: ${emailErr?.message}`);
-                        });
-                    }
-                } catch (emailPrepErr: any) {
-                    this.logger.warn(`[Payment Confirmation] Error preparing email dispatch: ${emailPrepErr?.message}`);
-                }
-            }
+            // 📧 Standard E-Commerce Lifecycle:
+            // The customer already received the authoritative "Order Confirmed" email upon order creation.
+            // We suppress sending a duplicate "Order Update: is now Order Placed" email here to prevent inbox spam.
+            // Downstream status update emails will fire cleanly when order progresses to Processing, Shipped, Delivered, etc.
 
             return {
                 success: true,

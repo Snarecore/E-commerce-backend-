@@ -580,7 +580,7 @@ describe('OrdersService', () => {
         };
 
         const result = await service.updateOrderStatus('order-status-test', {
-            newStatus: OrderStatus.ORDER_PLACED,
+            newStatus: OrderStatus.PROCESSING,
             note: 'Approved by admin'
         });
 
@@ -589,7 +589,7 @@ describe('OrdersService', () => {
             expect.objectContaining({
                 to: 'customer@test.com',
                 orderId: 'BB998877',
-                status: OrderStatus.ORDER_PLACED
+                status: OrderStatus.PROCESSING
             })
         );
     });

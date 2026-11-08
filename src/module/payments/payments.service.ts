@@ -34,6 +34,7 @@ import { PaymentConfirmationService } from './services/payment-confirmation.serv
 import { PaymentOutboxService } from './services/payment-outbox.service';
 import { CurrencyUtils } from '../../utils/currency.utils';
 import { GatewaySanitizer } from './utils/gateway-sanitizer.util';
+import { TransactionIdUtil } from './utils/transaction-id.util';
 import { randomUUID } from 'crypto';
 
 @Injectable()
@@ -59,7 +60,127 @@ export class PaymentsService {
             throw new Error('STRIPE_SECRET_KEY is missing from environment variables');
         }
 
+        const backendUrl = this.configService.get<string>('BACKEND_PUBLIC_URL') || process.env.BACKEND_PUBLIC_URL;
+        if (!backendUrl) {
+            throw new Error('CRITICAL CONFIGURATION ERROR: "BACKEND_PUBLIC_URL" is missing in environment variables. Define it in your .env file.');
+        }
+
+        const frontendUrl = this.configService.get<string>('FRONTEND_PUBLIC_URL') || process.env.FRONTEND_PUBLIC_URL;
+        if (!frontendUrl) {
+            throw new Error('CRITICAL CONFIGURATION ERROR: "FRONTEND_PUBLIC_URL" is missing in environment variables. Define it in your .env file.');
+        }
+
+        if (process.env.NODE_ENV === 'production') {
+            if (backendUrl.includes('localhost') || backendUrl.includes('127.0.0.1')) {
+                throw new Error('CRITICAL CONFIGURATION ERROR: "BACKEND_PUBLIC_URL" cannot point to localhost in production mode. Set your live public API domain.');
+            }
+            if (frontendUrl.includes('localhost') || frontendUrl.includes('127.0.0.1')) {
+                throw new Error('CRITICAL CONFIGURATION ERROR: "FRONTEND_PUBLIC_URL" cannot point to localhost in production mode. Set your live customer store domain.');
+            }
+        }
+
         this.stripe = new Stripe(secretKey);
+    }
+
+    /**
+     * Resolves the backend base URL strictly from environment variables.
+     * Throws an explicit error if missing — zero hidden fallbacks.
+     */
+    getBackendBaseUrl(): string {
+        const backendBaseUrl =
+            this.configService.get<string>('BACKEND_PUBLIC_URL') ||
+            process.env.BACKEND_PUBLIC_URL;
+
+        if (!backendBaseUrl) {
+            throw new InternalServerErrorException(
+                'CRITICAL CONFIGURATION ERROR: "BACKEND_PUBLIC_URL" is missing in environment variables. Define it in your .env file.'
+            );
+        }
+
+        return backendBaseUrl.replace(/\/+$/, '');
+    }
+
+    /**
+     * Verifies if a given frontend URL is in the trusted domain whitelist.
+     * Prevents Open Redirect Vulnerability (OWASP Top 10 CWE-601).
+     */
+    isTrustedFrontendOrigin(candidateUrl: string): boolean {
+        try {
+            const parsed = new URL(candidateUrl);
+            const candidateOrigin = parsed.origin.toLowerCase();
+            const isProd = process.env.NODE_ENV === 'production';
+
+            const defaultOrigins: string[] = [];
+            const configuredOrigins = process.env.ALLOWED_ORIGINS
+                ? process.env.ALLOWED_ORIGINS.split(',').map((u) => u.trim())
+                : defaultOrigins;
+
+            const frontendPublicUrl =
+                this.configService.get<string>('FRONTEND_PUBLIC_URL') ||
+                process.env.FRONTEND_PUBLIC_URL;
+            if (frontendPublicUrl) {
+                try {
+                    configuredOrigins.push(new URL(frontendPublicUrl).origin);
+                } catch {
+                    configuredOrigins.push(frontendPublicUrl);
+                }
+            }
+
+            if (configuredOrigins.some((trusted) => trusted.toLowerCase() === candidateOrigin)) {
+                return true;
+            }
+
+            // In non-production, also allow local network private IP origins
+            if (!isProd) {
+                const isLocalOrPrivate = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/.test(
+                    candidateOrigin
+                );
+                if (isLocalOrPrivate) return true;
+            }
+
+            return false;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Resolves the frontend base URL strictly from environment variables with whitelist protection.
+     * Zero hidden string fallbacks in code.
+     */
+    getFrontendBaseUrl(explicitUrl?: string): string {
+        const canonicalFrontend =
+            this.configService.get<string>('FRONTEND_PUBLIC_URL') ||
+            process.env.FRONTEND_PUBLIC_URL;
+
+        if (!canonicalFrontend) {
+            throw new InternalServerErrorException(
+                'CRITICAL CONFIGURATION ERROR: "FRONTEND_PUBLIC_URL" is missing in environment variables. Define it in your .env file.'
+            );
+        }
+
+        if (explicitUrl && explicitUrl.trim().length > 0) {
+            const trimmed = explicitUrl.trim().replace(/\/+$/, '');
+            if (this.isTrustedFrontendOrigin(trimmed)) {
+                return trimmed;
+            }
+            this.logger.warn(`[Security Alert: Open Redirect Prevention] Untrusted redirect URL rejected: "${trimmed}". Falling back to canonical FRONTEND_PUBLIC_URL.`);
+        }
+
+        return canonicalFrontend.replace(/\/+$/, '');
+    }
+
+    /**
+     * Targeted point lookup on UNIQUE index IDX_payments_tranId (< 0.2ms target).
+     * Rejects unrecognized transaction IDs to prevent inbox table bloat.
+     */
+    async isKnownPaymentTransaction(tranId: string): Promise<boolean> {
+        if (!tranId || typeof tranId !== 'string') return false;
+        const record = await this.dataSource.getRepository(Payments).findOne({
+            where: { tranId: tranId.trim() },
+            select: ['id']
+        });
+        return Boolean(record);
     }
 
     async createPayment(body: {
@@ -187,6 +308,9 @@ export class PaymentsService {
         const savedOrder = await this.orderRepository.save(order);
 
         try {
+            const frontendBaseUrl = this.getFrontendBaseUrl();
+            const orderTargetId = savedOrder.orderId || savedOrder.id;
+
             // 2. Create Stripe Checkout Session
             const session = await this.stripe.checkout.sessions.create({
                 payment_method_types: ['card'],
@@ -203,10 +327,11 @@ export class PaymentsService {
                     },
                     quantity: item.quantity,
                 })),
-                success_url: `http://localhost:3000/success?session_id={CHECKOUT_SESSION_ID}`,
-                cancel_url: `http://localhost:3000/cancel`,
+                success_url: `${frontendBaseUrl}/order-confirmation/${orderTargetId}?payment=processing&session_id={CHECKOUT_SESSION_ID}`,
+                cancel_url: `${frontendBaseUrl}/order-confirmation/${orderTargetId}?payment=cancelled`,
                 metadata: {
                     orderId: savedOrder.id,
+                    businessOrderId: savedOrder.orderId,
                     userId: savedOrder.userId,
                 },
             });
@@ -477,7 +602,9 @@ export class PaymentsService {
         let order: Orders | null = null;
 
         if (orderId) {
-            order = await this.orderRepository.findOne({ where: { id: orderId } });
+            order = await this.orderRepository.findOne({ where: [{ id: orderId }, { orderId: orderId }] });
+        } else if (session.metadata?.businessOrderId) {
+            order = await this.orderRepository.findOne({ where: { orderId: session.metadata.businessOrderId } });
         } else if (stripeSessionId) {
             order = await this.orderRepository.findOne({ where: { stripeSessionId } });
         }
@@ -653,7 +780,8 @@ export class PaymentsService {
      */
     async initiateSslcommerzPayment(
         dto: SslcommerzInitDto,
-        requestUser?: any
+        requestUser?: any,
+        req?: any
     ): Promise<{ gatewayPageUrl: string; tranId: string; orderId: string }> {
         const orderRepo = this.dataSource.getRepository(Orders);
         const paymentRepo = this.dataSource.getRepository(Payments);
@@ -698,10 +826,8 @@ export class PaymentsService {
             throw new BadRequestException('A payment session was recently initiated. Please wait 2 minutes before requesting a new payment link.');
         }
 
-        const backendBaseUrl =
-            this.configService.get<string>('BACKEND_PUBLIC_URL') ||
-            process.env.BACKEND_PUBLIC_URL ||
-            'http://localhost:5000/api/v1';
+        const backendBaseUrl = this.getBackendBaseUrl();
+        const frontendBaseUrl = this.getFrontendBaseUrl(dto.frontendCallbackUrl);
 
         const successUrl = `${backendBaseUrl}/payments/sslcommerz/success`;
         const failUrl = `${backendBaseUrl}/payments/sslcommerz/fail`;
@@ -715,9 +841,9 @@ export class PaymentsService {
         const customerAddress = dto.customerAddress || shipping.address || (order as any).address || 'Dhaka, Bangladesh';
         const customerCity = dto.customerCity || shipping.city || 'Dhaka';
 
-        // Unique Transaction ID per attempt
-        const attemptIndex = existingPayments.length + 1;
-        const uniqueTranId = `SSLCZ-${order.orderId}-A${attemptIndex}-${Date.now().toString().slice(-4)}`;
+        // 128-bit Cryptographically Secure Transaction ID per attempt
+        const attemptIndex = Math.min(20, Math.max(1, existingPayments.length + 1));
+        let uniqueTranId = TransactionIdUtil.generate(order.orderId, attemptIndex);
 
         const initParams = {
             tranId: uniqueTranId,
@@ -732,7 +858,8 @@ export class PaymentsService {
             successUrl,
             failUrl,
             cancelUrl,
-            ipnUrl
+            ipnUrl,
+            valueA: frontendBaseUrl
         };
 
         const initRes = await this.sslcommerzService.initiatePaymentSession(initParams);
@@ -741,27 +868,47 @@ export class PaymentsService {
             throw new InternalServerErrorException(initRes.failedReason || 'Failed to initialize SSLCommerz gateway session');
         }
 
-        // Save new Payment Attempt record
-        const paymentAttempt = paymentRepo.create({
-            orderId: order.id,
-            gateway: PaymentGateway.SSLCOMMERZ,
-            paymentMethod: PaymentMethodType.UNKNOWN,
-            tranId: uniqueTranId,
-            gatewaySessionId: initRes.sessionKey || null,
-            amount: String(Number(order.totalAmount || 0).toFixed(2)),
-            currency: 'BDT',
-            status: PaymentAttemptStatus.PENDING,
-            sessionExpiresAt: new Date(Date.now() + 20 * 60 * 1000), // 20 min session window
-            nextCheckAt: new Date(Date.now() + 5 * 60 * 1000),
-            reconciliationAttempts: 0,
-            needsAdminReview: false
-        });
+        // Save new Payment Attempt record with collision retry
+        let saveRetries = 0;
+        let currentTranId = uniqueTranId;
 
-        await paymentRepo.save(paymentAttempt);
+        while (saveRetries < 3) {
+            try {
+                const paymentAttempt = paymentRepo.create({
+                    orderId: order.id,
+                    gateway: PaymentGateway.SSLCOMMERZ,
+                    paymentMethod: PaymentMethodType.UNKNOWN,
+                    tranId: currentTranId,
+                    gatewaySessionId: initRes.sessionKey || null,
+                    amount: String(Number(order.totalAmount || 0).toFixed(2)),
+                    currency: 'BDT',
+                    status: PaymentAttemptStatus.PENDING,
+                    sessionExpiresAt: new Date(Date.now() + 20 * 60 * 1000), // 20 min session window
+                    nextCheckAt: new Date(Date.now() + 5 * 60 * 1000),
+                    reconciliationAttempts: 0,
+                    needsAdminReview: false
+                });
 
-        // Update order overall payment window if not set (25 min total: 20 min gateway session + 5 min grace)
+                await paymentRepo.save(paymentAttempt);
+                break;
+            } catch (saveErr: any) {
+                const isTranIdCollision = saveErr?.code === 'ER_DUP_ENTRY' && (
+                    saveErr?.message?.includes('IDX_payments_tranId') ||
+                    saveErr?.message?.includes('tranId')
+                );
+                if (isTranIdCollision && saveRetries < 2) {
+                    saveRetries++;
+                    currentTranId = TransactionIdUtil.generate(order.orderId, attemptIndex);
+                    this.logger.warn(`[TranId Collision Retry] Regenerated tranId: ${currentTranId} (attempt ${saveRetries})`);
+                } else {
+                    throw saveErr;
+                }
+            }
+        }
+
+        // Update order overall payment window if not set (48 hours window)
         if (!order.orderPaymentExpiresAt) {
-            const newExpiry = new Date(Date.now() + 25 * 60 * 1000);
+            const newExpiry = new Date(Date.now() + 48 * 60 * 60 * 1000);
             order.orderPaymentExpiresAt = newExpiry;
             await orderRepo.update(order.id, { orderPaymentExpiresAt: newExpiry });
         }
@@ -863,7 +1010,8 @@ export class PaymentsService {
      */
     async retryPayment(
         orderId: string,
-        requestUser?: any
+        requestUser?: any,
+        req?: any
     ): Promise<{ gatewayPageUrl: string; tranId: string; orderId: string; attemptNumber: number }> {
         const orderRepo = this.dataSource.getRepository(Orders);
         const paymentRepo = this.dataSource.getRepository(Payments);
@@ -950,10 +1098,10 @@ export class PaymentsService {
                     throw new BadRequestException('Cannot retry payment: One or more items in your order are now out of stock.');
                 }
 
-                // Revive order to PENDING and refresh payment expiry window (25 min total)
+                // Revive order to PENDING and refresh payment expiry window (48 hours window)
                 lockedOrder.status = OrderStatus.PENDING;
                 lockedOrder.paymentStatus = PaymentStatus.PENDING;
-                lockedOrder.orderPaymentExpiresAt = new Date(Date.now() + 25 * 60 * 1000);
+                lockedOrder.orderPaymentExpiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
 
                 const nowIso = new Date().toISOString();
                 lockedOrder.statusHistory = [
@@ -979,14 +1127,12 @@ export class PaymentsService {
             }
         }
 
-        // 5. Generate Unique Transaction ID per attempt
-        const attemptIndex = existingPayments.length + 1;
-        const uniqueTranId = `SSLCZ-${order.orderId}-A${attemptIndex}-${Date.now().toString().slice(-4)}`;
+        // 5. Generate 128-bit Cryptographically Secure Transaction ID per attempt
+        const attemptIndex = Math.min(20, Math.max(1, existingPayments.length + 1));
+        let uniqueTranId = TransactionIdUtil.generate(order.orderId, attemptIndex);
 
-        const backendBaseUrl =
-            this.configService.get<string>('BACKEND_PUBLIC_URL') ||
-            process.env.BACKEND_PUBLIC_URL ||
-            'http://localhost:5000/api/v1';
+        const backendBaseUrl = this.getBackendBaseUrl();
+        const frontendBaseUrl = this.getFrontendBaseUrl();
 
         const successUrl = `${backendBaseUrl}/payments/sslcommerz/success`;
         const failUrl = `${backendBaseUrl}/payments/sslcommerz/fail`;
@@ -1012,7 +1158,8 @@ export class PaymentsService {
             successUrl,
             failUrl,
             cancelUrl,
-            ipnUrl
+            ipnUrl,
+            valueA: frontendBaseUrl
         };
 
         const initRes = await this.sslcommerzService.initiatePaymentSession(initParams);
@@ -1021,27 +1168,47 @@ export class PaymentsService {
             throw new InternalServerErrorException(initRes.failedReason || 'Failed to initialize SSLCommerz gateway session');
         }
 
-        // Persist new Payment Attempt record
-        const paymentAttempt = paymentRepo.create({
-            orderId: order.id,
-            gateway: PaymentGateway.SSLCOMMERZ,
-            paymentMethod: PaymentMethodType.UNKNOWN,
-            tranId: uniqueTranId,
-            gatewaySessionId: initRes.sessionKey || null,
-            amount: String(Number(order.totalAmount || 0).toFixed(2)),
-            currency: 'BDT',
-            status: PaymentAttemptStatus.PENDING,
-            sessionExpiresAt: new Date(Date.now() + 20 * 60 * 1000), // 20 min gateway session
-            nextCheckAt: new Date(Date.now() + 5 * 60 * 1000),
-            reconciliationAttempts: 0,
-            needsAdminReview: false
-        });
+        // Persist new Payment Attempt record with collision retry
+        let saveRetries = 0;
+        let currentTranId = uniqueTranId;
 
-        await paymentRepo.save(paymentAttempt);
+        while (saveRetries < 3) {
+            try {
+                const paymentAttempt = paymentRepo.create({
+                    orderId: order.id,
+                    gateway: PaymentGateway.SSLCOMMERZ,
+                    paymentMethod: PaymentMethodType.UNKNOWN,
+                    tranId: currentTranId,
+                    gatewaySessionId: initRes.sessionKey || null,
+                    amount: String(Number(order.totalAmount || 0).toFixed(2)),
+                    currency: 'BDT',
+                    status: PaymentAttemptStatus.PENDING,
+                    sessionExpiresAt: new Date(Date.now() + 20 * 60 * 1000), // 20 min gateway session
+                    nextCheckAt: new Date(Date.now() + 5 * 60 * 1000),
+                    reconciliationAttempts: 0,
+                    needsAdminReview: false
+                });
 
-        // Harmonize order payment expiry window (25 min total: 20 min session + 5 min grace)
+                await paymentRepo.save(paymentAttempt);
+                break;
+            } catch (saveErr: any) {
+                const isTranIdCollision = saveErr?.code === 'ER_DUP_ENTRY' && (
+                    saveErr?.message?.includes('IDX_payments_tranId') ||
+                    saveErr?.message?.includes('tranId')
+                );
+                if (isTranIdCollision && saveRetries < 2) {
+                    saveRetries++;
+                    currentTranId = TransactionIdUtil.generate(order.orderId, attemptIndex);
+                    this.logger.warn(`[TranId Collision Retry] Regenerated tranId in retry: ${currentTranId} (attempt ${saveRetries})`);
+                } else {
+                    throw saveErr;
+                }
+            }
+        }
+
+        // Harmonize order payment expiry window (48 hours window)
         if (!order.orderPaymentExpiresAt || order.orderPaymentExpiresAt < new Date()) {
-            const newExpiry = new Date(Date.now() + 25 * 60 * 1000);
+            const newExpiry = new Date(Date.now() + 48 * 60 * 60 * 1000);
             order.orderPaymentExpiresAt = newExpiry;
             await orderRepo.update(order.id, { orderPaymentExpiresAt: newExpiry });
         }

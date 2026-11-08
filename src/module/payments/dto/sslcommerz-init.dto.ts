@@ -24,4 +24,8 @@ export class SslcommerzInitDto {
     @IsOptional()
     @IsString()
     customerCity?: string;
+
+    @IsOptional()
+    @IsString()
+    frontendCallbackUrl?: string;
 }

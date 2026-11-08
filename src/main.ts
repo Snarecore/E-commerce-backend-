@@ -37,7 +37,7 @@ async function bootstrap(): Promise<void> {
 			if (
 				!origin ||
 				allowedOrigins.includes(origin) ||
-				(!isProd && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin))
+				(!isProd && (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) || /^http:\/\/(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/.test(origin)))
 			) {
 				callback(null, true);
 			} else {
@@ -46,6 +46,29 @@ async function bootstrap(): Promise<void> {
 		},
 		methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
 	});
+	// 🛡️ Physical Body-Size Stream Abort Guard for SSLCommerz IPN (10 KB Max Stream)
+	// Mounted strictly BEFORE the generic 50MB parser to abort oversized streams before buffer memory allocation
+	const ipnRoutePath = `/${CONFIG.API}/v${CONFIG.API_VERSION}/payments/sslcommerz/ipn`;
+	app.use(
+		ipnRoutePath,
+		bodyParser.urlencoded({
+			limit: '10kb',
+			extended: false,
+			verify: (req: any, _res, buf) => {
+				req.rawBody = buf;
+			},
+		})
+	);
+	app.use(
+		ipnRoutePath,
+		bodyParser.json({
+			limit: '10kb',
+			verify: (req: any, _res, buf) => {
+				req.rawBody = buf;
+			},
+		})
+	);
+
 	app.use(
 		bodyParser.json({
 			limit: '50mb',

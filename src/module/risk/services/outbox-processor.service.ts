@@ -57,7 +57,8 @@ export class OutboxProcessorService {
         .where('oe.status = :status AND oe.availableAt <= NOW()', { status: OutboxStatusEnum.PENDING })
         .orderBy('oe.createdAt', 'ASC')
         .take(batchSize)
-        .setLock('pessimistic_write', undefined, ['SKIP LOCKED'])
+        .setLock('pessimistic_write')
+        .setOnLocked('skip_locked')
         .getMany();
 
       if (events.length === 0) {

@@ -27,6 +27,8 @@ import { NotificationService } from '../notification/notification.service';
 import { CouponService } from '../coupon/coupon.service';
 import { MegaDiscountRepository, SINGLETON_MEGA_DISCOUNT_ID } from '../setting/mega-discount/mega-discount.repository';
 import { MegaDiscount } from '../setting/mega-discount/entities/mega-discount.entity';
+import { GuestTokenUtil } from './utils/guest-token.util';
+import { PaymentAttemptStatus } from '../payments/enums/payment.enum';
 
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { AuditAction } from '../audit-log/constants/audit-action.enum';
@@ -59,7 +61,8 @@ const DEDUCTED_STATUS_GROUP = new Set([
 const RESTOCKED_STATUS_GROUP = new Set([
     OrderStatus.CANCELLED,
     OrderStatus.REJECTED,
-    OrderStatus.RETURNED,
+    // Note: OrderStatus.RETURNED is deliberately excluded from blind automatic restock (P0 safety rule).
+    // Returned items must go through ReturnInspection (Phase 5 / RMA) to verify condition before restock.
     OrderStatus.FAILED
 ]);
 
@@ -73,6 +76,8 @@ import {
     BlacklistSeverityEnum
 } from '../risk/entity/blacklist.entity';
 import { EmailService } from '../email-service/email-sender.service';
+import { InventoryEngineService } from '../inventory-engine/services/inventory-engine.service';
+import { StockMovementType, StockReferenceType } from '../../enums/stock-movement.enum';
 
 @Injectable()
 export class OrdersService {
@@ -92,7 +97,8 @@ export class OrdersService {
         @Optional() private readonly auditLogService?: AuditLogService,
         @Optional() private readonly socketService?: SocketService,
         @Optional() private readonly blacklistService?: BlacklistService,
-        @Optional() private readonly emailService?: EmailService
+        @Optional() private readonly emailService?: EmailService,
+        @Optional() private readonly inventoryEngineService?: InventoryEngineService
     ) {}
 
     private getStripeClient(): Stripe {
@@ -608,7 +614,9 @@ export class OrdersService {
                                 size: p.selectedSize || ''
                             }))
                         },
-                        orderPaymentExpiresAt: new Date(Date.now() + 25 * 60 * 1000), // Harmonized 25 min window
+                        orderPaymentExpiresAt: (!finalPaymentMethod || finalPaymentMethod.toUpperCase() === 'COD' || finalPaymentMethod.toUpperCase() === 'CASH_ON_DELIVERY')
+                            ? null
+                            : new Date(Date.now() + 48 * 60 * 60 * 1000), // 48-hour payment window for online gateways
                         statusHistory: initialStatusHistory
                     } as any);
 
@@ -663,6 +671,27 @@ export class OrdersService {
 
                         product.quantity = newTotalQty;
                         product.sizeStock = updatedSizeStock;
+
+                        if (this.inventoryEngineService) {
+                            for (const [sizeName, qtyNeeded] of req.sizeMap.entries()) {
+                                const prevVariantQty = (product.sizeStock && typeof product.sizeStock === 'object')
+                                    ? (Number(product.sizeStock[sizeName]) || 0) + qtyNeeded
+                                    : (Number(product.quantity) || 0) + qtyNeeded;
+
+                                await this.inventoryEngineService.recordMovement({
+                                    productId: product.id,
+                                    sku: product.sku || null,
+                                    size: sizeName || null,
+                                    movementType: StockMovementType.SALE_DISPATCH,
+                                    quantityChange: -qtyNeeded,
+                                    onHandBefore: prevVariantQty,
+                                    onHandAfter: Math.max(0, prevVariantQty - qtyNeeded),
+                                    referenceType: StockReferenceType.ORDER,
+                                    referenceId: savedOrder.orderId,
+                                    note: `Order ${savedOrder.orderId} dispatch deduction`
+                                }, queryRunner.manager);
+                            }
+                        }
                     }
 
                     if (this.notificationService) {
@@ -799,7 +828,13 @@ export class OrdersService {
                 }
             }
 
-            return ResponseUtils.successResponseHandler(201, 'Order created successfully.', 'data', savedOrderResult);
+            const guestAccessToken = GuestTokenUtil.generate(savedOrderResult.orderId, 7);
+            const responseData = {
+                ...savedOrderResult,
+                guestAccessToken
+            };
+
+            return ResponseUtils.successResponseHandler(201, 'Order created successfully.', 'data', responseData);
         } catch (error: unknown) {
             if (error instanceof HttpException) throw error;
             const driverError = (error as any)?.driverError || error;
@@ -907,6 +942,28 @@ export class OrdersService {
                             quantity: currentQty + req.totalQty,
                             sizeStock: updatedSizeStock
                         });
+
+                        if (this.inventoryEngineService) {
+                            for (const [sizeName, qtyToReturn] of req.sizeMap.entries()) {
+                                const curVariantQty = (product.sizeStock && typeof product.sizeStock === 'object')
+                                    ? (Number(product.sizeStock[sizeName]) || 0)
+                                    : currentQty;
+
+                                await this.inventoryEngineService.recordMovement({
+                                    productId: product.id,
+                                    sku: product.sku || null,
+                                    size: sizeName || null,
+                                    movementType: StockMovementType.SALE_CANCEL_RELEASE,
+                                    quantityChange: qtyToReturn,
+                                    onHandBefore: curVariantQty,
+                                    onHandAfter: curVariantQty + qtyToReturn,
+                                    referenceType: StockReferenceType.ORDER,
+                                    referenceId: order.orderId,
+                                    reason: dto.rejectionReason || targetStatus,
+                                    note: `Order ${order.orderId} transition to ${targetStatus} restock`
+                                }, queryRunner.manager);
+                            }
+                        }
                     }
                 }
             }
@@ -996,7 +1053,16 @@ export class OrdersService {
             }
 
             // Asynchronous, Non-blocking Order Status Update Email Dispatch
-            if (this.emailService) {
+            // 📧 Standard E-Commerce Lifecycle:
+            // Suppress redundant email for ORDER_PLACED / PENDING: The initial Order Confirmation email already notified the customer.
+            // Status update emails are strictly sent for active fulfillment milestones (Processing, Packaging, Shipped, Delivered, Cancelled, Rejected).
+            const isPlacementStatus =
+                targetStatus === OrderStatus.ORDER_PLACED ||
+                targetStatus === OrderStatus.PENDING ||
+                (targetStatus as string) === 'Order Placed' ||
+                (targetStatus as string) === 'Pending';
+
+            if (this.emailService && !isPlacementStatus) {
                 try {
                     const recipientEmail =
                         updatedOrder.shippingAddress?.email ||
@@ -1537,5 +1603,182 @@ export class OrdersService {
             const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
             throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /**
+     * Strictly Read-Only & Mutation-Free Cart Recovery Payload Generator.
+     * Enforces dual authorization (User Ownership OR Cryptographically Signed Guest Token).
+     * Re-synchronizes order items against the live product catalog and available stock.
+     */
+    async generateCartRestorePayload(
+        orderId: string,
+        requestUser?: any,
+        guestToken?: string
+    ): Promise<ApiResponse<any>> {
+        const cleanId = (orderId || '').replace(/^#/, '').trim();
+        const order = await this.repository.getRepository().findOne({
+            where: [
+                { id: cleanId, isDeleted: false },
+                { orderId: cleanId, isDeleted: false }
+            ],
+            relations: ['orderSummaries', 'payments']
+        });
+
+        // 🛡️ Unauthorized or Non-Existent: Always return 404 to prevent order enumeration
+        if (!order) {
+            throw new HttpException('Order not found.', HttpStatus.NOT_FOUND);
+        }
+
+        // Dual Authorization Evaluation
+        const isUserAuthenticated = Boolean(requestUser && (requestUser.id || requestUser.userId));
+        const requestUserId = requestUser?.id || requestUser?.userId;
+        const isOrderOwner = Boolean(order.userId && isUserAuthenticated && order.userId === requestUserId);
+        const isGuestAuthorized = Boolean(!isOrderOwner && guestToken && GuestTokenUtil.verify(guestToken, order.orderId));
+
+        if (!isOrderOwner && !isGuestAuthorized) {
+            throw new HttpException('Order not found.', HttpStatus.NOT_FOUND);
+        }
+
+        // Order Lifecycle Policy: Finalized orders cannot be modified
+        if (
+            order.status === OrderStatus.COMPLETED ||
+            order.status === OrderStatus.DELIVERED ||
+            order.paymentStatus === PaymentStatus.PAID
+        ) {
+            throw new HttpException('This order has already been finalized and cannot be modified.', HttpStatus.BAD_REQUEST);
+        }
+
+        // Active Payment Session Policy
+        const existingPayments = order.payments || [];
+        const now = Date.now();
+        const activeAttempt = existingPayments.find(
+            (p) =>
+                (p.status === PaymentAttemptStatus.PENDING || p.status === PaymentAttemptStatus.PROCESSING) &&
+                p.sessionExpiresAt &&
+                new Date(p.sessionExpiresAt).getTime() > now
+        );
+
+        if (activeAttempt) {
+            throw new HttpException(
+                'A payment session is currently in progress for this order. Please complete payment or wait for the session to expire before modifying items.',
+                HttpStatus.BAD_REQUEST
+            );
+        }
+
+        // Read immutable order summaries
+        const summaries = order.orderSummaries || [];
+        if (summaries.length === 0) {
+            throw new HttpException('Order contains no items.', HttpStatus.BAD_REQUEST);
+        }
+
+        const productRepo = this.dataSource.getRepository(Product);
+        const productIds = Array.from(new Set(summaries.map((s) => s.productId).filter(Boolean)));
+
+        const liveProducts = await productRepo.find({
+            where: { id: In(productIds), isDeleted: false }
+        });
+        const productMap = new Map<string, Product>();
+        for (const p of liveProducts) {
+            productMap.set(p.id, p);
+        }
+
+        let megaDiscountRecord: MegaDiscount | null = null;
+        try {
+            megaDiscountRecord = await this.dataSource.getRepository(MegaDiscount).findOne({
+                where: { id: SINGLETON_MEGA_DISCOUNT_ID }
+            });
+        } catch {
+            megaDiscountRecord = null;
+        }
+
+        const sanitizedItems: any[] = [];
+        const droppedItems: any[] = [];
+        const adjustedItems: any[] = [];
+        let priceChanged = false;
+        let stockAdjusted = false;
+
+        for (const item of summaries) {
+            const product = productMap.get(item.productId);
+            if (!product || !product.status) {
+                droppedItems.push({
+                    productId: item.productId,
+                    productName: item.productName || 'Product',
+                    reason: 'Product is no longer available in the catalog.'
+                });
+                continue;
+            }
+
+            // Live pricing engine resolution
+            const liveUnitPrice = ProductPricingResolver.resolveUnitPrice({
+                price: Number(product.price) || 0,
+                discountType: product.discountType,
+                discountAmount: Number(product.discountAmount) || 0
+            }, megaDiscountRecord);
+
+            const originalUnitPrice = Number(item.price) || 0;
+            if (Math.abs(liveUnitPrice - originalUnitPrice) > 0.01) {
+                priceChanged = true;
+            }
+
+            // Live variant and total stock determination
+            const requestedQty = Math.max(1, Number(item.quantity) || 1);
+            const selectedSize = (item.size || (item as any).selectedSize || '').trim();
+
+            let availableStock = 0;
+            if (selectedSize && product.sizeStock && typeof product.sizeStock === 'object') {
+                availableStock = Number(product.sizeStock[selectedSize]) || 0;
+            } else {
+                availableStock = Number(product.quantity) || 0;
+            }
+
+            if (availableStock <= 0) {
+                droppedItems.push({
+                    productId: product.id,
+                    productName: product.name,
+                    size: selectedSize || undefined,
+                    reason: 'Variant is completely out of stock.'
+                });
+                continue;
+            }
+
+            let effectiveQty = requestedQty;
+            if (requestedQty > availableStock) {
+                effectiveQty = availableStock;
+                stockAdjusted = true;
+                adjustedItems.push({
+                    productId: product.id,
+                    productName: product.name,
+                    size: selectedSize || undefined,
+                    requestedQty,
+                    adjustedQty: effectiveQty
+                });
+            }
+
+            sanitizedItems.push({
+                id: product.id,
+                name: product.name,
+                slug: product.slug,
+                featuredImage: product.featuredImage || item.productImage || '',
+                price: liveUnitPrice,
+                quantity: effectiveQty,
+                selectedSize: selectedSize || undefined,
+                availableStock,
+                sku: product.sku || undefined
+            });
+        }
+
+        return ResponseUtils.successResponseHandler(
+            200,
+            'Cart restore payload generated successfully.',
+            'data',
+            {
+                orderId: order.orderId,
+                items: sanitizedItems,
+                priceChanged,
+                stockAdjusted,
+                droppedItems,
+                adjustedItems
+            }
+        );
     }
 }

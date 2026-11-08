@@ -191,6 +191,8 @@ describe('OrderExpiryWorker', () => {
             orderId: 'ORD-EX-004',
             status: OrderStatus.PENDING,
             paymentStatus: PaymentStatus.PENDING,
+            paymentMethod: 'SSLCOMMERZ',
+            orderPaymentExpiresAt: new Date(Date.now() - 1000),
             payments: [candidatePayment],
         };
 
@@ -207,6 +209,8 @@ describe('OrderExpiryWorker', () => {
             orderId: 'ORD-EX-004',
             status: OrderStatus.PENDING,
             paymentStatus: PaymentStatus.PENDING,
+            paymentMethod: 'SSLCOMMERZ',
+            orderPaymentExpiresAt: new Date(Date.now() - 1000),
         };
 
         const mockSummaries = [
@@ -250,5 +254,23 @@ describe('OrderExpiryWorker', () => {
             })
         );
         expect(mockQueryRunner.commitTransaction).toHaveBeenCalled();
+    });
+
+    it('should NEVER cancel or touch Cash on Delivery (COD) orders', async () => {
+        const codOrder: any = {
+            id: 'ord-cod-1',
+            orderId: 'ORD-COD-001',
+            status: OrderStatus.PENDING,
+            paymentStatus: PaymentStatus.PENDING,
+            paymentMethod: 'COD',
+            orderPaymentExpiresAt: null,
+            payments: []
+        };
+
+        mockOrderRepo.find.mockResolvedValueOnce([codOrder]);
+        await worker.handleExpiredOrders();
+
+        expect(mockQueryRunner.startTransaction).not.toHaveBeenCalled();
+        expect(codOrder.status).toBe(OrderStatus.PENDING);
     });
 });

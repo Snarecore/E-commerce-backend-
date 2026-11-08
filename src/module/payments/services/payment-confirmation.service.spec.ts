@@ -137,8 +137,8 @@ describe('PaymentConfirmationService', () => {
             const result = await service.confirmPayment('VAL-123', 'SSLCZ-001', PaymentEventSource.BROWSER_CALLBACK);
 
             expect(result.success).toBe(false);
-            expect(result.paymentStatus).toBe('REJECTED');
-            expect(result.message).toContain('Amount mismatch');
+            expect(result.paymentStatus).toBe('REVIEW_REQUIRED');
+            expect(result.message).toContain('AMOUNT_MISMATCH');
         });
 
         it('should reject payment if transaction ID mismatch is detected', async () => {
@@ -197,8 +197,8 @@ describe('PaymentConfirmationService', () => {
             const result = await service.confirmPayment('VAL-123', 'SSLCZ-001', PaymentEventSource.BROWSER_CALLBACK);
 
             expect(result.success).toBe(false);
-            expect(result.paymentStatus).toBe('REJECTED');
-            expect(result.message).toContain('Currency mismatch');
+            expect(result.paymentStatus).toBe('REVIEW_REQUIRED');
+            expect(result.message).toContain('CURRENCY_MISMATCH');
         });
 
         it('should successfully confirm payment and update order to ORDER_PLACED', async () => {

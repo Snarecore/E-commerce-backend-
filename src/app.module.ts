@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import sslcommerzConfig from './configs/sslcommerz.config';
 import { APP_GUARD, Reflector } from '@nestjs/core';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
@@ -67,6 +68,7 @@ import { AuditLogModule } from './module/audit-log/audit-log.module';
 import { ProfitReportModule } from './module/profit-report/profit-report.module';
 import { SocketModule } from './module/socket/socket.module';
 import { RiskModule } from './module/risk/risk.module';
+import { InventoryEngineModule } from './module/inventory-engine/inventory-engine.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -82,7 +84,8 @@ import { AppController } from './app.controller';
 			],
 		}),
 		ConfigModule.forRoot({
-			isGlobal: true
+			isGlobal: true,
+			load: [sslcommerzConfig]
 		}),
 		MailerModule.forRootAsync({
 			imports: [ConfigModule],
@@ -166,7 +169,8 @@ import { AppController } from './app.controller';
 		AuditLogModule,
 		PopupModule,
 		ProfitReportModule,
-		RiskModule
+		RiskModule,
+		InventoryEngineModule
 	],
 	providers: [
 		{

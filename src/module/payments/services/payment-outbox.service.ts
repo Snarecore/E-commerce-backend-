@@ -82,7 +82,8 @@ export class PaymentOutboxService {
                 )
                 .orderBy('outbox.createdAt', 'ASC')
                 .take(10)
-                .setLock('pessimistic_write', undefined, ['SKIP LOCKED'])
+                .setLock('pessimistic_write')
+                .setOnLocked('skip_locked')
                 .getMany();
 
             if (candidateEvents.length === 0) {

@@ -10,6 +10,8 @@ import { PaymentAttemptStatus, PaymentGateway } from '../payments/enums/payment.
 import { SslcommerzService } from '../payments/services/sslcommerz.service';
 import { Product } from '../inventory/product/entities/product.entity';
 import { OrderSummary } from '../order-summary/entity/order-summary.entity';
+import { InventoryEngineService } from '../inventory-engine/services/inventory-engine.service';
+import { StockMovementType, StockReferenceType } from '../../enums/stock-movement.enum';
 
 @Injectable()
 export class OrderExpiryWorker {
@@ -19,7 +21,8 @@ export class OrderExpiryWorker {
     constructor(
         private readonly dataSource: DataSource,
         private readonly sslcommerzService: SslcommerzService,
-        @Optional() private readonly configService?: ConfigService
+        @Optional() private readonly configService?: ConfigService,
+        @Optional() private readonly inventoryEngineService?: InventoryEngineService
     ) {}
 
     private getStripeClient(): Stripe | null {
@@ -105,6 +108,15 @@ export class OrderExpiryWorker {
      * External Gateway checks are performed with ZERO DB locks.
      */
     async processExpiredOrder(order: Orders): Promise<void> {
+        // 0. If order is COD or has no payment expiry, NEVER auto-cancel!
+        const isCod = !order.paymentMethod || 
+                      order.paymentMethod.toUpperCase() === 'COD' || 
+                      order.paymentMethod.toUpperCase() === 'CASH_ON_DELIVERY' ||
+                      order.paymentMethod.toLowerCase().includes('cash');
+        if (isCod || !order.orderPaymentExpiresAt) {
+            return;
+        }
+
         const payments = order.payments || [];
 
         // 1. If any payment attempt is PAID, do NOT cancel
@@ -245,6 +257,24 @@ export class OrderExpiryWorker {
                         quantity: currentQty + req.totalQty,
                         sizeStock: updatedSizeStock
                     });
+
+                    if (this.inventoryEngineService) {
+                        for (const [sizeName, restockQty] of req.sizeMap.entries()) {
+                            await this.inventoryEngineService.recordMovement({
+                                productId: product.id,
+                                sku: product.sku || null,
+                                size: sizeName || null,
+                                movementType: StockMovementType.SALE_CANCEL_RELEASE,
+                                quantityChange: restockQty,
+                                onHandBefore: currentQty,
+                                onHandAfter: currentQty + req.totalQty,
+                                referenceType: StockReferenceType.ORDER,
+                                referenceId: lockedOrder.orderId,
+                                reason: 'EXPIRED_PAYMENT_TIMEOUT',
+                                note: `Order ${lockedOrder.orderId} expired payment timeout restock`
+                            }, queryRunner.manager);
+                        }
+                    }
                 }
             }
 
