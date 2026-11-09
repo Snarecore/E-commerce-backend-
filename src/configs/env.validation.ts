@@ -209,6 +209,28 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
 	if (!resolvedConfig.DATABASE_NAME && resolvedConfig.DB_NAME) resolvedConfig.DATABASE_NAME = resolvedConfig.DB_NAME;
 	if (!resolvedConfig.DATABASE_SSL && resolvedConfig.DB_SSL) resolvedConfig.DATABASE_SSL = resolvedConfig.DB_SSL;
 
+	// 🛡️ Intelligent Fallback 1: GUEST_ORDER_TOKEN_SECRET falls back to JWT_SECRET if not explicitly set
+	if (!resolvedConfig.GUEST_ORDER_TOKEN_SECRET && resolvedConfig.JWT_SECRET) {
+		resolvedConfig.GUEST_ORDER_TOKEN_SECRET = resolvedConfig.JWT_SECRET;
+	}
+
+	// 🛡️ Intelligent Fallback 2: Auto-derive live PASSWORD_RESET_PAGE from FRONTEND_PUBLIC_URL if missing or pointing to localhost
+	const frontendUrlStr = String(resolvedConfig.FRONTEND_PUBLIC_URL || '').trim();
+	const passResetStr = String(resolvedConfig.PASSWORD_RESET_PAGE || '').trim();
+	if (
+		frontendUrlStr.startsWith('https://') &&
+		(!passResetStr || passResetStr.includes('localhost') || passResetStr.startsWith('http://'))
+	) {
+		resolvedConfig.PASSWORD_RESET_PAGE = `${frontendUrlStr.replace(/\/+$/, '')}/reset-password`;
+	}
+
+	// 🛡️ Intelligent Fallback 3: Auto-derive BACKEND_PUBLIC_URL from VERCEL_URL if on Vercel and points to localhost
+	const vercelUrlStr = String(resolvedConfig.VERCEL_URL || process.env.VERCEL_URL || '').trim();
+	const backendUrlStr = String(resolvedConfig.BACKEND_PUBLIC_URL || '').trim();
+	if (vercelUrlStr && (!backendUrlStr || backendUrlStr.includes('localhost'))) {
+		resolvedConfig.BACKEND_PUBLIC_URL = `https://${vercelUrlStr}/api/v1`;
+	}
+
 	const parseResult = EnvSchema.safeParse(resolvedConfig);
 
 	if (!parseResult.success) {
