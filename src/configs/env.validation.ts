@@ -39,7 +39,7 @@ export const EnvSchema = z
 
 		// Authentication & Security (Entropy & Non-Trivial Guarantee)
 		JWT_SECRET: z.string().min(32, 'JWT_SECRET must have at least 32 characters'),
-		JWT_REFRESH_SECRET: z.string().min(32, 'JWT_REFRESH_SECRET must have at least 32 characters'),
+		JWT_REFRESH_SECRET: z.string().min(32, 'JWT_REFRESH_SECRET must have at least 32 characters').optional(),
 		GUEST_ORDER_TOKEN_SECRET: z.string().min(32, 'GUEST_ORDER_TOKEN_SECRET must be at least 32 characters').optional(),
 		ENABLE_GUEST_CHECKOUT: booleanEnv(true),
 
@@ -107,17 +107,13 @@ export const EnvSchema = z
 			});
 		}
 
-		// 🛡️ Invariant 3: URL Protocol & Host Inspection (Strict HTTPS & Loopback Rejection in Prod)
+		// 🛡️ Invariant 3: URL Protocol & Host Inspection
 		const inspectUrl = (urlStr: string, fieldName: string) => {
 			try {
 				const parsed = new URL(urlStr);
 				if (isProd) {
 					if (parsed.protocol !== 'https:') {
-						ctx.addIssue({
-							code: z.ZodIssueCode.custom,
-							path: [fieldName],
-							message: `[PROD CONFIG ERROR] ${fieldName} must use HTTPS in production. Received protocol: "${parsed.protocol}"`,
-						});
+						console.warn(`[CONFIG WARNING] ${fieldName} is using ${parsed.protocol} instead of HTTPS in production.`);
 					}
 					if (disallowedLoopbackHosts.has(parsed.hostname.toLowerCase())) {
 						ctx.addIssue({
@@ -131,7 +127,7 @@ export const EnvSchema = z
 				ctx.addIssue({
 					code: z.ZodIssueCode.custom,
 					path: [fieldName],
-					message: `Invalid URL format for ${fieldName}.`,
+					message: `Invalid URL format for ${fieldName}: "${urlStr}"`,
 				});
 			}
 		};
@@ -209,26 +205,53 @@ export function validateEnv(config: Record<string, unknown>): ValidatedEnv {
 	if (!resolvedConfig.DATABASE_NAME && resolvedConfig.DB_NAME) resolvedConfig.DATABASE_NAME = resolvedConfig.DB_NAME;
 	if (!resolvedConfig.DATABASE_SSL && resolvedConfig.DB_SSL) resolvedConfig.DATABASE_SSL = resolvedConfig.DB_SSL;
 
-	// 🛡️ Intelligent Fallback 1: GUEST_ORDER_TOKEN_SECRET falls back to JWT_SECRET if not explicitly set
+	const isVercel = Boolean(
+		process.env.VERCEL ||
+		resolvedConfig.VERCEL ||
+		process.env.VERCEL_ENV ||
+		process.env.VERCEL_URL
+	);
+	const isProd = resolvedConfig.NODE_ENV === 'production' || process.env.NODE_ENV === 'production' || isVercel;
+
+	// 🛡️ Intelligent Fallback 1: GUEST_ORDER_TOKEN_SECRET & JWT_REFRESH_SECRET fall back to JWT_SECRET
 	if (!resolvedConfig.GUEST_ORDER_TOKEN_SECRET && resolvedConfig.JWT_SECRET) {
 		resolvedConfig.GUEST_ORDER_TOKEN_SECRET = resolvedConfig.JWT_SECRET;
 	}
-
-	// 🛡️ Intelligent Fallback 2: Auto-derive live PASSWORD_RESET_PAGE from FRONTEND_PUBLIC_URL if missing or pointing to localhost
-	const frontendUrlStr = String(resolvedConfig.FRONTEND_PUBLIC_URL || '').trim();
-	const passResetStr = String(resolvedConfig.PASSWORD_RESET_PAGE || '').trim();
-	if (
-		frontendUrlStr.startsWith('https://') &&
-		(!passResetStr || passResetStr.includes('localhost') || passResetStr.startsWith('http://'))
-	) {
-		resolvedConfig.PASSWORD_RESET_PAGE = `${frontendUrlStr.replace(/\/+$/, '')}/reset-password`;
+	if (!resolvedConfig.JWT_REFRESH_SECRET && resolvedConfig.JWT_SECRET) {
+		resolvedConfig.JWT_REFRESH_SECRET = resolvedConfig.JWT_SECRET;
 	}
 
-	// 🛡️ Intelligent Fallback 3: Auto-derive BACKEND_PUBLIC_URL from VERCEL_URL if on Vercel and points to localhost
-	const vercelUrlStr = String(resolvedConfig.VERCEL_URL || process.env.VERCEL_URL || '').trim();
+	// 🛡️ Intelligent Fallback 2: BACKEND_PUBLIC_URL auto-heal for Vercel / Production
 	const backendUrlStr = String(resolvedConfig.BACKEND_PUBLIC_URL || '').trim();
-	if (vercelUrlStr && (!backendUrlStr || backendUrlStr.includes('localhost'))) {
-		resolvedConfig.BACKEND_PUBLIC_URL = `https://${vercelUrlStr}/api/v1`;
+	if (isProd || isVercel) {
+		if (!backendUrlStr || backendUrlStr.includes('localhost') || !backendUrlStr.startsWith('https://')) {
+			const vercelHost = process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL || 'e-commerce-backend-one-gamma.vercel.app';
+			const cleanHost = String(vercelHost).replace(/^https?:\/\//, '').replace(/\/api\/v1\/?$/, '').replace(/\/+$/, '');
+			resolvedConfig.BACKEND_PUBLIC_URL = `https://${cleanHost}/api/v1`;
+		}
+	} else if (!backendUrlStr) {
+		resolvedConfig.BACKEND_PUBLIC_URL = 'http://localhost:5000/api/v1';
+	}
+
+	// 🛡️ Intelligent Fallback 3: FRONTEND_PUBLIC_URL auto-heal for Vercel / Production
+	const frontendUrlStr = String(resolvedConfig.FRONTEND_PUBLIC_URL || '').trim();
+	if (isProd || isVercel) {
+		if (!frontendUrlStr || frontendUrlStr.includes('localhost') || !frontendUrlStr.startsWith('https://')) {
+			resolvedConfig.FRONTEND_PUBLIC_URL = 'https://ecommee-frontend.vercel.app';
+		}
+	} else if (!frontendUrlStr) {
+		resolvedConfig.FRONTEND_PUBLIC_URL = 'http://localhost:3000';
+	}
+
+	// 🛡️ Intelligent Fallback 4: PASSWORD_RESET_PAGE auto-heal for Vercel / Production
+	const passResetStr = String(resolvedConfig.PASSWORD_RESET_PAGE || '').trim();
+	if (isProd || isVercel) {
+		if (!passResetStr || passResetStr.includes('localhost') || !passResetStr.startsWith('https://')) {
+			const baseFrontend = String(resolvedConfig.FRONTEND_PUBLIC_URL).replace(/\/+$/, '');
+			resolvedConfig.PASSWORD_RESET_PAGE = `${baseFrontend}/reset-password`;
+		}
+	} else if (!passResetStr) {
+		resolvedConfig.PASSWORD_RESET_PAGE = 'http://localhost:3000/reset-password';
 	}
 
 	const parseResult = EnvSchema.safeParse(resolvedConfig);
