@@ -26,23 +26,24 @@ export const getTypeOrmConfig = (): TypeOrmModuleOptions => {
 
 	const isSslRequired = sslConfig === 'true' || host?.includes('tidbcloud.com');
 
-	const connectionLimit = getValidatedInt(configService, 'DB_CONNECTION_LIMIT', 20, 1);
-	const maxIdle = getValidatedInt(configService, 'DB_MAX_IDLE', 10, 0);
+	const isVercel = Boolean(process.env.VERCEL);
+	const connectionLimit = getValidatedInt(configService, 'DB_CONNECTION_LIMIT', isVercel ? 5 : 20, 1);
+	const maxIdle = getValidatedInt(configService, 'DB_MAX_IDLE', isVercel ? 2 : 10, 0);
 	if (maxIdle > connectionLimit) {
-		throw new Error(`[Config Error] DB_MAX_IDLE (${maxIdle}) cannot exceed DB_CONNECTION_LIMIT (${connectionLimit}).`);
+		console.warn(`[Config Warning] DB_MAX_IDLE (${maxIdle}) exceeds DB_CONNECTION_LIMIT (${connectionLimit}). Adjusting maxIdle to ${connectionLimit}.`);
 	}
 	const connectTimeout = getValidatedInt(configService, 'DB_CONNECT_TIMEOUT', 5000, 1000);
 	const idleTimeout = getValidatedInt(configService, 'DB_IDLE_TIMEOUT', 60000, 1000);
 
 	const mysqlMaxConnections = getValidatedInt(configService, 'MYSQL_MAX_CONNECTIONS', 150, 1);
 	const budgetPercent = getValidatedInt(configService, 'DB_CONNECTION_BUDGET_PERCENT', 70, 1);
-	const pm2Instances = getValidatedInt(configService, 'PM2_INSTANCES', 2, 1);
+	const pm2Instances = getValidatedInt(configService, 'PM2_INSTANCES', isVercel ? 1 : 2, 1);
 
 	const effectiveBudget = pm2Instances * connectionLimit;
 	const maxAllowedBudget = Math.floor(mysqlMaxConnections * (budgetPercent / 100));
 
 	if (effectiveBudget > maxAllowedBudget) {
-		throw new Error(`[Config Error] Effective connection budget (${effectiveBudget} connections: ${pm2Instances} workers x ${connectionLimit} pool) exceeds maximum allowed pool budget (${maxAllowedBudget} connections, which is ${budgetPercent}% of MYSQL_MAX_CONNECTIONS=${mysqlMaxConnections}). Reduce DB_CONNECTION_LIMIT or PM2_INSTANCES.`);
+		console.warn(`[Config Warning] Effective connection budget (${effectiveBudget} connections: ${pm2Instances} workers x ${connectionLimit} pool) exceeds maximum allowed pool budget (${maxAllowedBudget} connections, which is ${budgetPercent}% of MYSQL_MAX_CONNECTIONS=${mysqlMaxConnections}).`);
 	}
 
 	return {

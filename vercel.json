@@ -3,7 +3,8 @@
   "regions": ["sin1"],
   "functions": {
     "api/index.ts": {
-      "includeFiles": "templates/**"
+      "includeFiles": "templates/**",
+      "maxDuration": 60
     }
   },
   "rewrites": [

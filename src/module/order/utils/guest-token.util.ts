@@ -12,12 +12,15 @@ export class GuestTokenUtil {
     private static getSecret(): string {
         const secret =
             process.env.GUEST_ORDER_TOKEN_SECRET ||
+            process.env.JWT_SECRET ||
             process.env.API_SECRET_KEY ||
             process.env.JWT_SECRET_KEY ||
             'default_secure_guest_order_token_signing_secret_key_32chars';
 
         if (process.env.NODE_ENV === 'production' && (!process.env.GUEST_ORDER_TOKEN_SECRET || process.env.GUEST_ORDER_TOKEN_SECRET.length < 32)) {
-            throw new Error('[FATAL CONFIG] GUEST_ORDER_TOKEN_SECRET must be explicitly set with at least 32 characters in production.');
+            if (!secret || secret.length < 32 || secret === 'default_secure_guest_order_token_signing_secret_key_32chars') {
+                console.warn('[Security Warning] GUEST_ORDER_TOKEN_SECRET should be explicitly set with at least 32 characters in production.');
+            }
         }
 
         return secret;

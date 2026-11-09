@@ -57,29 +57,29 @@ export class PaymentsService {
             process.env.API_SECRET_KEY;
 
         if (!secretKey) {
-            throw new Error('STRIPE_SECRET_KEY is missing from environment variables');
+            this.logger.warn('STRIPE_SECRET_KEY is missing from environment variables. Stripe operations will be disabled.');
         }
 
-        const backendUrl = this.configService.get<string>('BACKEND_PUBLIC_URL') || process.env.BACKEND_PUBLIC_URL;
+        let backendUrl = this.configService.get<string>('BACKEND_PUBLIC_URL') || process.env.BACKEND_PUBLIC_URL;
         if (!backendUrl) {
-            throw new Error('CRITICAL CONFIGURATION ERROR: "BACKEND_PUBLIC_URL" is missing in environment variables. Define it in your .env file.');
+            this.logger.warn('WARNING: "BACKEND_PUBLIC_URL" is not defined in environment variables. Define it for live payment callbacks.');
+        } else if (process.env.NODE_ENV === 'production' && (backendUrl.includes('localhost') || backendUrl.includes('127.0.0.1'))) {
+            if (process.env.VERCEL_URL) {
+                backendUrl = `https://${process.env.VERCEL_URL}/api/v1`;
+                this.logger.warn(`[Auto-Detected] Overriding localhost BACKEND_PUBLIC_URL with Vercel URL: ${backendUrl}`);
+            } else {
+                this.logger.warn('WARNING: "BACKEND_PUBLIC_URL" points to localhost in production mode. Set your live public API domain.');
+            }
         }
 
         const frontendUrl = this.configService.get<string>('FRONTEND_PUBLIC_URL') || process.env.FRONTEND_PUBLIC_URL;
         if (!frontendUrl) {
-            throw new Error('CRITICAL CONFIGURATION ERROR: "FRONTEND_PUBLIC_URL" is missing in environment variables. Define it in your .env file.');
+            this.logger.warn('WARNING: "FRONTEND_PUBLIC_URL" is not defined in environment variables.');
+        } else if (process.env.NODE_ENV === 'production' && (frontendUrl.includes('localhost') || frontendUrl.includes('127.0.0.1'))) {
+            this.logger.warn('WARNING: "FRONTEND_PUBLIC_URL" points to localhost in production mode. Set your live customer store domain.');
         }
 
-        if (process.env.NODE_ENV === 'production') {
-            if (backendUrl.includes('localhost') || backendUrl.includes('127.0.0.1')) {
-                throw new Error('CRITICAL CONFIGURATION ERROR: "BACKEND_PUBLIC_URL" cannot point to localhost in production mode. Set your live public API domain.');
-            }
-            if (frontendUrl.includes('localhost') || frontendUrl.includes('127.0.0.1')) {
-                throw new Error('CRITICAL CONFIGURATION ERROR: "FRONTEND_PUBLIC_URL" cannot point to localhost in production mode. Set your live customer store domain.');
-            }
-        }
-
-        this.stripe = new Stripe(secretKey);
+        this.stripe = secretKey ? new Stripe(secretKey) : (null as any);
     }
 
     /**

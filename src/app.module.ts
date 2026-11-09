@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import sslcommerzConfig from './configs/sslcommerz.config';
+import { validateEnv } from './configs/env.validation';
 import { APP_GUARD, Reflector } from '@nestjs/core';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
@@ -85,14 +86,16 @@ import { AppController } from './app.controller';
 		}),
 		ConfigModule.forRoot({
 			isGlobal: true,
+			validate: validateEnv,
 			load: [sslcommerzConfig]
 		}),
 		MailerModule.forRootAsync({
 			imports: [ConfigModule],
 			inject: [ConfigService],
 			useFactory: (config: ConfigService) => {
-				const port = parseInt(config.get<string>('EMAIL_PORT') ?? '465', 10);
-				const secure = (config.get<string>('EMAIL_SECURE') ?? '').toLowerCase() === 'true' || port === 465;
+				const port = parseInt(String(config.get('EMAIL_PORT') ?? '465'), 10);
+				const emailSecureVal = config.get('EMAIL_SECURE');
+				const secure = typeof emailSecureVal === 'boolean' ? emailSecureVal : String(emailSecureVal ?? '').toLowerCase() === 'true' || port === 465;
 
 				return {
 					transport: {

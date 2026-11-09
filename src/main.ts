@@ -79,7 +79,7 @@ async function bootstrap(): Promise<void> {
 	);
 	app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 	app.use(cookieParser());
-	app.setGlobalPrefix(CONFIG.API, { exclude: ['/'] });
+	app.setGlobalPrefix(CONFIG.API, { exclude: ['/', 'health', 'health/live', 'health/ready'] });
     app.enableVersioning({
         type: VersioningType.URI
     });

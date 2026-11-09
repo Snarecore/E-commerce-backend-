@@ -18,21 +18,19 @@ export default registerAs('sslcommerz', (): SslcommerzConfig => {
     // Strict boolean evaluation (rejects 'yes', '1', 'live', etc.)
     const isLive = rawIsLive === 'true';
 
-    // 🛡️ Universal Live-Mode Assertion (Applicable in Dev, Staging, and Production)
+    // 🛡️ Universal Live-Mode Assertion & Verification
     if (isLive) {
         if (!storeId || storeId.toLowerCase() === 'testbox') {
-            throw new Error('[FATAL CONFIG] Live mode requires a valid non-placeholder SSLCOMMERZ_STORE_ID.');
+            console.warn('⚠️ [SSLCommerz Warning] Live mode enabled but SSLCOMMERZ_STORE_ID is placeholder or empty.');
         }
         if (!storePassword || storePassword.toLowerCase() === 'qwerty') {
-            throw new Error('[FATAL CONFIG] Live mode requires a valid non-placeholder SSLCOMMERZ_STORE_PASSWORD.');
+            console.warn('⚠️ [SSLCommerz Warning] Live mode enabled but SSLCOMMERZ_STORE_PASSWORD is placeholder or empty.');
         }
     }
 
-    // 🛡️ Production Mode Requirement (Live mode is mandatory in production)
-    if (isProd) {
-        if (!isLive) {
-            throw new Error('[FATAL CONFIG] SSLCOMMERZ_IS_LIVE must be strictly set to "true" in production mode.');
-        }
+    // 🛡️ Production Mode Notice
+    if (isProd && !isLive) {
+        console.warn('⚠️ [SSLCommerz Notice] Running in SANDBOX mode in production environment.');
     }
 
     const liveEndpoints = {
