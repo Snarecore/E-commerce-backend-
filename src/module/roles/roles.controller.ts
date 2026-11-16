@@ -4,7 +4,10 @@ import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { Roles } from './entities/role.entity';
 import { RolesService } from './roles.service';
+import { Roles as RequireRoles } from '../../decorators/role.decorator';
+import { Role } from '../../enums/role.enum';
 
+@RequireRoles(Role.ADMIN)
 @Controller('roles')
 export class RolesController {
   constructor(private readonly rolesService: RolesService) {}

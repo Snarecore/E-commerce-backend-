@@ -94,17 +94,11 @@ export class CreateOrdersDto {
     @IsString()
     paymentMethod?: string;
 
+    // Legacy payment-method marker only ('COD' | 'SSLCOMMERZ' | 'PENDING_STRIPE').
+    // Gateway IDs are never accepted here: online payments start after the order exists.
     @IsOptional()
     @IsString()
     paymentIntentId?: string;
-
-    @IsOptional()
-    @IsString()
-    stripeSessionId?: string;
-
-    @IsOptional()
-    @IsString()
-    paymentIntent?: string;
 
     @IsOptional()
     @IsNumber()
@@ -117,10 +111,6 @@ export class CreateOrdersDto {
     @IsOptional()
     @IsNumber()
     deliveryCharge?: number;
-
-    @IsOptional()
-    @IsString()
-    currency?: string;
 
     @IsOptional()
     @IsString()
@@ -171,4 +161,16 @@ export class CreateOrdersDto {
     @IsOptional()
     @IsString()
     couponCode?: string;
+
+    @IsOptional()
+    @IsString()
+    verificationId?: string;
+
+    @IsOptional()
+    @IsString()
+    firebaseIdToken?: string;
+
+    @IsOptional()
+    @IsString()
+    otpCode?: string;
 }

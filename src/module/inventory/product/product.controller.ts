@@ -74,7 +74,8 @@ export class ProductController {
 		return await this.service.findOne(id);
 	}
 
-	@Public()
+	@UseGuards(JwtAuthGuard, RolesGuard)
+	@Roles(Role.ADMIN)
 	@Patch(':id')
 	@UseInterceptors(FileFieldsInterceptor(
         [
@@ -106,7 +107,8 @@ export class ProductController {
 		return await this.service.updateProductStaus(id, dto);
 	}
 
-	@Public()
+	@UseGuards(JwtAuthGuard, RolesGuard)
+	@Roles(Role.ADMIN)
 	@Delete(':id')
 	async remove(@Param('id') id: string): Promise<ApiResponse<boolean>> {
 		return await this.service.remove(id);

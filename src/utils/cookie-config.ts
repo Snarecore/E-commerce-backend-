@@ -34,3 +34,23 @@ export const setAuthCookie = (res: Response, name: string, token: string, maxAge
 export const clearAuthCookie = (res: Response, name: string): void => {
 	res.clearCookie(name, getBaseCookieOptions());
 };
+
+// Cookie names older builds wrote; still cleared on logout so stale copies do not linger
+const LEGACY_COOKIE_NAMES = ['accessToken', 'refreshToken'];
+
+export const setSessionCookies = (res: Response, role: string | undefined, tokens: { accessToken: string; refreshToken?: string }): void => {
+	const isAdmin = String(role || '').toLowerCase() === 'admin';
+	setAuthCookie(res, isAdmin ? COOKIE_NAMES.ADMIN_ACCESS : COOKIE_NAMES.CUSTOMER_ACCESS, tokens.accessToken, ACCESS_TOKEN_MAX_AGE);
+	if (tokens.refreshToken) {
+		setAuthCookie(res, isAdmin ? COOKIE_NAMES.ADMIN_REFRESH : COOKIE_NAMES.CUSTOMER_REFRESH, tokens.refreshToken, REFRESH_TOKEN_MAX_AGE);
+	}
+};
+
+export const clearSessionCookies = (res: Response): void => {
+	[...Object.values(COOKIE_NAMES), ...LEGACY_COOKIE_NAMES].forEach((name) => clearAuthCookie(res, name));
+};
+
+export const readRefreshCookie = (cookies: Record<string, unknown> | undefined): string | null => {
+	const token = cookies?.[COOKIE_NAMES.ADMIN_REFRESH] || cookies?.[COOKIE_NAMES.CUSTOMER_REFRESH];
+	return typeof token === 'string' && token ? token : null;
+};

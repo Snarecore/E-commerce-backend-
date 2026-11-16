@@ -2,7 +2,6 @@ import { ProductPricingResolver } from "../../utils/pricing.engine";
 import { HttpException, HttpStatus, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ResponseUtils, ApiResponse } from '../../utils/response.utils';
-import Stripe from 'stripe';
 import * as crypto from 'crypto';
 import { Between, DataSource, FindOptionsOrder, In, LessThanOrEqual, MoreThanOrEqual, Like } from 'typeorm';
 import { OrdersRepository } from './order.repository';
@@ -28,7 +27,14 @@ import { CouponService } from '../coupon/coupon.service';
 import { MegaDiscountRepository, SINGLETON_MEGA_DISCOUNT_ID } from '../setting/mega-discount/mega-discount.repository';
 import { MegaDiscount } from '../setting/mega-discount/entities/mega-discount.entity';
 import { GuestTokenUtil } from './utils/guest-token.util';
+import { getStoreCurrency } from '../../configs/store-currency';
+import { resolveOrderAccess, toCustomerOrderView } from './utils/order-access.policy';
 import { PaymentAttemptStatus } from '../payments/enums/payment.enum';
+import { VerificationConsumptionService } from '../checkout-verification/services/verification-consumption.service';
+import { VerificationOrchestratorService } from '../checkout-verification/services/verification-orchestrator.service';
+import { GuestAccountClaimService } from '../checkout-verification/services/guest-account-claim.service';
+import { normalizeBDPhone, isValidBDPhone } from '../../utils/phone-normalizer.util';
+import { ConsumedVerification } from '../checkout-verification/interfaces/verification-provider.interface';
 
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { AuditAction } from '../audit-log/constants/audit-action.enum';
@@ -82,7 +88,6 @@ import { StockMovementType, StockReferenceType } from '../../enums/stock-movemen
 @Injectable()
 export class OrdersService {
     private readonly logger = new Logger(OrdersService.name);
-    private stripe: Stripe;
 
     constructor(
         private readonly dataSource: DataSource,
@@ -98,22 +103,11 @@ export class OrdersService {
         @Optional() private readonly socketService?: SocketService,
         @Optional() private readonly blacklistService?: BlacklistService,
         @Optional() private readonly emailService?: EmailService,
-        @Optional() private readonly inventoryEngineService?: InventoryEngineService
+        @Optional() private readonly inventoryEngineService?: InventoryEngineService,
+        @Optional() private readonly verificationConsumptionService?: VerificationConsumptionService,
+        @Optional() private readonly verificationOrchestratorService?: VerificationOrchestratorService,
+        @Optional() private readonly guestAccountClaimService?: GuestAccountClaimService
     ) {}
-
-    private getStripeClient(): Stripe {
-        if (!this.stripe) {
-            const secretKey =
-                (this.configService && this.configService.get<string>('STRIPE_SECRET_KEY')) ||
-                (this.configService && this.configService.get<string>('API_SECRET_KEY')) ||
-                process.env.STRIPE_SECRET_KEY ||
-                process.env.API_SECRET_KEY ||
-                'sk_test_51RnvzXBVnYSmQrwayblYCOqkpe6g1MYxnQ92LAMTn49Vr7xmmtqCxEZ9ks40UZBuks50zga66Zc36zV8zLy7DoGV00uRlztVlk';
-
-            this.stripe = new Stripe(secretKey);
-        }
-        return this.stripe;
-    }
 
     /**
      * Authoritative backend calculation for Cart & Checkout order preview.
@@ -270,6 +264,26 @@ export class OrdersService {
 
     async create(dto: CreateOrdersDto, userId: string): Promise<ApiResponse<OrdersInterface>> {
         try {
+            // Pre-validate phone number and check verification policy
+            const rawCustomerPhone = (dto.shippingAddress?.phone || dto.phone || '').trim();
+            let canonicalCustomerPhone = '';
+            if (rawCustomerPhone) {
+                try {
+                    canonicalCustomerPhone = normalizeBDPhone(rawCustomerPhone);
+                } catch (phoneErr: any) {
+                    throw new HttpException(phoneErr?.message || 'Invalid Bangladeshi mobile phone number.', HttpStatus.BAD_REQUEST);
+                }
+            }
+
+            const requireOtpEnv = this.configService?.get<string>('REQUIRE_CHECKOUT_OTP') ?? process.env.REQUIRE_CHECKOUT_OTP;
+            // Default to true so checkout requires verified phone even if no OTP env var is configured
+            const requireOtpConfig = requireOtpEnv !== undefined ? requireOtpEnv.toLowerCase() === 'true' : true;
+            const isOtpMandatory = requireOtpConfig;
+
+            if (isOtpMandatory && !canonicalCustomerPhone) {
+                throw new HttpException('A valid Bangladeshi mobile phone number is required to place an order.', HttpStatus.BAD_REQUEST);
+            }
+
             // 1. Idempotency Check with Customer Intent Fingerprint Verification
             const intentFingerprint = this.buildCustomerIntentFingerprint(dto, userId);
 
@@ -293,82 +307,25 @@ export class OrdersService {
                 }
             }
 
-            // 2. Determine Payment Method & Payment Intent Logic
+            // 2. Payment method. Orders are always created unpaid; card payments start afterwards
+            // via POST /payments/stripe/init (or SSLCommerz init), where the server sets the amount.
+            // Client-supplied gateway IDs are rejected so a payment cannot be replayed or mismatched.
             const paymentMethodInput = (dto.paymentMethod || '').trim().toUpperCase();
-            const rawPaymentIntentInput = (
-                dto.paymentIntentId ||
-                dto.paymentIntent ||
-                dto.stripeSessionId ||
-                (dto as any).sessionId ||
-                ''
-            ).trim();
+            const paymentMarker = (dto.paymentIntentId || '').trim().toUpperCase();
 
-            const isCOD =
-                paymentMethodInput === 'COD' ||
-                rawPaymentIntentInput.toUpperCase() === 'COD' ||
-                (!paymentMethodInput && !rawPaymentIntentInput);
-
-            const isSSLCommerz =
-                paymentMethodInput === 'SSLCOMMERZ' ||
-                rawPaymentIntentInput.toUpperCase() === 'SSLCOMMERZ';
-
+            const isCOD = paymentMethodInput === 'COD' || paymentMarker === 'COD' || (!paymentMethodInput && !paymentMarker);
+            const isSSLCommerz = paymentMethodInput === 'SSLCOMMERZ' || paymentMarker === 'SSLCOMMERZ';
             const isOrderFirstStripe =
-                rawPaymentIntentInput.toUpperCase() === 'PENDING_STRIPE' ||
-                rawPaymentIntentInput.toUpperCase() === 'ONLINE' ||
-                (paymentMethodInput === 'ONLINE' && (!rawPaymentIntentInput || rawPaymentIntentInput.toUpperCase() === 'PENDING_STRIPE' || rawPaymentIntentInput.toUpperCase() === 'ONLINE'));
+                ['PENDING_STRIPE', 'ONLINE'].includes(paymentMarker) || (paymentMethodInput === 'ONLINE' && !paymentMarker);
+
+            if (!isCOD && !isSSLCommerz && !isOrderFirstStripe) {
+                throw new HttpException(
+                    'Unsupported payment flow. Create the order first, then start payment with POST /payments/stripe/init.',
+                    HttpStatus.BAD_REQUEST
+                );
+            }
 
             const finalPaymentMethod = isCOD ? 'COD' : isSSLCommerz ? 'SSLCOMMERZ' : dto.paymentMethod || 'Online';
-            let finalPaymentIntentId: string | null = null;
-            let finalPaymentStatus: PaymentStatus = PaymentStatus.PENDING;
-
-            if (isCOD) {
-                // Completely bypass Stripe for COD
-                finalPaymentIntentId = null;
-                finalPaymentStatus = PaymentStatus.PENDING;
-            } else if (isSSLCommerz) {
-                // Completely bypass Stripe for SSLCommerz (will be paid via SSLCommerz gateway session)
-                finalPaymentIntentId = null;
-                finalPaymentStatus = PaymentStatus.PENDING;
-            } else if (isOrderFirstStripe) {
-                // Order-First flow for Stripe: pre-create order and reserve stock first; Stripe session is initiated subsequently
-                finalPaymentIntentId = null;
-                finalPaymentStatus = PaymentStatus.PENDING;
-            } else {
-                // Online Payment Verification
-                if (!rawPaymentIntentInput) {
-                    throw new HttpException('paymentIntentId or stripeSessionId is required for online payments.', HttpStatus.BAD_REQUEST);
-                }
-
-                // If a client secret was passed (e.g. pi_123_secret_abc), extract the base ID (pi_123)
-                const cleanId = rawPaymentIntentInput.split('_secret_')[0];
-                const stripeClient = this.getStripeClient();
-
-                try {
-                    if (cleanId.startsWith('cs_')) {
-                        // Stripe Checkout Session
-                        const session = await stripeClient.checkout.sessions.retrieve(cleanId);
-                        if (session.payment_status !== 'paid') {
-                            throw new HttpException('Payment not completed on Stripe checkout session.', HttpStatus.BAD_REQUEST);
-                        }
-                        finalPaymentIntentId = typeof session.payment_intent === 'string'
-                            ? session.payment_intent
-                            : session.payment_intent?.id || cleanId;
-                        finalPaymentStatus = PaymentStatus.PAID;
-                    } else {
-                        // Stripe PaymentIntent
-                        const intent = await stripeClient.paymentIntents.retrieve(cleanId);
-                        if (intent.status !== 'succeeded') {
-                            throw new HttpException('Payment not completed on Stripe.', HttpStatus.BAD_REQUEST);
-                        }
-                        finalPaymentIntentId = cleanId;
-                        finalPaymentStatus = PaymentStatus.PAID;
-                    }
-                } catch (err: unknown) {
-                    if (err instanceof HttpException) throw err;
-                    const stripeErrorMsg = err instanceof Error ? err.message : String(err);
-                    throw new HttpException(`Stripe payment verification failed: ${stripeErrorMsg}`, HttpStatus.BAD_REQUEST);
-                }
-            }
 
             // 3. Process Items & Cart Aggregation with Positive Integer Checks
             const rawItems = dto.items && dto.items.length > 0 ? dto.items : dto.products || [];
@@ -519,6 +476,36 @@ export class OrdersService {
 
                     const uniqueOrderId = await this.uniqueCodeGeneratorService.getUniqueOrderId();
 
+                    // Step C: Atomically consume phone verification challenge inside the transaction
+                    let consumedVerification: ConsumedVerification | null = null;
+                    if (this.verificationConsumptionService && (dto.verificationId || dto.firebaseIdToken || dto.otpCode)) {
+                        let vId = dto.verificationId;
+                        if (!vId && (dto.firebaseIdToken || dto.otpCode) && this.verificationOrchestratorService) {
+                            const confirmed = await this.verificationOrchestratorService.confirmVerification({
+                                phone: canonicalCustomerPhone,
+                                firebaseIdToken: dto.firebaseIdToken,
+                                otpCode: dto.otpCode
+                            });
+                            vId = confirmed.verificationId;
+                        }
+
+                        if (vId) {
+                            consumedVerification = await this.verificationConsumptionService.consumeVerificationInTransaction(
+                                queryRunner,
+                                vId,
+                                canonicalCustomerPhone,
+                                uniqueOrderId
+                            );
+                        }
+                    }
+
+                    if (isOtpMandatory && !consumedVerification) {
+                        throw new HttpException(
+                            'Phone verification is required to place an order. Please complete OTP verification.',
+                            HttpStatus.BAD_REQUEST
+                        );
+                    }
+
                     let discountAmount = 0;
                     let couponId: string | null = null;
                     let couponCode: string | null = null;
@@ -530,7 +517,8 @@ export class OrdersService {
                             subtotal,
                             deliveryCharge,
                             userId,
-                            uniqueOrderId
+                            uniqueOrderId,
+                            canonicalCustomerPhone
                         );
                         couponId = couponRes.couponId;
                         couponCode = couponRes.couponCode;
@@ -539,26 +527,6 @@ export class OrdersService {
 
                     const subtotalRounded = Math.round((subtotal + Number.EPSILON) * 100) / 100;
                     const totalAmount = Math.max(0, Math.round((subtotalRounded + deliveryCharge - discountAmount + Number.EPSILON) * 100) / 100);
-
-                    // Online payment amount security verification (prevents client price tampering)
-                    if (finalPaymentMethod !== 'COD' && finalPaymentMethod !== 'SSLCOMMERZ' && !isOrderFirstStripe && finalPaymentIntentId && !finalPaymentIntentId.startsWith('cs_')) {
-                        try {
-                            const stripeClient = this.getStripeClient();
-                            const intent = await stripeClient.paymentIntents.retrieve(finalPaymentIntentId);
-                            if (intent && intent.amount !== undefined && intent.amount !== null) {
-                                const paidCents = Number(intent.amount) || 0;
-                                const expectedCents = Math.round(totalAmount * 100);
-                                if (paidCents < expectedCents - 50) {
-                                    throw new HttpException(
-                                        `Payment verification failed: Amount paid ($${(paidCents / 100).toFixed(2)}) is less than required total ($${totalAmount.toFixed(2)}).`,
-                                        HttpStatus.BAD_REQUEST
-                                    );
-                                }
-                            }
-                        } catch (err: unknown) {
-                            if (err instanceof HttpException) throw err;
-                        }
-                    }
 
                     const nowIso = new Date().toISOString();
 
@@ -586,7 +554,7 @@ export class OrdersService {
                         orderId: uniqueOrderId,
                         userId,
                         paymentMethod: finalPaymentMethod,
-                        paymentIntentId: finalPaymentIntentId,
+                        paymentIntentId: null as any,
                         totalAmount,
                         subtotal: subtotalRounded,
                         deliveryCharge,
@@ -595,13 +563,18 @@ export class OrdersService {
                         discountAmount,
                         megaDiscountApplied: isMegaDiscountApplied,
                         megaDiscountPercentage: megaDiscountPercentage,
-                        currency: dto.currency || 'BDT',
+                        currency: getStoreCurrency(),
                         status: OrderStatus.PENDING,
-                        paymentStatus: finalPaymentStatus,
+                        paymentStatus: PaymentStatus.PENDING,
                         shippingAddress: consolidatedShippingAddress,
                         specialNote: dto.specialNote || null,
                         idempotencyKey: dto.idempotencyKey || null,
                         customerIntentFingerprint: intentFingerprint,
+                        isPhoneVerified: Boolean(consumedVerification),
+                        verifiedPhone: consumedVerification ? consumedVerification.phone : (canonicalCustomerPhone || null),
+                        phoneVerifiedAt: consumedVerification ? consumedVerification.verifiedAt : null,
+                        verificationProvider: consumedVerification ? consumedVerification.provider : null,
+                        verificationChallengeId: consumedVerification ? consumedVerification.verificationId : null,
                         authoritativeSnapshot: {
                             subtotal: subtotalRounded,
                             deliveryCharge,
@@ -828,10 +801,23 @@ export class OrdersService {
                 }
             }
 
+            let accountClaimToken: string | null = null;
+            if (!userId && this.guestAccountClaimService && savedOrderResult.orderId && canonicalCustomerPhone) {
+                try {
+                    accountClaimToken = await this.guestAccountClaimService.issueClaimToken(
+                        savedOrderResult.orderId,
+                        canonicalCustomerPhone
+                    );
+                } catch (claimErr: any) {
+                    this.logger.warn(`[Order Create] Failed to generate account claim token: ${claimErr?.message}`);
+                }
+            }
+
             const guestAccessToken = GuestTokenUtil.generate(savedOrderResult.orderId, 7);
             const responseData = {
                 ...savedOrderResult,
-                guestAccessToken
+                guestAccessToken,
+                accountClaimToken
             };
 
             return ResponseUtils.successResponseHandler(201, 'Order created successfully.', 'data', responseData);
@@ -1472,7 +1458,83 @@ export class OrdersService {
         }
     }
 
-    async findOne(id: string, userData?: any): Promise<ApiResponse<OrdersInterface>> {
+    /**
+     * Public Guest & Customer Order Tracking API.
+     * Sanitizes response and requires exact phone number binding to prevent enumeration.
+     */
+    async trackOrder(orderId: string, phone: string): Promise<ApiResponse<any>> {
+        try {
+            if (!orderId || !phone) {
+                throw new HttpException('Both Order ID and Phone Number are required to track an order.', HttpStatus.BAD_REQUEST);
+            }
+
+            const canonicalPhone = normalizeBDPhone(phone);
+            const cleanId = (orderId || '').replace(/^#/, '').trim();
+
+            const order = await this.repository.getRepository().findOne({
+                where: [
+                    { orderId: cleanId, isDeleted: false },
+                    { id: cleanId, isDeleted: false }
+                ],
+                relations: ['orderSummaries']
+            });
+
+            if (!order) {
+                throw new HttpException('Order not found with provided ID and phone number.', HttpStatus.NOT_FOUND);
+            }
+
+            // Compare delivery or verified phone number
+            const orderPhoneRaw = order.verifiedPhone || order.shippingAddress?.phone || '';
+            let canonicalOrderPhone = '';
+            try {
+                canonicalOrderPhone = normalizeBDPhone(orderPhoneRaw);
+            } catch {
+                canonicalOrderPhone = orderPhoneRaw;
+            }
+
+            if (canonicalOrderPhone !== canonicalPhone) {
+                // Return 404 to prevent phone enumeration
+                throw new HttpException('Order not found with provided ID and phone number.', HttpStatus.NOT_FOUND);
+            }
+
+            const maskedPhone = `${canonicalPhone.slice(0, 6)}****${canonicalPhone.slice(-2)}`;
+
+            const trackingPayload = {
+                orderId: order.orderId,
+                status: order.status,
+                paymentStatus: order.paymentStatus,
+                paymentMethod: order.paymentMethod,
+                courierName: order.courierName,
+                trackingId: order.trackingId,
+                courierTrackingLink: order.courierTrackingLink,
+                isPhoneVerified: order.isPhoneVerified,
+                phoneMasked: maskedPhone,
+                customerName: order.shippingAddress?.name || 'Customer',
+                deliveryCity: order.shippingAddress?.city || '',
+                statusHistory: order.statusHistory,
+                totalAmount: Number(order.totalAmount || 0),
+                subtotal: Number(order.subtotal || 0),
+                deliveryCharge: Number(order.deliveryCharge || 0),
+                discountAmount: Number(order.discountAmount || 0),
+                createdAt: order.createdAt,
+                items: (order.orderSummaries || []).map((s: any) => ({
+                    productName: s.productName || 'Fashion Item',
+                    quantity: s.quantity,
+                    price: Number(s.price || 0),
+                    size: s.size || s.selectedSize || '',
+                    featuredImage: s.productImage || ''
+                }))
+            };
+
+            return ResponseUtils.successResponseHandler(200, 'Order tracking details retrieved successfully.', 'data', trackingPayload);
+        } catch (error: any) {
+            this.logger.error(`[trackOrder] Error: ${error?.message}`, error?.stack);
+            if (error instanceof HttpException) throw error;
+            throw new HttpException(error?.message || 'Error tracking order', HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    async findOne(id: string, userData?: any, guestToken?: string | null): Promise<ApiResponse<any>> {
         try {
             const cleanId = (id || '').replace(/^#/, '').trim();
             const data = await this.repository.getRepository().findOne({
@@ -1482,12 +1544,14 @@ export class OrdersService {
                 ],
                 relations: ['orderSummaries', 'user', 'payments']
             });
-            if (!data) {
-                throw new HttpException('Data not found!', HttpStatus.NOT_FOUND);
+            // 404 for both "missing" and "not yours", so order IDs cannot be enumerated
+            const access = data ? resolveOrderAccess(data, userData, guestToken) : null;
+            if (!data || !access) {
+                throw new HttpException('Order not found.', HttpStatus.NOT_FOUND);
             }
 
-            if (userData && userData.role === 'customer' && data.userId && data.userId !== userData.id) {
-                throw new HttpException('Forbidden access to order.', HttpStatus.FORBIDDEN);
+            if (access !== 'admin') {
+                return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', toCustomerOrderView(data));
             }
 
             // Enrich summaries with calculated line item profit
@@ -1629,13 +1693,9 @@ export class OrdersService {
             throw new HttpException('Order not found.', HttpStatus.NOT_FOUND);
         }
 
-        // Dual Authorization Evaluation
-        const isUserAuthenticated = Boolean(requestUser && (requestUser.id || requestUser.userId));
-        const requestUserId = requestUser?.id || requestUser?.userId;
-        const isOrderOwner = Boolean(order.userId && isUserAuthenticated && order.userId === requestUserId);
-        const isGuestAuthorized = Boolean(!isOrderOwner && guestToken && GuestTokenUtil.verify(guestToken, order.orderId));
-
-        if (!isOrderOwner && !isGuestAuthorized) {
+        // Only the owner or the holder of the order's guest token may restore it
+        const access = resolveOrderAccess(order, requestUser, guestToken);
+        if (access !== 'owner' && access !== 'guest') {
             throw new HttpException('Order not found.', HttpStatus.NOT_FOUND);
         }
 

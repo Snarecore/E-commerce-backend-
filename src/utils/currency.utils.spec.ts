@@ -43,3 +43,15 @@ describe('CurrencyUtils', () => {
         expect(CurrencyUtils.isAmountEqual('1500.25', '1500.26', 'BDT')).toBe(false);
     });
 });
+
+describe('CurrencyUtils zero-padded DECIMAL values', () => {
+    it('accepts trailing zeros beyond the exponent, as returned by DECIMAL columns', () => {
+        expect(CurrencyUtils.toMinorUnitsBigInt('2250.000000', 'BDT')).toBe(225000n);
+        expect(CurrencyUtils.toMinorUnitsBigInt('49.990000', 'USD')).toBe(4999n);
+    });
+
+    it('still rejects non-zero digits beyond the exponent', () => {
+        expect(() => CurrencyUtils.toMinorUnitsBigInt('10.999000', 'USD')).toThrow('Excess decimal precision');
+        expect(() => CurrencyUtils.toMinorUnitsBigInt('10.000001', 'BDT')).toThrow('Excess decimal precision');
+    });
+});

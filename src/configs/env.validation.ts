@@ -49,6 +49,14 @@ export const EnvSchema = z
 		PASSWORD_RESET_PAGE: z.string().url('PASSWORD_RESET_PAGE must be a valid URL'),
 		ALLOWED_ORIGINS: z.string().optional(),
 
+		// Every price in the catalog is in this currency; clients never choose it
+		STORE_CURRENCY: z
+			.string()
+			.trim()
+			.toUpperCase()
+			.regex(/^[A-Z]{3}$/, 'STORE_CURRENCY must be an ISO 4217 code, e.g. BDT')
+			.default('BDT'),
+
 		// Payment Gateways Feature Flags
 		ENABLE_STRIPE: booleanEnv(true),
 		ENABLE_SSLCOMMERZ: booleanEnv(true),

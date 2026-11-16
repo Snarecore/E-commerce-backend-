@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, HttpException, HttpStatus, Injectable, NotFoundException, Res, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, HttpException, HttpStatus, Injectable, NotFoundException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { UserRepository } from '../user/user.repository';
 import { RegisterDto } from './dto/register.dto';
 import { ApiResponse, ResponseUtils } from '../../utils/response.utils';
@@ -8,7 +8,6 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import { LoginDto } from './dto/login.dto';
-import { JwtService } from '@nestjs/jwt';
 import { Response } from 'express';
 import { Request } from 'express';
 import { JwtPayload } from '../../common/types';
@@ -21,7 +20,13 @@ import { EmailService } from '../email-service/email-sender.service';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { SesEmailService } from '../../common/ses/ses-email.service';
 import { Role } from '../../enums/role.enum';
-import { COOKIE_NAMES, ACCESS_TOKEN_MAX_AGE, REFRESH_TOKEN_MAX_AGE, setAuthCookie, clearAuthCookie } from '../../utils/cookie-config';
+import { clearSessionCookies, readRefreshCookie, setSessionCookies } from '../../utils/cookie-config';
+import { ensureFirebaseAdmin } from '../../utils/firebase-admin.util';
+import { getAuth, DecodedIdToken } from 'firebase-admin/auth';
+import { ConfigService } from '@nestjs/config';
+import { AuthSessionService } from './session/auth-session.service';
+import { SessionUser } from './session/auth-token.types';
+import { FirebaseLoginDto } from './dto/firebase-login.dto';
 
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { AuditAction } from '../audit-log/constants/audit-action.enum';
@@ -33,12 +38,13 @@ export class AuthService {
 	constructor(
 		private readonly userRepository: UserRepository,
 		private readonly userProfileRepository: UserProfileRepository,
-		private readonly jwtService: JwtService,
 		@InjectDataSource() private readonly dataSource: DataSource,
 		private readonly spaceService: SpaceService,
 		private readonly emailService: EmailService,
 		private readonly sesEmailService: SesEmailService,
-		private readonly auditLogService: AuditLogService
+		private readonly auditLogService: AuditLogService,
+		private readonly authSessionService: AuthSessionService,
+		private readonly configService: ConfigService
 	) { }
 
 	private extractClientInfo(req?: Request) {
@@ -137,50 +143,44 @@ export class AuthService {
 		return user;
 	}
 
-	async login(dto: LoginDto, @Res({ passthrough: true }) res: Response, req?: Request) {
+	async login(dto: LoginDto, res: Response, req?: Request) {
 		const user = await this.validateUser(dto, req);
+		await this.startSession(user, res, req);
 
-		const payload = { email: user.email, sub: user.id, role: user.role, name: user.name };
-
-		const accessToken = this.jwtService.sign(payload, { expiresIn: '7d' });
-		const refreshToken = this.jwtService.sign(payload, { expiresIn: '30d' });
-
-		const isAdmin = user.role?.toLowerCase() === Role.ADMIN;
-		const accessCookieName = isAdmin ? COOKIE_NAMES.ADMIN_ACCESS : COOKIE_NAMES.CUSTOMER_ACCESS;
-		const refreshCookieName = isAdmin ? COOKIE_NAMES.ADMIN_REFRESH : COOKIE_NAMES.CUSTOMER_REFRESH;
-
-		setAuthCookie(res, accessCookieName, accessToken, ACCESS_TOKEN_MAX_AGE);
-		setAuthCookie(res, refreshCookieName, refreshToken, REFRESH_TOKEN_MAX_AGE);
-		setAuthCookie(res, 'accessToken', accessToken, ACCESS_TOKEN_MAX_AGE);
-		setAuthCookie(res, 'refreshToken', refreshToken, REFRESH_TOKEN_MAX_AGE);
-
-		const userData = {
-			id: user.id,
-			name: user.name,
-			email: user.email,
-			role: user.role,
-		};
-
-		return ResponseUtils.successResponseHandler(
-			HttpStatus.OK,
-			'Login successful.',
-			'data',
-			{
-				accessToken,
-				refreshToken,
-				user: userData
-			}
-		);
+		return ResponseUtils.successResponseHandler(HttpStatus.OK, 'Login successful.', 'data', {
+			user: this.toSessionUser(user)
+		});
 	}
 
-	async firebaseLogin(
-		dto: { idToken: string; email?: string; name?: string; photoURL?: string; firebaseUid?: string },
-		res: Response,
-		req?: Request
-	) {
+	private toSessionUser(user: Pick<User, 'id' | 'name' | 'email' | 'role'>): SessionUser {
+		return { id: user.id, name: user.name, email: user.email, role: user.role };
+	}
+
+	/** Creates a refresh session and writes both auth cookies. Tokens never go in the body. */
+	private async startSession(user: Pick<User, 'id' | 'name' | 'email' | 'role'>, res: Response, req?: Request): Promise<void> {
+		const tokens = await this.authSessionService.createSession(this.toSessionUser(user), this.extractClientInfo(req));
+		setSessionCookies(res, user.role, tokens);
+	}
+
+	async firebaseLogin(dto: FirebaseLoginDto, res: Response, req?: Request) {
 		const { ipAddress, userAgent } = this.extractClientInfo(req);
-		const email = dto.email || `${dto.firebaseUid || Date.now()}@google.user`;
-		const name = dto.name || email.split('@')[0] || "User";
+
+		// Identity must come from a Google-signed ID token, never from client-supplied fields
+		if (!ensureFirebaseAdmin((key) => this.configService.get<string>(key))) {
+			throw new ServiceUnavailableException('Google sign-in is not configured on the server.');
+		}
+		let decoded: DecodedIdToken;
+		try {
+			decoded = await getAuth().verifyIdToken(dto.idToken, true);
+		} catch {
+			throw new UnauthorizedException('Invalid Google sign-in token.');
+		}
+		if (!decoded.email || decoded.email_verified !== true) {
+			throw new UnauthorizedException('Google account email is not verified.');
+		}
+
+		const email = decoded.email.trim().toLowerCase();
+		const name = decoded.name || dto.name || email.split('@')[0] || 'User';
 
 		let user = await this.userRepository.findOneByQueryRelation({ email });
 		let isNewUser = false;
@@ -189,23 +189,13 @@ export class AuthService {
 			user = await this.userRepository.create({
 				email,
 				name,
-				password: await bcrypt.hash(Math.random().toString(36), 10),
+				password: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10),
 				phone: 'N/A',
 				role: Role.CUSTOMER
 			});
 		}
 
-		const payload = { email: user.email, sub: user.id, role: user.role, name: user.name };
-		const accessToken = this.jwtService.sign(payload, { expiresIn: '7d' });
-		const refreshToken = this.jwtService.sign(payload, { expiresIn: '30d' });
-
-		const accessCookieName = COOKIE_NAMES.CUSTOMER_ACCESS;
-		const refreshCookieName = COOKIE_NAMES.CUSTOMER_REFRESH;
-
-		setAuthCookie(res, accessCookieName, accessToken, ACCESS_TOKEN_MAX_AGE);
-		setAuthCookie(res, refreshCookieName, refreshToken, REFRESH_TOKEN_MAX_AGE);
-		setAuthCookie(res, 'accessToken', accessToken, ACCESS_TOKEN_MAX_AGE);
-		setAuthCookie(res, 'refreshToken', refreshToken, REFRESH_TOKEN_MAX_AGE);
+		await this.startSession(user, res, req);
 
 		// Record audit log for Google/Firebase login
 		this.auditLogService.createAsyncLog({
@@ -229,23 +219,9 @@ export class AuthService {
 			}
 		});
 
-		const userData = {
-			id: user.id,
-			name: user.name,
-			email: user.email,
-			role: user.role,
-		};
-
-		return ResponseUtils.successResponseHandler(
-			HttpStatus.OK,
-			'Google login successful.',
-			'data',
-			{
-				accessToken,
-				refreshToken,
-				user: userData
-			}
-		);
+		return ResponseUtils.successResponseHandler(HttpStatus.OK, 'Google login successful.', 'data', {
+			user: this.toSessionUser(user)
+		});
 	}
 
 	async me(currentUser: any) {
@@ -286,7 +262,16 @@ export class AuthService {
 		);
 	}
 
-	async register(dto: RegisterDto, req?: Request): Promise<ApiResponse<User>> {
+	issueSocketToken(currentUser: any) {
+		if (!currentUser?.id) {
+			throw new UnauthorizedException('Not authenticated.');
+		}
+		const token = this.authSessionService.signSocketToken(this.toSessionUser(currentUser));
+		return ResponseUtils.successResponseHandler(HttpStatus.OK, 'Socket token issued.', 'data', { token });
+	}
+
+	// Public sign-up always creates a customer; only the admin-only route may pass allowRole
+	async register(dto: RegisterDto, req?: Request, allowRole = false): Promise<ApiResponse<User>> {
 		const { ipAddress, userAgent } = this.extractClientInfo(req);
 		const queryRunner = this.dataSource.createQueryRunner();
 		await queryRunner.connect();
@@ -297,7 +282,7 @@ export class AuthService {
 				throw new ConflictException('Email already exists.');
 			}
 
-			const { password, confirmPassword, ...userData } = dto;
+			const { password, confirmPassword, role: _role, ...userData } = dto;
 			if (password !== confirmPassword) {
 				throw new BadRequestException('Password and confirm password do not match.');
 			}
@@ -306,7 +291,7 @@ export class AuthService {
 			const userEntity = queryRunner.manager.create(User, {
 				...userData,
 				password: hashedPassword,
-				role: dto.role || Role.CUSTOMER
+				role: (allowRole && dto.role) || Role.CUSTOMER
 			});
 			const createdUser = await queryRunner.manager.save(User, userEntity);
 
@@ -353,77 +338,40 @@ export class AuthService {
 		}
 	}
 
-	async refreshToken(req: Request, res: Response): Promise<{ accessToken: string; refreshToken: string; user?: any }> {
-		const refreshToken =
-			req.cookies?.[COOKIE_NAMES.ADMIN_REFRESH] ||
-			req.cookies?.[COOKIE_NAMES.CUSTOMER_REFRESH] ||
-			req.cookies?.['refreshToken'] ||
-			(req.body as any)?.refreshToken ||
-			(req as any)?.user?.refreshToken ||
-			(req.headers?.authorization?.startsWith('Bearer ') ? req.headers.authorization.split(' ')[1] : null);
-		if (!refreshToken) {
+	async refreshToken(req: Request, res: Response) {
+		const rawRefreshToken = readRefreshCookie(req.cookies);
+		if (!rawRefreshToken) {
 			throw new UnauthorizedException('Refresh token not found.');
 		}
 
-		let decoded: any;
-		try {
-			decoded = this.jwtService.verify(refreshToken);
-		} catch (error) {
-			try {
-				decoded = this.jwtService.decode(refreshToken);
-			} catch (decodeErr) {}
-			if (!decoded) {
-				throw new UnauthorizedException('Invalid refresh token.');
-			}
+		const result = await this.authSessionService.rotateSession(
+			rawRefreshToken,
+			async (userId) => {
+				const user = await this.userRepository.findOneByQuery({ id: userId });
+				return user && !user.isDeleted ? this.toSessionUser(user) : null;
+			},
+			this.extractClientInfo(req)
+		);
+
+		const user = await this.userRepository.findOneByQuery({ id: result.userId });
+		if (result.kind === 'rotated') {
+			setSessionCookies(res, user?.role, result.tokens);
+		} else {
+			// Another request already rotated this session and set the new refresh cookie
+			setSessionCookies(res, user?.role, { accessToken: result.accessToken });
 		}
 
-		const userIdentifier = decoded?.email || decoded?.sub || decoded?.id || (req as any)?.user?.email || (req as any)?.user?.id;
-		let user: User | null = null;
-		if (userIdentifier) {
-			user = await this.userRepository.findOneByQuery({ email: userIdentifier });
-			if (!user) {
-				user = await this.userRepository.findOneByQuery({ id: userIdentifier });
-			}
-		}
-
-		if (!user) {
-			throw new UnauthorizedException('User not found for refresh token.');
-		}
-
-		const payload = { email: user.email, sub: user.id, role: user.role, name: user.name };
-		const newAccessToken = this.jwtService.sign(payload, { expiresIn: '7d' });
-		const newRefreshToken = this.jwtService.sign(payload, { expiresIn: '30d' });
-
-		const isAdmin = user.role?.toLowerCase() === Role.ADMIN;
-		const accessCookieName = isAdmin ? COOKIE_NAMES.ADMIN_ACCESS : COOKIE_NAMES.CUSTOMER_ACCESS;
-		const refreshCookieName = isAdmin ? COOKIE_NAMES.ADMIN_REFRESH : COOKIE_NAMES.CUSTOMER_REFRESH;
-
-		setAuthCookie(res, accessCookieName, newAccessToken, ACCESS_TOKEN_MAX_AGE);
-		setAuthCookie(res, refreshCookieName, newRefreshToken, REFRESH_TOKEN_MAX_AGE);
-		setAuthCookie(res, 'accessToken', newAccessToken, ACCESS_TOKEN_MAX_AGE);
-		setAuthCookie(res, 'refreshToken', newRefreshToken, REFRESH_TOKEN_MAX_AGE);
-
-		const userData = {
-			id: user.id,
-			name: user.name,
-			email: user.email,
-			role: user.role,
-		};
-
-		return {
-			accessToken: newAccessToken,
-			refreshToken: newRefreshToken,
-			user: userData
-		};
+		return ResponseUtils.successResponseHandler(HttpStatus.OK, 'Session refreshed.', 'data', {
+			user: user ? this.toSessionUser(user) : null
+		});
 	}
 
-	logout(res: Response, _req?: Request): void {
-		clearAuthCookie(res, COOKIE_NAMES.CUSTOMER_ACCESS);
-		clearAuthCookie(res, COOKIE_NAMES.CUSTOMER_REFRESH);
-		clearAuthCookie(res, COOKIE_NAMES.ADMIN_ACCESS);
-		clearAuthCookie(res, COOKIE_NAMES.ADMIN_REFRESH);
-		clearAuthCookie(res, 'accessToken');
-		clearAuthCookie(res, 'refreshToken');
+	async logout(res: Response, req?: Request): Promise<void> {
+		try {
+			await this.authSessionService.revokeByRefreshToken(readRefreshCookie(req?.cookies));
+		} finally {
+			clearSessionCookies(res);
+		}
 	}
 
 	async forgotPassword(email: string) {
@@ -510,6 +458,8 @@ export class AuthService {
 			resetTokenExpiry: null as any,
 			password: hashedPassword
 		});
+		// A password reset signs the user out everywhere
+		await this.authSessionService.revokeAllForUser(user.id, 'password_reset');
 
 		return ResponseUtils.successResponseHandler(
 			HttpStatus.OK,

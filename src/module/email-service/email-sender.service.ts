@@ -1,6 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional, Inject, forwardRef } from '@nestjs/common';
 import { MailerService } from '@nestjs-modules/mailer';
 import { ResetPasswordMailDto } from './dto/create-reset-password-email.dto';
+import { EmailSettingService } from '../setting/email-setting/email-setting.service';
+import * as nodemailer from 'nodemailer';
+import * as fs from 'fs';
+import { join } from 'path';
+import handlebars from 'handlebars';
 
 export interface OrderItemEmailData {
 	name?: string;
@@ -57,8 +62,80 @@ export interface OrderStatusUpdateEmailData {
 @Injectable()
 export class EmailService {
 	private readonly logger = new Logger(EmailService.name);
+	private readonly templateCache = new Map<string, handlebars.TemplateDelegate>();
 
-	constructor(private readonly mailerService: MailerService) { }
+	constructor(
+		private readonly mailerService: MailerService,
+		@Optional() @Inject(forwardRef(() => EmailSettingService))
+		private readonly emailSettingService?: EmailSettingService
+	) { }
+
+	/**
+	 * In-memory cached Handlebars template compilation for zero-IO enterprise performance.
+	 */
+	private async renderTemplate(templateName: string, context: any): Promise<string> {
+		try {
+			let compiled = this.templateCache.get(templateName);
+			if (!compiled) {
+				const filePath = join(process.cwd(), 'templates', `${templateName}.hbs`);
+				if (fs.existsSync(filePath)) {
+					const source = fs.readFileSync(filePath, 'utf8');
+					compiled = handlebars.compile(source);
+					this.templateCache.set(templateName, compiled);
+				}
+			}
+			if (compiled) {
+				return compiled(context);
+			}
+		} catch (renderErr: any) {
+			this.logger.warn(`[EmailService] Failed to compile template "${templateName}": ${renderErr?.message}`);
+		}
+		return '';
+	}
+
+	/**
+	 * Dual dispatch engine:
+	 * Prioritizes dynamic CMS SMTP configuration if active in database.
+	 * Gracefully falls back to static .env MailerService if not configured or on network error.
+	 */
+	private async dispatchMail(options: {
+		to: string;
+		bcc?: string[];
+		from?: string;
+		subject: string;
+		template: string;
+		context: any;
+	}): Promise<void> {
+		if (this.emailSettingService) {
+			try {
+				const active = await this.emailSettingService.getActiveTransporter();
+				if (active && active.transporter) {
+					const html = await this.renderTemplate(options.template, options.context);
+					await active.transporter.sendMail({
+						from: active.from || options.from,
+						to: options.to,
+						bcc: options.bcc,
+						subject: options.subject,
+						html: html || undefined
+					});
+					this.logger.log(`[EmailService] Dispatched via Pooled Dynamic SMTP to ${options.to}`);
+					return;
+				}
+			} catch (dynamicErr: any) {
+				this.logger.warn(`[EmailService] Dynamic CMS SMTP dispatch failed (${dynamicErr?.message}). Falling back to default MailerService.`);
+			}
+		}
+
+		// Fallback to static MailerService (.env configuration)
+		await this.mailerService.sendMail({
+			to: options.to,
+			bcc: options.bcc,
+			from: options.from,
+			subject: options.subject,
+			template: options.template,
+			context: options.context
+		});
+	}
 
 	/**
 	 * Send password reset email
@@ -67,8 +144,8 @@ export class EmailService {
 		const { to, from, subject, username, token, companyEmail } = dto;
 
 		try {
-			await this.mailerService.sendMail({
-				to: to,
+			await this.dispatchMail({
+				to: Array.isArray(to) ? to[0] : to,
 				bcc: ['sabbir.qligence@gmail.com'],
 				from: from,
 				subject: subject,
@@ -135,7 +212,7 @@ export class EmailService {
 		};
 
 		try {
-			await this.mailerService.sendMail({
+			await this.dispatchMail({
 				to: data.to.trim(),
 				subject: `Order Confirmed: #${data.orderId} - Fashion Time`,
 				template: 'order_confirmation_email',
@@ -269,7 +346,7 @@ export class EmailService {
 		};
 
 		try {
-			await this.mailerService.sendMail({
+			await this.dispatchMail({
 				to: data.to.trim(),
 				subject: `Order Update: #${data.orderId} is now ${normalizedStatus} - Fashion Time`,
 				template: 'order_status_update_email',

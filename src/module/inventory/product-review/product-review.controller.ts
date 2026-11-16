@@ -49,6 +49,8 @@ export class ProductReviewController {
 		return await this.service.findOne(id);
 	}
 
+	@UseGuards(JwtAuthGuard, RolesGuard)
+	@Roles(Role.ADMIN)
 	@Delete(':id')
 	async remove(@Param('id') id: string): Promise<ApiResponse<boolean>> {
 		return await this.service.remove(id);

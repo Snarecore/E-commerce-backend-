@@ -17,6 +17,8 @@ import { OrderStatus, PaymentStatus } from '../../enums/order-status.enum';
 import { PaymentAttemptStatus, PaymentGateway, RefundStatus, OutboxStatus } from './enums/payment.enum';
 import { Role } from '../../enums/role.enum';
 
+const ADMIN_USER = { id: 'admin-1', role: Role.ADMIN };
+
 describe('PaymentsService - Payment Retry & Expiry', () => {
     let service: PaymentsService;
     let mockOrderRepo: any;
@@ -194,7 +196,7 @@ describe('PaymentsService - Payment Retry & Expiry', () => {
 
             await expect(
                 service.retryPayment('ORD-1001', { id: 'user-malicious', role: Role.CUSTOMER })
-            ).rejects.toThrow(ForbiddenException);
+            ).rejects.toThrow(NotFoundException);
         });
 
         it('should throw BadRequestException if order is already PAID', async () => {
@@ -719,7 +721,7 @@ describe('PaymentsService - Payment Retry & Expiry', () => {
 
                 await expect(
                     service.initiateStripePayment('ord-1', { id: 'different-user', role: Role.CUSTOMER })
-                ).rejects.toThrow(ForbiddenException);
+                ).rejects.toThrow(NotFoundException);
             });
 
             it('should throw BadRequestException if order is already PAID', async () => {
@@ -729,7 +731,7 @@ describe('PaymentsService - Payment Retry & Expiry', () => {
                     paymentStatus: PaymentStatus.PAID,
                 });
 
-                await expect(service.initiateStripePayment('ord-1')).rejects.toThrow(BadRequestException);
+                await expect(service.initiateStripePayment('ord-1', ADMIN_USER)).rejects.toThrow(BadRequestException);
             });
 
             it('should throw BadRequestException if order is CANCELLED', async () => {
@@ -740,7 +742,7 @@ describe('PaymentsService - Payment Retry & Expiry', () => {
                     status: OrderStatus.CANCELLED,
                 });
 
-                await expect(service.initiateStripePayment('ord-1')).rejects.toThrow(BadRequestException);
+                await expect(service.initiateStripePayment('ord-1', ADMIN_USER)).rejects.toThrow(BadRequestException);
             });
 
             it('should reuse active unexpired intent if one exists within 20 mins', async () => {
@@ -766,7 +768,7 @@ describe('PaymentsService - Payment Retry & Expiry', () => {
                     status: 'requires_payment_method',
                 });
 
-                const result = await service.initiateStripePayment('ord-1');
+                const result = await service.initiateStripePayment('ord-1', ADMIN_USER);
 
                 expect(mockStripe.paymentIntents.retrieve).toHaveBeenCalledWith('pi_active_123');
                 expect(mockStripe.paymentIntents.create).not.toHaveBeenCalled();
@@ -798,18 +800,20 @@ describe('PaymentsService - Payment Retry & Expiry', () => {
 
                 const result = await service.initiateStripePayment('ord-1', { id: 'user-1', role: Role.CUSTOMER });
 
+                // The order was stored with a client-sent USD; it is charged in the store currency
+                expect(mockOrderRepo.update).toHaveBeenCalledWith('ord-1', { currency: 'BDT' });
                 expect(mockPaymentRepo.create).toHaveBeenCalledWith(
                     expect.objectContaining({
                         orderId: 'ord-1',
                         gateway: PaymentGateway.STRIPE,
-                        currency: 'USD',
+                        currency: 'BDT',
                         status: PaymentAttemptStatus.PENDING,
                     })
                 );
                 expect(mockStripe.paymentIntents.create).toHaveBeenCalledWith(
                     expect.objectContaining({
                         amount: 4999,
-                        currency: 'usd',
+                        currency: 'bdt',
                         metadata: expect.objectContaining({
                             orderId: 'ord-1',
                             orderNumber: 'ORD-1',

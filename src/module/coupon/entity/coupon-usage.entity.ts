@@ -6,13 +6,17 @@ import { Orders } from '../../order/entity/order.entity';
 
 @Entity('coupon_usage')
 @Index('IDX_coupon_user', ['couponId', 'userId'])
+@Index('IDX_coupon_phone', ['couponId', 'phone'])
 @Index('IDX_coupon_order', ['couponId', 'orderId'])
 export class CouponUsage extends AbstractEntity {
     @Column({ type: 'varchar', nullable: false })
     couponId: string;
 
-    @Column({ type: 'varchar', nullable: false })
-    userId: string;
+    @Column({ type: 'varchar', nullable: true })
+    userId: string | null;
+
+    @Column({ type: 'varchar', length: 20, nullable: true })
+    phone: string | null;
 
     @Column({ type: 'varchar', nullable: false })
     orderId: string;
@@ -27,9 +31,9 @@ export class CouponUsage extends AbstractEntity {
     @JoinColumn({ name: 'couponId' })
     coupon: Coupon;
 
-    @ManyToOne(() => User, { onDelete: 'CASCADE' })
+    @ManyToOne(() => User, { onDelete: 'CASCADE', nullable: true })
     @JoinColumn({ name: 'userId' })
-    user: User;
+    user: User | null;
 
     @ManyToOne(() => Orders, { onDelete: 'CASCADE' })
     @JoinColumn({ name: 'orderId' })

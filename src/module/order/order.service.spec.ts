@@ -1,4 +1,16 @@
+jest.mock('firebase-admin/auth', () => ({
+    getAuth: jest.fn(() => ({
+        verifyIdToken: jest.fn()
+    }))
+}));
+jest.mock('firebase-admin/app', () => ({
+    initializeApp: jest.fn(),
+    getApps: jest.fn(() => []),
+    cert: jest.fn()
+}));
+
 import { Test, TestingModule } from '@nestjs/testing';
+import { ConfigService } from '@nestjs/config';
 import { OrdersService } from './order.service';
 import { OrdersRepository } from './order.repository';
 import { OrderSummaryRepository } from '../order-summary/order-summary.repository';
@@ -10,6 +22,7 @@ import { HttpException } from '@nestjs/common';
 import { MegaDiscount } from '../setting/mega-discount/entities/mega-discount.entity';
 import { Orders } from './entity/order.entity';
 import { Product } from '../inventory/product/entities/product.entity';
+import { GuestTokenUtil } from './utils/guest-token.util';
 
 describe('OrdersService', () => {
     let service: OrdersService;
@@ -74,7 +87,16 @@ describe('OrdersService', () => {
                 { provide: UniqueCodeGeneratorService, useValue: uniqueCodeGeneratorServiceMock },
                 { provide: OrdersRepository, useValue: repositoryMock },
                 { provide: OrderSummaryRepository, useValue: {} },
-                { provide: ProductRepository, useValue: {} }
+                { provide: ProductRepository, useValue: {} },
+                {
+                    provide: ConfigService,
+                    useValue: {
+                        get: jest.fn().mockImplementation((key: string) => {
+                            if (key === 'REQUIRE_CHECKOUT_OTP') return 'false';
+                            return undefined;
+                        })
+                    }
+                }
             ]
         }).compile();
 
@@ -125,46 +147,35 @@ describe('OrdersService', () => {
         expect(queryRunnerMock.release).toHaveBeenCalled();
     });
 
-    it('TEST 2: Online successful payment verifies Stripe and sets paymentStatus to Paid', async () => {
-        const product = {
-            id: 'product-2',
-            name: 'Jeans',
-            price: 1200,
-            quantity: 5,
-            discountType: 'NONE',
-            discountAmount: 0,
-            vendorId: 'vendor-1'
-        };
+    it('TEST 2: Client-supplied gateway IDs are rejected; payments start only after the order exists', async () => {
+        for (const paymentIntentId of ['pi_success_123', 'pi_real123_secret_abc', 'cs_test_session_123']) {
+            const dto = {
+                paymentMethod: 'Online',
+                paymentIntentId,
+                items: [{ productId: 'product-1', quantity: 1 }]
+            };
 
-        queryRunnerMock.manager.find.mockResolvedValue([product]);
-        (service as any).stripe.paymentIntents.retrieve.mockResolvedValue({ status: 'succeeded' });
+            await expect(service.create(dto as any, 'user-1')).rejects.toThrow('Unsupported payment flow');
+        }
+        expect(queryRunnerMock.startTransaction).not.toHaveBeenCalled();
+        expect((service as any).stripe.paymentIntents.retrieve).not.toHaveBeenCalled();
+        expect((service as any).stripe.checkout.sessions.retrieve).not.toHaveBeenCalled();
+    });
+
+    it('TEST 3: Order currency always comes from the store config, never from the client', async () => {
+        queryRunnerMock.manager.find.mockResolvedValue([
+            { id: 'product-1', name: 'Tee', price: 500, quantity: 10, discountType: 'NONE', discountAmount: 0, vendorId: 'vendor-1' }
+        ]);
 
         const dto = {
-            paymentMethod: 'Online',
-            paymentIntentId: 'pi_success_123',
-            items: [{ productId: 'product-2', quantity: 1 }],
-            shippingAddress: { city: 'Chittagong', name: 'Rahim', phone: '01800000000', address: 'GEC' }
+            paymentMethod: 'COD',
+            currency: 'usd',
+            items: [{ productId: 'product-1', quantity: 1 }],
+            shippingAddress: { city: 'Dhaka', name: 'Karim', phone: '01700000000', address: 'Banani' }
         };
 
         const result = await service.create(dto as any, 'user-1');
-        const data = result.data as any;
-
-        expect(result.statusCode).toBe(201);
-        expect(data.paymentStatus).toBe(PaymentStatus.PAID);
-        expect(data.deliveryCharge).toBe(120); // Outside Dhaka
-    });
-
-    it('TEST 3: Online failed payment throws error and rolls back transaction', async () => {
-        (service as any).stripe.paymentIntents.retrieve.mockResolvedValue({ status: 'requires_payment_method' });
-
-        const dto = {
-            paymentMethod: 'Online',
-            paymentIntentId: 'pi_failed_123',
-            items: [{ productId: 'product-1', quantity: 1 }]
-        };
-
-        await expect(service.create(dto as any, 'user-1')).rejects.toThrow('Payment not completed on Stripe.');
-        expect(queryRunnerMock.startTransaction).not.toHaveBeenCalled();
+        expect((result.data as any).currency).toBe('BDT');
     });
 
     it('TEST 4: COD Delivered automatically updates paymentStatus to Paid via strict state transition', async () => {
@@ -220,13 +231,51 @@ describe('OrdersService', () => {
         expect(queryRunnerMock.commitTransaction).not.toHaveBeenCalled();
     });
 
-    it('TEST 7: Customer unauthorized order access throws 403 Forbidden', async () => {
-        const order = { id: 'order-1', userId: 'user-owner' };
-        repositoryMock.findOneWithRelations.mockResolvedValue(order);
+    const orderAccessFixture = () => ({
+        id: 'order-1',
+        orderId: 'BB100001',
+        userId: 'user-owner',
+        isDeleted: false,
+        totalAmount: 1060,
+        orderSummaries: [{ id: 's1', productName: 'Tee', price: 500, quantity: 2, unitCostPrice: 300, totalCost: 600 }],
+        statusHistory: [{ status: 'Pending', timestamp: 't', updatedBy: 'admin@shop.com', note: 'n' }],
+        payments: []
+    });
 
-        const userData = { id: 'user-other', role: 'customer' };
+    const mockOrderLookup = (order: any) => {
+        repositoryMock.getRepository = jest.fn(() => ({ findOne: jest.fn().mockResolvedValue(order) }));
+    };
 
-        await expect(service.findOne('order-1', userData)).rejects.toThrow(HttpException);
+    it('TEST 7: Another customer, or a guest without the order token, gets 404 (no enumeration)', async () => {
+        mockOrderLookup(orderAccessFixture());
+
+        await expect(service.findOne('order-1', { id: 'user-other', role: 'customer' })).rejects.toMatchObject({ status: 404 });
+        await expect(service.findOne('order-1', null)).rejects.toMatchObject({ status: 404 });
+        await expect(service.findOne('order-1', null, 'forged.token')).rejects.toMatchObject({ status: 404 });
+    });
+
+    it('TEST 7b: Owner and guest-token holder get the customer view without costs, profit or risk data', async () => {
+        mockOrderLookup(orderAccessFixture());
+        const guestToken = GuestTokenUtil.generate('BB100001');
+
+        for (const result of [
+            await service.findOne('order-1', { id: 'user-owner', role: 'customer' }),
+            await service.findOne('order-1', null, guestToken)
+        ]) {
+            const data = result.data as any;
+            expect(data.orderId).toBe('BB100001');
+            expect(data.orderSummaries[0]).not.toHaveProperty('unitCostPrice');
+            expect(data.orderSummaries[0]).not.toHaveProperty('profit');
+            expect(data).not.toHaveProperty('riskScore');
+            expect(data.statusHistory[0]).not.toHaveProperty('updatedBy');
+        }
+    });
+
+    it('TEST 7c: Admin gets the full order with profit', async () => {
+        mockOrderLookup(orderAccessFixture());
+
+        const data = (await service.findOne('order-1', { id: 'admin-1', role: 'admin' })).data as any;
+        expect(data.orderSummaries[0].profit).toBe(400);
     });
 
     it('TEST 8: Insufficient stock throws error and rolls back transaction', async () => {
@@ -247,59 +296,6 @@ describe('OrdersService', () => {
         await expect(service.create(dto as any, 'user-1')).rejects.toThrow('Insufficient stock for product "Low Stock Item".');
         expect(queryRunnerMock.rollbackTransaction).toHaveBeenCalled();
         expect(queryRunnerMock.release).toHaveBeenCalled();
-    });
-
-    it('TEST 9: Online payment with clientSecret strips _secret_ and retrieves pure paymentIntent ID', async () => {
-        const product = { id: 'p1', name: 'Shirt', price: 200, quantity: 5 };
-        queryRunnerMock.manager.find.mockResolvedValue([product]);
-        (service as any).stripe.paymentIntents.retrieve.mockResolvedValue({ status: 'succeeded' });
-
-        const dto = {
-            paymentMethod: 'Online',
-            paymentIntentId: 'pi_real123_secret_clientsecret456',
-            items: [{ productId: 'p1', quantity: 1 }]
-        };
-
-        const result = await service.create(dto as any, 'user-1');
-        const data = result.data as any;
-
-        expect((service as any).stripe.paymentIntents.retrieve).toHaveBeenCalledWith('pi_real123');
-        expect(data.paymentIntentId).toBe('pi_real123');
-    });
-
-    it('TEST 10: Online payment with Stripe Checkout Session ID (cs_...) retrieves session correctly', async () => {
-        const product = { id: 'p1', name: 'Shirt', price: 200, quantity: 5 };
-        queryRunnerMock.manager.find.mockResolvedValue([product]);
-        (service as any).stripe.checkout.sessions.retrieve.mockResolvedValue({
-            payment_status: 'paid',
-            payment_intent: 'pi_resolved_from_session_789'
-        });
-
-        const dto = {
-            paymentMethod: 'Online',
-            stripeSessionId: 'cs_test_session_123',
-            items: [{ productId: 'p1', quantity: 1 }]
-        };
-
-        const result = await service.create(dto as any, 'user-1');
-        const data = result.data as any;
-
-        expect((service as any).stripe.checkout.sessions.retrieve).toHaveBeenCalledWith('cs_test_session_123');
-        expect(data.paymentIntentId).toBe('pi_resolved_from_session_789');
-    });
-
-    it('TEST 10b: Online payment with tampered amount throws error and rejects order', async () => {
-        const product = { id: 'p1', name: 'Shirt', price: 200, quantity: 5 };
-        queryRunnerMock.manager.find.mockResolvedValue([product]);
-        (service as any).stripe.paymentIntents.retrieve.mockResolvedValue({ status: 'succeeded', amount: 100 }); // Paid 100 cents ($1.00) instead of required amount
-
-        const dto = {
-            paymentMethod: 'Online',
-            paymentIntentId: 'pi_tampered_123',
-            items: [{ productId: 'p1', quantity: 1 }]
-        };
-
-        await expect(service.create(dto as any, 'user-1')).rejects.toThrow('Payment verification failed');
     });
 
     it('TEST 11: Invalid State Machine status jump throws 400 Bad Request', async () => {

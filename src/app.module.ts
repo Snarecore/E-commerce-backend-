@@ -1,5 +1,7 @@
-import { Module } from '@nestjs/common';
+import { Module, OnModuleInit } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { CheckoutVerificationModule } from './module/checkout-verification/checkout-verification.module';
+import { validateVerificationSecurityConfig } from './configs/verification-security.validator';
 import sslcommerzConfig from './configs/sslcommerz.config';
 import { validateEnv } from './configs/env.validation';
 import { APP_GUARD, Reflector } from '@nestjs/core';
@@ -59,6 +61,7 @@ import { MailerModule } from '@nestjs-modules/mailer';
 import { join } from 'path';
 import { HandlebarsAdapter } from '@nestjs-modules/mailer/dist/adapters/handlebars.adapter';
 import { EmailServiceModule } from './module/email-service/email-sender.module';
+import { EmailSettingModule } from './module/setting/email-setting/email-setting.module';
 import { SesModule } from './common/ses/ses.module';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { CustomThrottlerGuard } from './guards/custom-throttler.guard';
@@ -166,6 +169,7 @@ import { AppController } from './app.controller';
 		PolicyTwelveCmsModule,
 		ProductCommentModule,
 		EmailServiceModule,
+		EmailSettingModule,
 		SesModule,
 		CouponModule,
 		MegaDiscountModule,
@@ -173,7 +177,8 @@ import { AppController } from './app.controller';
 		PopupModule,
 		ProfitReportModule,
 		RiskModule,
-		InventoryEngineModule
+		InventoryEngineModule,
+		CheckoutVerificationModule
 	],
 	providers: [
 		{
@@ -192,6 +197,13 @@ import { AppController } from './app.controller';
 	]
 })
 
-export class AppModule {
-	constructor(private dataSource: DataSource) { }
+export class AppModule implements OnModuleInit {
+	constructor(
+		private dataSource: DataSource,
+		private configService: ConfigService
+	) { }
+
+	onModuleInit() {
+		validateVerificationSecurityConfig(this.configService);
+	}
 }

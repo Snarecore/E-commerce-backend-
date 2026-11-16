@@ -1,37 +1,30 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
-import { ExtractJwt, Strategy } from 'passport-jwt';
-import { COOKIE_NAMES } from '../utils/cookie-config';
+import { Strategy } from 'passport-jwt';
+import { readRefreshCookie } from '../utils/cookie-config';
+import { AuthTokenType, getRefreshTokenSecret } from '../module/auth/session/auth-token.types';
 
+/**
+ * Guards POST /auth/refresh-token. The refresh token is read only from its httpOnly
+ * cookie and must be signed with the refresh secret and carry type=refresh.
+ * Session-level checks (rotation, revocation, reuse) happen in AuthSessionService.
+ */
 @Injectable()
 export class JwtRefreshStrategy extends PassportStrategy(Strategy, 'jwt-refresh') {
     constructor(private readonly configService: ConfigService) {
-        const secret = configService.get<string>('JWT_SECRET') || process.env.JWT_SECRET;
-        if (!secret && process.env.NODE_ENV === 'production') {
-            throw new Error('JWT_SECRET environment variable is missing');
-        }
-
         super({
-            jwtFromRequest: ExtractJwt.fromExtractors([
-                ExtractJwt.fromAuthHeaderAsBearerToken(),
-                (req: Request): string | null => {
-                    if (!req?.cookies) return null;
-                    const token = req.cookies[COOKIE_NAMES.CUSTOMER_REFRESH] || 
-                                  req.cookies[COOKIE_NAMES.ADMIN_REFRESH] || 
-                                  req.cookies['refreshToken'];
-                    return typeof token === 'string' ? token : null;
-                },
-            ]),
-            secretOrKey: secret || 'dev_jwt_secret_cloth',
+            jwtFromRequest: (req: Request) => readRefreshCookie(req?.cookies),
+            secretOrKey: getRefreshTokenSecret((key) => configService.get<string>(key)),
+            passReqToCallback: false,
         });
     }
 
     validate(payload: any) {
-        const role = (payload.role || payload.roles || 'customer').toString().toLowerCase();
-        const id = payload.sub || payload.id || payload.userId;
-        return { id, userId: id, email: payload.email, role, roles: role, name: payload.name };
+        if (payload?.type !== AuthTokenType.REFRESH || !payload.jti) {
+            throw new UnauthorizedException('Invalid token type.');
+        }
+        return { id: payload.sub, sessionId: payload.jti };
     }
 }
-

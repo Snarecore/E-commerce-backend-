@@ -12,7 +12,6 @@ import { OrderStatus, PaymentStatus } from '../../enums/order-status.enum';
 import { Role } from '../../enums/role.enum';
 import Stripe from 'stripe';
 import { DataSource, In, Repository } from 'typeorm';
-import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';
 import { SslcommerzInitDto } from './dto/sslcommerz-init.dto';
 import { PaymentFilterDto } from './dto/payment-filter.dto';
 import { ResponseUtils, ApiResponse } from '../../utils/response.utils';
@@ -36,6 +35,8 @@ import { CurrencyUtils } from '../../utils/currency.utils';
 import { GatewaySanitizer } from './utils/gateway-sanitizer.util';
 import { TransactionIdUtil } from './utils/transaction-id.util';
 import { randomUUID } from 'crypto';
+import { resolveOrderAccess } from '../order/utils/order-access.policy';
+import { getStoreCurrency } from '../../configs/store-currency';
 
 @Injectable()
 export class PaymentsService {
@@ -183,178 +184,6 @@ export class PaymentsService {
         return Boolean(record);
     }
 
-    async createPayment(body: {
-        products?: Array<{ id?: string; productId?: string; price?: number; quantity?: number }>;
-        items?: Array<{ id?: string; productId?: string; price?: number; quantity?: number }>;
-        couponCode?: string;
-        city?: string;
-        currency?: string;
-    }): Promise<{ clientSecret: string; amount: number }> {
-        const rawItems = body?.items || body?.products || [];
-        const productIds = rawItems
-            .map((p) => p.productId || p.id)
-            .filter(Boolean) as string[];
-
-        if (!productIds || productIds.length === 0) {
-            throw new BadRequestException('At least one valid product item is required for payment calculation.');
-        }
-
-        // Authoritative DB pricing calculation (Zero trust on client-supplied prices)
-        const productRepo = this.dataSource.getRepository(Product);
-        const fetchedProducts = await productRepo.find({
-            where: { id: In(productIds), isDeleted: false }
-        });
-
-        if (fetchedProducts.length !== productIds.length) {
-            throw new BadRequestException('One or more products in your cart no longer exist or are inactive.');
-        }
-
-        const productMap = new Map(fetchedProducts.map(p => [p.id, p]));
-
-        let megaDiscountRecord: MegaDiscount | null = null;
-        try {
-            megaDiscountRecord = await this.dataSource.getRepository(MegaDiscount).findOne({
-                where: { id: SINGLETON_MEGA_DISCOUNT_ID }
-            });
-        } catch {
-            megaDiscountRecord = null;
-        }
-
-        let subtotal = 0;
-        for (const item of rawItems) {
-            const pid = item.productId || item.id;
-            const qty = Math.max(1, Number(item.quantity) || 1);
-            const dbProduct = pid ? productMap.get(pid) : null;
-
-            if (!dbProduct) {
-                throw new BadRequestException(`Product ID ${pid} could not be verified in the catalog.`);
-            }
-
-            const unitPrice = ProductPricingResolver.resolveUnitPrice({
-                price: Number(dbProduct.price) || 0,
-                discountType: dbProduct.discountType,
-                discountAmount: Number(dbProduct.discountAmount) || 0
-            }, megaDiscountRecord);
-            subtotal += unitPrice * qty;
-        }
-
-        // Authoritative delivery fee calculation
-        const city = (body.city || '').trim().toLowerCase();
-        const isDhaka = city.includes('dhaka');
-        const deliveryCharge = rawItems.length > 0 ? (isDhaka ? 60 : 120) : 0;
-
-        // Coupon discount validation
-        let discountAmount = 0;
-        if (body.couponCode) {
-            try {
-                const couponRepo = this.dataSource.getRepository(Coupon);
-                const coupon = await couponRepo.findOne({
-                    where: { code: body.couponCode.trim().toUpperCase(), isDeleted: false }
-                });
-                if (coupon && coupon.isActive) {
-                    const now = new Date();
-                    const isExpired = coupon.endDate && new Date(coupon.endDate) < now;
-                    if (!isExpired) {
-                        if (coupon.discountType === 'PERCENTAGE' as any || String(coupon.discountType).includes('PERCENT')) {
-                            discountAmount = (subtotal * Number(coupon.discountValue || 0)) / 100;
-                            if (coupon.maxDiscountAmount && discountAmount > Number(coupon.maxDiscountAmount)) {
-                                discountAmount = Number(coupon.maxDiscountAmount);
-                            }
-                        } else if (coupon.discountType === 'FREE_SHIPPING') {
-                            discountAmount = deliveryCharge;
-                        } else {
-                            discountAmount = Number(coupon.discountValue || 0);
-                        }
-                    }
-                }
-            } catch {
-                discountAmount = 0;
-            }
-        }
-
-        const amount = Math.max(1, Math.round((subtotal + deliveryCharge - discountAmount + Number.EPSILON) * 100) / 100);
-
-        const paymentIntent = await this.stripe.paymentIntents.create({
-            amount: Math.round(amount * 100),
-            currency: (body.currency || 'usd').toLowerCase(),
-            payment_method_types: ['card'],
-        });
-
-        return { 
-            clientSecret: paymentIntent.client_secret ?? '',
-            amount
-        };
-    }
-
-    async createCheckoutSession(
-        dto: CreateCheckoutSessionDto
-    ): Promise<{ url: string; sessionId: string; orderId: string }> {
-        const { userId, items, currency } = dto;
-
-        // Calculate total order amount in base currency
-        const totalCents = items.reduce((sum, item) => sum + item.unitAmount * item.quantity, 0);
-        const totalAmount = totalCents / 100;
-        const uniqueOrderId = `ORD-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
-
-        // 1. Create order record with PENDING status
-        const order = this.orderRepository.create({
-            orderId: uniqueOrderId,
-            userId,
-            totalAmount,
-            currency: currency.toLowerCase(),
-            status: OrderStatus.PENDING,
-            paymentStatus: PaymentStatus.PENDING,
-        });
-        const savedOrder = await this.orderRepository.save(order);
-
-        try {
-            const frontendBaseUrl = this.getFrontendBaseUrl();
-            const orderTargetId = savedOrder.orderId || savedOrder.id;
-
-            // 2. Create Stripe Checkout Session
-            const session = await this.stripe.checkout.sessions.create({
-                payment_method_types: ['card'],
-                mode: 'payment',
-                line_items: items.map((item) => ({
-                    price_data: {
-                        currency: currency.toLowerCase(),
-                        product_data: {
-                            name: item.name,
-                            description: item.description,
-                            images: item.images,
-                        },
-                        unit_amount: item.unitAmount,
-                    },
-                    quantity: item.quantity,
-                })),
-                success_url: `${frontendBaseUrl}/order-confirmation/${orderTargetId}?payment=processing&session_id={CHECKOUT_SESSION_ID}`,
-                cancel_url: `${frontendBaseUrl}/order-confirmation/${orderTargetId}?payment=cancelled`,
-                metadata: {
-                    orderId: savedOrder.id,
-                    businessOrderId: savedOrder.orderId,
-                    userId: savedOrder.userId,
-                },
-            });
-
-            // 3. Update order with stripeSessionId
-            savedOrder.stripeSessionId = session.id;
-            await this.orderRepository.save(savedOrder);
-
-            return {
-                url: session.url ?? '',
-                sessionId: session.id,
-                orderId: savedOrder.id,
-            };
-        } catch (error: unknown) {
-            const errMessage = error instanceof Error ? error.message : String(error);
-            savedOrder.status = OrderStatus.FAILED;
-            savedOrder.paymentStatus = PaymentStatus.FAILED;
-            await this.orderRepository.save(savedOrder);
-            this.logger.error(`Stripe checkout creation failed: ${errMessage}`);
-            throw new InternalServerErrorException('Failed to create payment checkout session');
-        }
-    }
-
     async handleWebhookEvent(rawBody: Buffer, signature: string): Promise<{ received: boolean }> {
         const webhookSecret =
             this.configService.get<string>('STRIPE_WEBHOOK_SECRET') ||
@@ -469,7 +298,7 @@ export class PaymentsService {
                     tranId: intent.id,
                     gatewayTransactionId: intent.id,
                     amount: String(Number(lockedOrder.totalAmount || 0).toFixed(2)),
-                    currency: (lockedOrder.currency || 'USD').toUpperCase(),
+                    currency: (lockedOrder.currency || getStoreCurrency()).toUpperCase(),
                     status: PaymentAttemptStatus.PENDING,
                     sessionExpiresAt: new Date(Date.now() + 20 * 60 * 1000)
                 });
@@ -483,7 +312,7 @@ export class PaymentsService {
             }
 
             // Verify minor-unit amount
-            const currency = (lockedOrder.currency || 'USD').toUpperCase();
+            const currency = (lockedOrder.currency || getStoreCurrency()).toUpperCase();
             const expectedMinor = CurrencyUtils.toMinorUnitsBigInt(String(lockedOrder.totalAmount), currency);
             const actualMinor = BigInt(intent.amount);
 
@@ -640,13 +469,25 @@ export class PaymentsService {
     }
 
     /**
+     * Payments on an order may be started or inspected only by an admin, the order's owner,
+     * or a guest holding the signed token issued at checkout. Anyone else gets 404, so
+     * order IDs cannot be probed.
+     */
+    private assertOrderAccess(order: Orders, requestUser?: any, guestToken?: string | null): void {
+        if (!resolveOrderAccess(order, requestUser, guestToken)) {
+            throw new NotFoundException('Order not found.');
+        }
+    }
+
+    /**
      * Order-First Stripe Payment Initialization.
      * Enforces single active attempt policy and attempt-specific idempotency keys.
      * Zero DB lock held during Stripe external API call.
      */
     async initiateStripePayment(
         orderId: string,
-        requestUser?: any
+        requestUser?: any,
+        guestToken?: string | null
     ): Promise<{ clientSecret: string; orderId: string; tranId: string }> {
         const orderRepo = this.dataSource.getRepository(Orders);
         const paymentRepo = this.dataSource.getRepository(Payments);
@@ -660,14 +501,7 @@ export class PaymentsService {
             throw new NotFoundException(`Order not found: ${orderId}`);
         }
 
-        // Ownership verification
-        if (order.userId && requestUser) {
-            const isUserAdmin = requestUser.role === 'admin';
-            const requestUserId = requestUser.id || requestUser.userId;
-            if (!isUserAdmin && requestUserId && order.userId !== requestUserId) {
-                throw new ForbiddenException('You do not have permission to initiate payments for this order.');
-            }
-        }
+        this.assertOrderAccess(order, requestUser, guestToken);
 
         if (order.paymentStatus === PaymentStatus.PAID) {
             throw new BadRequestException('This order is already paid.');
@@ -709,7 +543,13 @@ export class PaymentsService {
         const attemptId = randomUUID();
         const uniqueInitTranId = `PENDING_${attemptId}`;
         const sessionExpiresAt = new Date(Date.now() + 20 * 60 * 1000);
-        const currency = (order.currency || 'USD').toUpperCase();
+        // Always charge in the store currency (order totals are priced in it). Older orders may
+        // carry a client-sent currency, so correct the record before charging.
+        const currency = getStoreCurrency();
+        if ((order.currency || '').toUpperCase() !== currency) {
+            await orderRepo.update(order.id, { currency });
+            order.currency = currency;
+        }
         const amountMinor = CurrencyUtils.toMinorUnitsSafeNumber(String(order.totalAmount), currency);
 
         const paymentAttempt = paymentRepo.create({
@@ -781,7 +621,8 @@ export class PaymentsService {
     async initiateSslcommerzPayment(
         dto: SslcommerzInitDto,
         requestUser?: any,
-        req?: any
+        req?: any,
+        guestToken?: string | null
     ): Promise<{ gatewayPageUrl: string; tranId: string; orderId: string }> {
         const orderRepo = this.dataSource.getRepository(Orders);
         const paymentRepo = this.dataSource.getRepository(Payments);
@@ -795,14 +636,7 @@ export class PaymentsService {
             throw new NotFoundException(`Order not found: ${dto.orderId}`);
         }
 
-        // 🛡️ Ownership Verification (prevents cross-account session hijacking)
-        if (order.userId && requestUser) {
-            const isUserAdmin = requestUser.role === 'admin';
-            const requestUserId = requestUser.id || requestUser.userId;
-            if (!isUserAdmin && requestUserId && order.userId !== requestUserId) {
-                throw new ForbiddenException('You do not have permission to initiate payments for this order.');
-            }
-        }
+        this.assertOrderAccess(order, requestUser, guestToken);
 
         if (order.paymentStatus === PaymentStatus.PAID) {
             throw new BadRequestException('This order is already paid.');
@@ -1011,7 +845,8 @@ export class PaymentsService {
     async retryPayment(
         orderId: string,
         requestUser?: any,
-        req?: any
+        req?: any,
+        guestToken?: string | null
     ): Promise<{ gatewayPageUrl: string; tranId: string; orderId: string; attemptNumber: number }> {
         const orderRepo = this.dataSource.getRepository(Orders);
         const paymentRepo = this.dataSource.getRepository(Payments);
@@ -1025,14 +860,7 @@ export class PaymentsService {
             throw new NotFoundException(`Order not found: ${orderId}`);
         }
 
-        // 1. 🛡️ Ownership Verification (Customers can only retry their own orders; Admins can retry any)
-        if (order.userId && requestUser) {
-            const isUserAdmin = requestUser.role === Role.ADMIN || requestUser.role === 'admin';
-            const requestUserId = requestUser.id || requestUser.userId;
-            if (!isUserAdmin && requestUserId && order.userId !== requestUserId) {
-                throw new ForbiddenException('You do not have permission to retry payment for this order.');
-            }
-        }
+        this.assertOrderAccess(order, requestUser, guestToken);
 
         // 2. Immutability & Double-Payment Guards
         if (order.paymentStatus === PaymentStatus.PAID) {
@@ -1224,7 +1052,7 @@ export class PaymentsService {
     /**
      * Retrieve all payment attempts and gateway details for a given order (Admin & Customer audit).
      */
-    async getPaymentAttemptsByOrder(orderId: string, requestUser?: any): Promise<Payments[]> {
+    async getPaymentAttemptsByOrder(orderId: string, requestUser?: any, guestToken?: string | null): Promise<Payments[]> {
         const orderRepo = this.dataSource.getRepository(Orders);
         const order = await orderRepo.findOne({
             where: [{ id: orderId }, { orderId }]
@@ -1234,14 +1062,7 @@ export class PaymentsService {
             throw new NotFoundException(`Order not found: ${orderId}`);
         }
 
-        // 🛡️ Ownership Verification (Customers can only view their own attempts; Admins can view any)
-        if (order.userId && requestUser) {
-            const isUserAdmin = requestUser.role === 'admin';
-            const requestUserId = requestUser.id || requestUser.userId;
-            if (!isUserAdmin && requestUserId && order.userId !== requestUserId) {
-                throw new ForbiddenException('Access denied to payment attempts for this order.');
-            }
-        }
+        this.assertOrderAccess(order, requestUser, guestToken);
 
         const paymentRepo = this.dataSource.getRepository(Payments);
         return paymentRepo.find({
@@ -1982,7 +1803,7 @@ export class PaymentsService {
                 if (intent.status === 'succeeded') {
                     isGatewayPaid = true;
                     gatewayAmountMinor = BigInt(intent.amount);
-                    gatewayCurrency = (intent.currency || 'USD').toUpperCase();
+                    gatewayCurrency = (intent.currency || getStoreCurrency()).toUpperCase();
                 } else if (intent.status === 'canceled') {
                     payment.status = PaymentAttemptStatus.CANCELLED;
                     payment.failureReason = 'Payment canceled on Stripe.';
@@ -2055,7 +1876,7 @@ export class PaymentsService {
         }
 
         // 2. Strict Amount & Currency Invariant Validation
-        const expectedCurrency = (order.currency || payment.currency || 'USD').toUpperCase();
+        const expectedCurrency = (order.currency || payment.currency || getStoreCurrency()).toUpperCase();
         const expectedMinor = CurrencyUtils.toMinorUnitsBigInt(String(order.totalAmount), expectedCurrency);
 
         if (expectedCurrency !== gatewayCurrency) {

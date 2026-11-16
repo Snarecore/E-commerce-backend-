@@ -12,6 +12,9 @@ import { Public } from '../../decorators/public.decorator';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { Throttle } from '@nestjs/throttler';
+import { FirebaseLoginDto } from './dto/firebase-login.dto';
+import { Roles } from '../../decorators/role.decorator';
+import { Role } from '../../enums/role.enum';
 
 @Controller({ path: "auth", version: CONFIG.API_VERSION })
 export class AuthController {
@@ -25,6 +28,15 @@ export class AuthController {
 		@Req() req: Request
 	): Promise<ApiResponse<User>> {
 		return await this.authService.register(dto, req);
+	}
+
+	@Roles(Role.ADMIN)
+	@Post('admin/register')
+	async adminRegister(
+		@Body() dto: RegisterDto,
+		@Req() req: Request
+	): Promise<ApiResponse<User>> {
+		return await this.authService.register(dto, req, true);
 	}
 
 	@Public()
@@ -42,7 +54,7 @@ export class AuthController {
 	@Throttle({ default: { limit: 30, ttl: 60000 } })
 	@Post('firebase-login')
 	async firebaseLogin(
-		@Body() dto: { idToken: string; email?: string; name?: string; photoURL?: string; firebaseUid?: string },
+		@Body() dto: FirebaseLoginDto,
 		@Res({ passthrough: true }) res: Response,
 		@Req() req: Request
 	) {
@@ -67,20 +79,26 @@ export class AuthController {
 		return await this.authService.me(req.user);
 	}
 
+	@UseGuards(JwtAuthGuard)
+	@Get('socket-token')
+	socketToken(@Req() req: any) {
+		return this.authService.issueSocketToken(req.user);
+	}
+
 	@Public()
 	@Post('refresh-token')
 	@UseGuards(RefreshAuthGuard)
-	async refreshToken(@Req() req: Request, @Res({ passthrough: true }) res: Response): Promise<{ accessToken: string; refreshToken: string; user?: any }> {
+	async refreshToken(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
 		return this.authService.refreshToken(req, res);
 	}
 
 	@Public()
 	@Post('logout')
-	logout(
+	async logout(
 		@Res({ passthrough: true }) res: Response,
 		@Req() req: Request
 	) {
-		this.authService.logout(res, req);
+		await this.authService.logout(res, req);
 		return ResponseUtils.successResponseHandler(
 			HttpStatus.OK,
 			'Logged out successfully.'

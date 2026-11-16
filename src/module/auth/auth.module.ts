@@ -14,21 +14,22 @@ import { SpaceService } from '../space-module/space-service/space.service';
 import { R2ServiceProvider } from '../space-module/space-service';
 import { EmailService } from '../email-service/email-sender.service';
 import { SesEmailService } from '../../common/ses/ses-email.service';
+import { AuthSession } from './session/auth-session.entity';
+import { AuthSessionService } from './session/auth-session.service';
 
 @Module({
 	imports: [
-		TypeOrmModule.forFeature([User, UserProfile]),
+		TypeOrmModule.forFeature([User, UserProfile, AuthSession]),
 		JwtModule.registerAsync({
 			imports: [ConfigModule],
 			inject: [ConfigService],
 			useFactory: async (configService: ConfigService) => ({
 				secret: configService.get<string>('JWT_SECRET'),
-				signOptions: { expiresIn: '15d' }
 			})
 		})
 	],
-	providers: [UserRepository, UserProfileRepository, JwtStrategy, JwtRefreshStrategy, AuthService, SpaceService, R2ServiceProvider, EmailService, SesEmailService],
+	providers: [UserRepository, UserProfileRepository, JwtStrategy, JwtRefreshStrategy, AuthService, AuthSessionService, SpaceService, R2ServiceProvider, EmailService, SesEmailService],
 	controllers: [AuthController],
-	exports: [AuthService, JwtStrategy]
+	exports: [AuthService, AuthSessionService, JwtStrategy]
 })
 export class AuthModule { }

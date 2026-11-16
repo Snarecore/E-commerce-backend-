@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { Socket } from 'socket.io';
 import { Role } from '../../enums/role.enum';
 import { COOKIE_NAMES } from '../../utils/cookie-config';
+import { AuthTokenType } from '../auth/session/auth-token.types';
 import { ConversationRepository } from '../chat/conversation/conversation.repository';
 
 import { ConfigService } from '@nestjs/config';
@@ -36,9 +37,7 @@ export class SocketAuthService {
             if (cookieHeader) {
                 const parsedCookies = this.parseCookies(cookieHeader);
                 rawToken = parsedCookies[COOKIE_NAMES.ADMIN_ACCESS] ||
-                           parsedCookies[COOKIE_NAMES.CUSTOMER_ACCESS] ||
-                           parsedCookies['accessToken'] ||
-                           parsedCookies['token'] || null;
+                           parsedCookies[COOKIE_NAMES.CUSTOMER_ACCESS] || null;
             }
 
             // 2. Fallback to handshake auth payload (if explicitly provided in non-cookie environments)
@@ -64,7 +63,8 @@ export class SocketAuthService {
             }
             const payload = this.jwtService.verify(rawToken, { secret });
 
-            if (!payload) {
+            // The handshake accepts access tokens (cookie) and short-lived socket tokens only
+            if (!payload || (payload.type !== AuthTokenType.ACCESS && payload.type !== AuthTokenType.SOCKET)) {
                 return null;
             }
 

@@ -1,9 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
 import { COOKIE_NAMES } from '../utils/cookie-config';
+import { AuthTokenType, getAccessTokenSecret } from '../module/auth/session/auth-token.types';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -18,24 +19,25 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
                 ExtractJwt.fromAuthHeaderAsBearerToken(),
                 (req: Request): string | null => {
                     if (!req?.cookies) return null;
-                    const token = req.cookies[COOKIE_NAMES.ADMIN_ACCESS] || 
-                                  req.cookies[COOKIE_NAMES.CUSTOMER_ACCESS] || 
-                                  req.cookies['accessToken'];
+                    const token = req.cookies[COOKIE_NAMES.ADMIN_ACCESS] || req.cookies[COOKIE_NAMES.CUSTOMER_ACCESS];
                     return typeof token === 'string' ? token : null;
                 },
             ]),
-            secretOrKey: secret || 'dev_jwt_secret_cloth',
+            secretOrKey: getAccessTokenSecret((key) => configService.get<string>(key)),
         });
     }
 
     async validate(payload: any) {
+        // Only access tokens may authenticate API calls; refresh and socket tokens are rejected
+        if (payload?.type !== AuthTokenType.ACCESS) {
+            throw new UnauthorizedException('Invalid token type.');
+        }
         return {
-            id: payload.sub || payload.id || payload.userId,
+            id: payload.sub,
             email: payload.email,
-            role: (payload.role || payload.roles || 'customer').toString().toLowerCase(),
-            name: payload.name
+            role: (payload.role || 'customer').toString().toLowerCase(),
+            name: payload.name,
+            sessionId: payload.sid,
         };
     }
 }
-
-

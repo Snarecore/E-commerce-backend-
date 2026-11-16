@@ -41,7 +41,10 @@ export class CurrencyUtils {
             );
         }
 
-        const [whole, fraction = ''] = normalizedAmount.split('.');
+        const [whole, rawFraction = ''] = normalizedAmount.split('.');
+        // DECIMAL columns come back zero-padded (e.g. "2250.000000"). Dropping zeros past the
+        // currency exponent is lossless; any non-zero excess digit still fails below.
+        const fraction = rawFraction.length > exponent ? rawFraction.replace(/0+$/, '').padEnd(exponent, '0') : rawFraction;
 
         // Strict validation: Excess decimal precision check! E.g. '10.999' for USD must fail!
         if (fraction.length > exponent) {

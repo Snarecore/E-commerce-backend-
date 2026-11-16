@@ -24,13 +24,14 @@ import { TransactionIdUtil } from './utils/transaction-id.util';
 import { Roles } from '../../decorators/role.decorator';
 import { Role } from '../../enums/role.enum';
 import { CONFIG } from '../../utils/config';
-import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';
 import { SslcommerzInitDto } from './dto/sslcommerz-init.dto';
 import { PaymentFilterDto } from './dto/payment-filter.dto';
 import { PaymentsService } from './payments.service';
 import { PaymentConfirmationService } from './services/payment-confirmation.service';
 import { PaymentWebhookInboxService } from './services/payment-webhook-inbox.service';
 import { PaymentEventSource, PaymentGateway } from './enums/payment.enum';
+import { OptionalJwtAuthGuard } from '../../guards/optional-jwt-auth.guard';
+import { GUEST_ORDER_TOKEN_HEADER } from '../order/utils/order-access.policy';
 
 interface RequestWithRawBody extends Request {
     rawBody?: Buffer;
@@ -51,39 +52,25 @@ export class PaymentsController {
     }
 
     // ==========================================
-    // Stripe Endpoints (Preserved for compatibility)
+    // Stripe Endpoints (order-first: POST /orders, then POST /payments/stripe/init)
     // ==========================================
-
-    @Public()
-    @Post()
-    async createPayment(
-        @Body() body: any
-    ): Promise<{ clientSecret: string; amount?: number }> {
-        return this.paymentsService.createPayment(body);
-    }
-
-    @Public()
-    @Post('create-checkout-session')
-    async createCheckoutSession(
-        @Body() dto: CreateCheckoutSessionDto
-    ): Promise<{ url: string; sessionId: string; orderId: string }> {
-        return this.paymentsService.createCheckoutSession(dto);
-    }
 
     /**
      * Initializes a Stripe payment attempt for a given pre-created order (Order-First flow).
      * Enforces single active attempt policy and attempt-specific idempotency keys.
      */
     @Public()
+    @UseGuards(OptionalJwtAuthGuard)
     @Post('stripe/init')
     async initiateStripe(
         @Body() body: { orderId: string },
+        @Headers(GUEST_ORDER_TOKEN_HEADER) guestToken: string | undefined,
         @Req() req: RequestWithRawBody
     ): Promise<{ clientSecret: string; orderId: string; tranId: string }> {
         if (!body?.orderId) {
             throw new BadRequestException('orderId is required to initialize Stripe payment.');
         }
-        return this.paymentsService.initiateStripePayment(body.orderId, req.user);
+        return this.paymentsService.initiateStripePayment(body.orderId, req.user, guestToken);
     }
 
     @Public()
@@ -115,12 +102,14 @@ export class PaymentsController {
      * Initializes an SSLCommerz payment attempt for a given order.
      */
     @Public()
+    @UseGuards(OptionalJwtAuthGuard)
     @Post('sslcommerz/init')
     async initiateSslcommerz(
         @Body() dto: SslcommerzInitDto,
+        @Headers(GUEST_ORDER_TOKEN_HEADER) guestToken: string | undefined,
         @Req() req: RequestWithRawBody
     ): Promise<{ gatewayPageUrl: string; tranId: string; orderId: string }> {
-        return this.paymentsService.initiateSslcommerzPayment(dto, req.user, req);
+        return this.paymentsService.initiateSslcommerzPayment(dto, req.user, req, guestToken);
     }
 
     /**
@@ -280,9 +269,11 @@ export class PaymentsController {
     }
 
     /**
-     * Query all payment attempts for a given order (used by Customer and Admin views).
+     * Query all payment attempts for a given order. Returns raw gateway events and refunds,
+     * so it is admin-only.
      */
-    @Public()
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles(Role.ADMIN)
     @Get('order/:orderId/attempts')
     async getOrderPaymentAttempts(
         @Param('orderId') orderId: string,
@@ -296,12 +287,14 @@ export class PaymentsController {
      * Revives expired/cancelled orders if stock is available and initiates a fresh gateway session.
      */
     @Public()
+    @UseGuards(OptionalJwtAuthGuard)
     @Post('order/:orderId/retry')
     async retryPayment(
         @Param('orderId') orderId: string,
+        @Headers(GUEST_ORDER_TOKEN_HEADER) guestToken: string | undefined,
         @Req() req: RequestWithRawBody
     ) {
-        return this.paymentsService.retryPayment(orderId, req.user, req);
+        return this.paymentsService.retryPayment(orderId, req.user, req, guestToken);
     }
 
     /**

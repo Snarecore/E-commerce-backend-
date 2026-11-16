@@ -15,83 +15,32 @@ import { Roles } from '../../decorators/role.decorator';
 import { Role } from '../../enums/role.enum';
 import { Public } from '../../decorators/public.decorator';
 import { Request } from 'express';
+import { GUEST_ORDER_TOKEN_HEADER } from './utils/order-access.policy';
 
 @Controller({ path: 'orders', version: CONFIG.API_VERSION })
 export class OrdersController {
 	constructor(private readonly service: OrdersService) {}
 
+	// Guest or signed-in. The owner comes only from a verified token, never from the body.
 	@Public()
+	@UseGuards(OptionalJwtAuthGuard)
 	@Post('preview')
 	async preview(
 		@Body() dto: any,
 		@Req() req: Request
 	): Promise<ApiResponse<any>> {
-		let userId = (req as any)?.user?.id || (req as any)?.user?.userId;
-		if (!userId && req.headers?.authorization) {
-			try {
-				const authHeader = req.headers.authorization;
-				const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
-				if (token) {
-					const payloadPart = token.split('.')[1];
-					if (payloadPart) {
-						const decoded = JSON.parse(Buffer.from(payloadPart, 'base64').toString('utf8'));
-						userId = decoded?.id || decoded?.userId || decoded?.sub;
-					}
-				}
-			} catch {}
-		}
-		if (!userId && (req as any)?.cookies) {
-			try {
-				const cookies = (req as any).cookies;
-				const token = cookies['cloth_customer_access'] || cookies['cloth_admin_access'] || cookies['accessToken'];
-				if (token) {
-					const payloadPart = token.split('.')[1];
-					if (payloadPart) {
-						const decoded = JSON.parse(Buffer.from(payloadPart, 'base64').toString('utf8'));
-						userId = decoded?.id || decoded?.userId || decoded?.sub;
-					}
-				}
-			} catch {}
-		}
-		dto.userId = userId || (dto as any)?.userId || null;
+		dto.userId = (req.user as any)?.id ?? null;
 		return await this.service.calculateOrderPreview(dto);
 	}
 
 	@Public()
+	@UseGuards(OptionalJwtAuthGuard)
 	@Post()
 	async create(
 		@Body() dto: CreateOrdersDto,
 		@Req() req: Request
 	): Promise<ApiResponse<OrdersInterface>> {
-		let userId = (req as any)?.user?.id || (req as any)?.user?.userId;
-		if (!userId && req.headers?.authorization) {
-			try {
-				const authHeader = req.headers.authorization;
-				const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
-				if (token) {
-					const payloadPart = token.split('.')[1];
-					if (payloadPart) {
-						const decoded = JSON.parse(Buffer.from(payloadPart, 'base64').toString('utf8'));
-						userId = decoded?.id || decoded?.userId || decoded?.sub;
-					}
-				}
-			} catch {}
-		}
-		if (!userId && (req as any)?.cookies) {
-			try {
-				const cookies = (req as any).cookies;
-				const token = cookies['cloth_customer_access'] || cookies['cloth_admin_access'] || cookies['accessToken'];
-				if (token) {
-					const payloadPart = token.split('.')[1];
-					if (payloadPart) {
-						const decoded = JSON.parse(Buffer.from(payloadPart, 'base64').toString('utf8'));
-						userId = decoded?.id || decoded?.userId || decoded?.sub;
-					}
-				}
-			} catch {}
-		}
-		userId = userId || (dto as any)?.userId || null;
-		return await this.service.create(dto, userId);
+		return await this.service.create(dto, (req.user as any)?.id ?? null);
 	}
 
 	@UseGuards(JwtAuthGuard, RolesGuard)
@@ -136,17 +85,31 @@ export class OrdersController {
 	}
 
 	@Public()
+	@Get('track')
+	async trackOrder(
+		@Query('orderId') orderId: string,
+		@Query('phone') phone: string
+	): Promise<ApiResponse<any>> {
+		return await this.service.trackOrder(orderId, phone);
+	}
+
+	// Admin, the owning customer, or a guest holding the order's signed token (see order-access.policy)
+	@Public()
+	@UseGuards(OptionalJwtAuthGuard)
 	@Get(':id')
-	async findOne(@Param('id') id: string, @Req() req: Request): Promise<ApiResponse<OrdersInterface>> {
-		// @ts-ignore
-		return await this.service.findOne(id, req?.user);
+	async findOne(
+		@Param('id') id: string,
+		@Headers(GUEST_ORDER_TOKEN_HEADER) guestToken: string | undefined,
+		@Req() req: Request
+	): Promise<ApiResponse<any>> {
+		return await this.service.findOne(id, req.user, guestToken);
 	}
 
 	@UseGuards(OptionalJwtAuthGuard)
 	@Post(':id/restore-cart')
 	async restoreCart(
 		@Param('id') id: string,
-		@Headers('x-guest-order-token') guestToken: string,
+		@Headers(GUEST_ORDER_TOKEN_HEADER) guestToken: string,
 		@Req() req: any
 	): Promise<ApiResponse<any>> {
 		return await this.service.generateCartRestorePayload(id, req?.user, guestToken);

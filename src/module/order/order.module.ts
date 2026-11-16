@@ -17,6 +17,7 @@ import { OrderExpiryWorker } from './order-expiry.worker';
 import { PaymentsModule } from '../payments/payments.module';
 import { EmailServiceModule } from '../email-service/email-sender.module';
 import { InventoryEngineModule } from '../inventory-engine/inventory-engine.module';
+import { CheckoutVerificationModule } from '../checkout-verification/checkout-verification.module';
 
 @Module({
 	imports: [
@@ -28,7 +29,8 @@ import { InventoryEngineModule } from '../inventory-engine/inventory-engine.modu
 		RiskModule,
 		PaymentsModule,
 		EmailServiceModule,
-		InventoryEngineModule
+		InventoryEngineModule,
+		CheckoutVerificationModule
 	],
 	controllers: [OrdersController],
 	providers: [

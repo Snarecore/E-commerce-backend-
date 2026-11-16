@@ -127,8 +127,9 @@ export class CouponService {
         code: string,
         serverSubtotal: number,
         deliveryCharge: number,
-        userId: string,
-        orderId: string
+        userId: string | null,
+        orderId: string,
+        phone?: string | null
     ): Promise<{ couponId: string; couponCode: string; discountAmount: number }> {
         const normalizedCode = code.trim().toUpperCase();
 
@@ -161,13 +162,22 @@ export class CouponService {
             throw new HttpException(`Minimum order subtotal of ৳${coupon.minOrderAmount} required for this coupon.`, HttpStatus.CONFLICT);
         }
 
-        // 2. Locked User Usage Check
-        if (userId && coupon.userUsageLimit && coupon.userUsageLimit > 0) {
-            const userUsageCount = await queryRunner.manager.count(CouponUsage, {
-                where: { couponId: coupon.id, userId: userId }
-            });
-            if (userUsageCount >= coupon.userUsageLimit) {
-                throw new HttpException('You have reached your maximum usage limit for this coupon.', HttpStatus.CONFLICT);
+        // 2. Locked User & Phone Usage Check (Phone-bound concurrency protection)
+        if (coupon.userUsageLimit && coupon.userUsageLimit > 0) {
+            const usageQb = queryRunner.manager.createQueryBuilder(CouponUsage, 'usage')
+                .where('usage.couponId = :couponId', { couponId: coupon.id });
+
+            if (userId && phone) {
+                usageQb.andWhere('(usage.userId = :userId OR usage.phone = :phone)', { userId, phone });
+            } else if (userId) {
+                usageQb.andWhere('usage.userId = :userId', { userId });
+            } else if (phone) {
+                usageQb.andWhere('usage.phone = :phone', { phone });
+            }
+
+            const usageCount = await usageQb.getCount();
+            if (usageCount >= coupon.userUsageLimit) {
+                throw new HttpException('You have reached the maximum usage limit for this coupon.', HttpStatus.CONFLICT);
             }
         }
 
@@ -177,7 +187,8 @@ export class CouponService {
         // 4. Create CouponUsage Record
         const couponUsage = queryRunner.manager.create(CouponUsage, {
             couponId: coupon.id,
-            userId,
+            userId: userId || null,
+            phone: phone || null,
             orderId,
             discountAmount
         } as any);

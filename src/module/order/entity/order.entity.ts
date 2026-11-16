@@ -10,6 +10,8 @@ import { Payments } from '../../payments/entities/payment.entity';
 @Index('IDX_orders_user_created', ['userId', 'createdAt'])
 @Index('IDX_orders_status_created', ['status', 'createdAt'])
 @Index('IDX_orders_payment_status', ['paymentStatus', 'createdAt'])
+// One gateway payment can settle at most one order
+@Index('UQ_orders_paymentIntentId', ['paymentIntentId'], { unique: true })
 export class Orders extends AbstractEntity {
     @Column({ type: 'varchar', nullable: false })
     orderId: string;
@@ -117,6 +119,21 @@ export class Orders extends AbstractEntity {
 
     @Column({ type: 'timestamp', nullable: true })
     orderPaymentExpiresAt: Date | null;
+
+    @Column({ type: 'boolean', default: false })
+    isPhoneVerified: boolean;
+
+    @Column({ type: 'varchar', length: 20, nullable: true })
+    verifiedPhone: string;
+
+    @Column({ type: 'timestamp', nullable: true })
+    phoneVerifiedAt: Date;
+
+    @Column({ type: 'varchar', length: 32, nullable: true })
+    verificationProvider: string;
+
+    @Column({ type: 'varchar', length: 64, nullable: true })
+    verificationChallengeId: string;
 
     @OneToMany(() => Payments, (payment) => payment.order)
     payments: Payments[];
