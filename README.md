@@ -58,6 +58,29 @@ $ pnpm run test:e2e
 $ pnpm run test:cov
 ```
 
+## Courier: Steadfast
+
+Code: `src/module/courier`. Disabled by default; the manual `PATCH /orders/:id/courier` keeps working.
+
+Environment:
+
+| Variable | Required | Notes |
+|---|---|---|
+| `STEADFAST_ENABLED` | yes | `true` to turn the integration on |
+| `STEADFAST_API_KEY`, `STEADFAST_SECRET_KEY` | when enabled | From the Steadfast merchant panel |
+| `STEADFAST_WEBHOOK_TOKEN` | recommended | Random string, 32+ chars. Register `POST {BACKEND_PUBLIC_URL}/api/v1/courier/webhooks/steadfast` with this token as the Bearer token in the Steadfast panel. Without it, status updates come only from hourly polling. |
+| `STEADFAST_BASE_URL` | no | Default `https://portal.packzy.com/api/v1` |
+| `STEADFAST_TRACKING_URL_TEMPLATE` | no | Default `https://steadfast.com.bd/t/{tracking_code}` |
+
+Run the migration `CreateShipmentTables1787445000000` before enabling.
+
+Rules:
+- Only orders in `Order Placed` / `Processing` can be booked. Booking moves the order to `Shipped`.
+- Order code is the Steadfast `invoice`. After an uncertain failure, the next attempt looks up the invoice before creating again (no duplicate parcels).
+- Courier `delivered` moves the order to `Delivered` but a COD order stays unpaid until an admin records the Steadfast payout ("Mark COD received").
+- Courier `cancelled` moves the order to `Returned` (no restock). Stock comes back only through the RMA inspection.
+- Partial delivery, unknown statuses and failed order transitions set `needsAttention` on the shipment (`GET /courier/shipments?needsAttention=true`).
+
 ## Deployment
 
 When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.

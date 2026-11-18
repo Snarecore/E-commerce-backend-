@@ -1,5 +1,6 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { isDuplicateKeyError } from '../../../utils/db-errors.util';
 import { ResponseUtils, ApiResponse } from '../../../utils/response.utils';
 import { MessageRepository } from './message.repository';
 import { ConversationRepository } from '../conversation/conversation.repository';
@@ -38,9 +39,14 @@ export class MessageService {
                 const conversationRepo = manager.getRepository(Conversation);
                 const messageRepo = manager.getRepository(Message);
 
-                let conversation = await conversationRepo.findOne({
-                    where: { customerId, isDeleted: false }
-                });
+                // customerId is UNIQUE, so a customer has exactly one conversation row for life.
+                // Look it up including soft-deleted rows and revive it rather than inserting a second.
+                let conversation = await conversationRepo.findOne({ where: { customerId } });
+
+                if (conversation?.isDeleted) {
+                    await conversationRepo.update(conversation.id, { isDeleted: false });
+                    conversation.isDeleted = false;
+                }
 
                 if (!conversation) {
                     const newConvo = conversationRepo.create({
@@ -49,7 +55,13 @@ export class MessageService {
                         lastMessage: dto.content,
                         lastMessageAt: new Date()
                     });
-                    conversation = await conversationRepo.save(newConvo);
+                    try {
+                        conversation = await conversationRepo.save(newConvo);
+                    } catch (error) {
+                        // Two first messages raced; the other request created the row.
+                        if (!isDuplicateKeyError(error)) throw error;
+                        conversation = await conversationRepo.findOneOrFail({ where: { customerId } });
+                    }
                 }
 
                 const message = messageRepo.create({

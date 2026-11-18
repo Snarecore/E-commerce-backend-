@@ -134,7 +134,10 @@
 		}
 	},
 	"engines": {
-		"node": "24.x"
+		"node": "22.x"
+	},
+	"overrides": {
+		"jose": "^5.10.0"
 	},
 	"packageManager": "pnpm@10.4.1+sha256.4b702887986995933d4300836b04d6d02a43bc72b52e4f7e93a4ca608b959197"
 }

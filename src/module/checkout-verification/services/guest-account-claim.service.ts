@@ -9,6 +9,7 @@ import { Orders } from '../../order/entity/order.entity';
 import { Role } from '../../../enums/role.enum';
 import { normalizeBDPhone } from '../../../utils/phone-normalizer.util';
 import { createSha256 } from '../../../utils/crypto-hasher.util';
+import { isDuplicateKeyError } from '../../../utils/db-errors.util';
 
 @Injectable()
 export class GuestAccountClaimService {
@@ -104,7 +105,19 @@ export class GuestAccountClaimService {
             });
 
             const customerName = name || order?.shippingAddress?.name || 'Valued Customer';
-            const customerEmail = order?.shippingAddress?.email || `${canonicalPhone.replace(/\D/g, '')}@guest.bazaarbound.com`;
+            const shippingEmail = String(order?.shippingAddress?.email || '').trim().toLowerCase();
+            const customerEmail = shippingEmail || `${canonicalPhone.replace(/\D/g, '')}@guest.bazaarbound.com`;
+
+            // The checkout email is unverified. If it already belongs to an account (soft-deleted
+            // included), claiming must not create a second account under someone else's address.
+            if (shippingEmail) {
+                const emailOwner = await queryRunner.manager.findOne(User, { where: { email: shippingEmail } });
+                if (emailOwner) {
+                    throw new ConflictException(
+                        'An account with this email already exists. Please log in to view your orders.'
+                    );
+                }
+            }
             const hashedPassword = await bcrypt.hash(password, 10);
 
             // Create new User entity
@@ -145,6 +158,9 @@ export class GuestAccountClaimService {
             };
         } catch (err: any) {
             await queryRunner.rollbackTransaction();
+            if (isDuplicateKeyError(err)) {
+                throw new ConflictException('An account with this email already exists. Please log in to view your orders.');
+            }
             throw err;
         } finally {
             await queryRunner.release();

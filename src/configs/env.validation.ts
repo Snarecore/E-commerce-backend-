@@ -88,6 +88,15 @@ export const EnvSchema = z
 		// Risk Engine Phone Hashing
 		PHONE_HMAC_SECRET_V1: z.string().optional(),
 		PHONE_HMAC_SECRET_V2: z.string().optional(),
+
+		// Steadfast Courier (disabled by default; manual courier entry keeps working)
+		STEADFAST_ENABLED: booleanEnv(false),
+		STEADFAST_BASE_URL: z.string().url('STEADFAST_BASE_URL must be a valid URL').default('https://portal.packzy.com/api/v1'),
+		STEADFAST_API_KEY: z.string().optional(),
+		STEADFAST_SECRET_KEY: z.string().optional(),
+		// Shared secret we choose and register in the Steadfast panel; sent back as "Authorization: Bearer <token>"
+		STEADFAST_WEBHOOK_TOKEN: z.string().optional(),
+		STEADFAST_TRACKING_URL_TEMPLATE: z.string().default('https://steadfast.com.bd/t/{tracking_code}'),
 	})
 	.superRefine((data, ctx) => {
 		const isProd = data.NODE_ENV === 'production';
@@ -158,6 +167,23 @@ export const EnvSchema = z
 					path: ['STRIPE_WEBHOOK_SECRET'],
 					message: 'STRIPE_WEBHOOK_SECRET is mandatory when ENABLE_STRIPE is true.',
 				});
+			}
+		}
+
+		// 🛡️ Invariant: Steadfast credentials when enabled
+		if (data.STEADFAST_ENABLED) {
+			if (!(data.STEADFAST_API_KEY || '').trim()) {
+				ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['STEADFAST_API_KEY'], message: 'STEADFAST_API_KEY is mandatory when STEADFAST_ENABLED is true.' });
+			}
+			if (!(data.STEADFAST_SECRET_KEY || '').trim()) {
+				ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['STEADFAST_SECRET_KEY'], message: 'STEADFAST_SECRET_KEY is mandatory when STEADFAST_ENABLED is true.' });
+			}
+			const webhookToken = (data.STEADFAST_WEBHOOK_TOKEN || '').trim();
+			if (webhookToken && webhookToken.length < 32) {
+				ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['STEADFAST_WEBHOOK_TOKEN'], message: 'STEADFAST_WEBHOOK_TOKEN must be at least 32 characters.' });
+			}
+			if (isProd && !webhookToken) {
+				console.warn('[CONFIG WARNING] STEADFAST_WEBHOOK_TOKEN is not set: courier status will update only by hourly polling.');
 			}
 		}
 

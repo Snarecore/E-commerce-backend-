@@ -3,7 +3,9 @@ import { HttpException, HttpStatus, Injectable, Logger, OnModuleInit, Optional }
 import { ConfigService } from '@nestjs/config';
 import { ResponseUtils, ApiResponse } from '../../utils/response.utils';
 import * as crypto from 'crypto';
-import { Between, DataSource, FindOptionsOrder, In, LessThanOrEqual, MoreThanOrEqual, Like } from 'typeorm';
+import { Between, DataSource, FindOptionsOrder, In, LessThanOrEqual, MoreThanOrEqual, Like, Not } from 'typeorm';
+import { Shipment } from '../courier/entities/shipment.entity';
+import { CUSTOMER_SHIPMENT_LABELS, ShipmentStatus } from '../courier/enums/shipment-status.enum';
 import { OrdersRepository } from './order.repository';
 import { CreateOrdersDto } from './dto/create-order.dto';
 import { OrdersInterface } from './type/order.type';
@@ -834,10 +836,13 @@ export class OrdersService {
         }
     }
 
-        async updateOrderStatus(
+    async updateOrderStatus(
         id: string,
         dto: UpdateOrderStatusDto,
-        adminUser?: any
+        adminUser?: any,
+        // codSettlementPending: courier delivered a COD parcel; the cash is with the courier,
+        // so the order stays unpaid until the COD payout is marked settled on the shipment.
+        options?: { codSettlementPending?: boolean }
     ): Promise<ApiResponse<Orders>> {
         const queryRunner = this.dataSource.createQueryRunner();
         await queryRunner.connect();
@@ -962,7 +967,11 @@ export class OrdersService {
                 if (dto.rejectionMessage) order.rejectionMessage = dto.rejectionMessage;
             }
 
-            if ((order.paymentMethod || '').toUpperCase() === 'COD' && targetStatus === OrderStatus.DELIVERED) {
+            if (
+                (order.paymentMethod || '').toUpperCase() === 'COD' &&
+                targetStatus === OrderStatus.DELIVERED &&
+                !options?.codSettlementPending
+            ) {
                 order.paymentStatus = PaymentStatus.PAID;
             }
 
@@ -1111,6 +1120,43 @@ export class OrdersService {
                 }
             }
         }
+    }
+
+    /**
+     * Customer-safe view of each order's live courier shipment (no COD/settlement/internal errors).
+     * One query for many orders. Reads the shipments table directly to avoid a module cycle with CourierModule.
+     */
+    private async getCustomerShipmentSummaries(orderIds: string[]): Promise<Map<string, {
+        provider: string;
+        status: string;
+        statusLabel: string;
+        trackingCode: string | null;
+        trackingUrl: string | null;
+        updatedAt: Date;
+    }>> {
+        const result = new Map();
+        if (!orderIds.length) return result;
+        try {
+            const shipments = await this.dataSource.getRepository(Shipment).find({
+                where: { orderId: In(orderIds), status: Not(ShipmentStatus.CANCELLED) },
+                order: { createdAt: 'DESC' }
+            });
+            for (const shipment of shipments) {
+                if (result.has(shipment.orderId) || !shipment.consignmentId) continue;
+                result.set(shipment.orderId, {
+                    provider: 'Steadfast',
+                    status: shipment.status,
+                    statusLabel: CUSTOMER_SHIPMENT_LABELS[shipment.status] || 'In transit',
+                    trackingCode: shipment.trackingCode,
+                    trackingUrl: shipment.trackingUrl,
+                    updatedAt: shipment.lastProviderStatusAt || shipment.updatedAt
+                });
+            }
+        } catch (error: any) {
+            // Tracking must keep working even if the courier tables are unavailable (e.g. migration not yet run).
+            this.logger.warn(`[Order Tracking] Shipment summary unavailable: ${error?.message}`);
+        }
+        return result;
     }
 
     async updateCourierInfo(
@@ -1429,6 +1475,8 @@ export class OrdersService {
                 allProducts.map(p => [p.id, p.fileUrl ?? null])
             );
 
+            const shipmentMap = await this.getCustomerShipmentSummaries(ordersList.map((o) => o.id));
+
             const enrichedData = ordersList.map((order) => {
                 const summariesWithFileUrl = (order.orderSummaries || []).map((summary) => ({
                     ...summary,
@@ -1437,7 +1485,8 @@ export class OrdersService {
 
                 return {
                     ...order,
-                    orderSummaries: summariesWithFileUrl
+                    orderSummaries: summariesWithFileUrl,
+                    shipment: shipmentMap.get(order.id) || null
                 };
             });
 
@@ -1499,7 +1548,10 @@ export class OrdersService {
 
             const maskedPhone = `${canonicalPhone.slice(0, 6)}****${canonicalPhone.slice(-2)}`;
 
+            const shipment = (await this.getCustomerShipmentSummaries([order.id])).get(order.id) || null;
+
             const trackingPayload = {
+                shipment,
                 orderId: order.orderId,
                 status: order.status,
                 paymentStatus: order.paymentStatus,

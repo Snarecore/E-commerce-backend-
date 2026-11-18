@@ -27,6 +27,7 @@ import { ConfigService } from '@nestjs/config';
 import { AuthSessionService } from './session/auth-session.service';
 import { SessionUser } from './session/auth-token.types';
 import { FirebaseLoginDto } from './dto/firebase-login.dto';
+import { isDuplicateKeyError } from '../../utils/db-errors.util';
 
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { AuditAction } from '../audit-log/constants/audit-action.enum';
@@ -35,6 +36,9 @@ import { AuditTargetType } from '../audit-log/constants/audit-target-type.enum';
 
 @Injectable()
 export class AuthService {
+	/** Wrong guesses allowed per reset code before it is invalidated (1 in 180,000 odds). */
+	static readonly MAX_RESET_ATTEMPTS = 5;
+
 	constructor(
 		private readonly userRepository: UserRepository,
 		private readonly userProfileRepository: UserProfileRepository,
@@ -185,14 +189,26 @@ export class AuthService {
 		let user = await this.userRepository.findOneByQueryRelation({ email });
 		let isNewUser = false;
 		if (!user) {
-			isNewUser = true;
-			user = await this.userRepository.create({
-				email,
-				name,
-				password: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10),
-				phone: 'N/A',
-				role: Role.CUSTOMER
-			});
+			// A deactivated account still owns its email; signing in must not mint a second account.
+			const existing = await this.userRepository.findOneByQueryIncludingDeleted({ email });
+			if (existing) {
+				throw new UnauthorizedException('This account has been deactivated. Please contact support.');
+			}
+			try {
+				user = await this.userRepository.create({
+					email,
+					name,
+					password: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10),
+					phone: 'N/A',
+					role: Role.CUSTOMER
+				});
+				isNewUser = true;
+			} catch (error) {
+				// A concurrent first sign-in created the account a moment ago; use that one.
+				if (!isDuplicateKeyError(error)) throw error;
+				user = await this.userRepository.findOneByQueryRelation({ email });
+				if (!user) throw error;
+			}
 		}
 
 		await this.startSession(user, res, req);
@@ -331,6 +347,11 @@ export class AuthService {
 			if (error instanceof HttpException) {
 				throw error;
 			}
+			// Two concurrent sign-ups (e.g. a double-clicked submit) both pass the lookup above;
+			// the unique email index rejects the second one.
+			if (isDuplicateKeyError(error)) {
+				throw new ConflictException('Email already exists.');
+			}
 			const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
 			throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
 		} finally {
@@ -388,13 +409,15 @@ export class AuthService {
 				);
 			}
 
-			const resetToken = Math.floor(100000 + Math.random() * 900000).toString();
+			// CSPRNG, not Math.random: the code is the only secret guarding the account.
+			const resetToken = crypto.randomInt(100000, 1000000).toString();
 			const hashedResetToken = crypto.createHash('sha256').update(resetToken).digest('hex');
 			const resetTokenExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
 			await this.userRepository.update(user.id, {
 				resetToken: hashedResetToken,
-				resetTokenExpiry: resetTokenExpiresAt
+				resetTokenExpiry: resetTokenExpiresAt,
+				resetAttempts: 0
 			});
 
 			await this.emailService.sendResetPasswordEmail({
@@ -426,36 +449,52 @@ export class AuthService {
 		const cleanEmail = (email || '').trim().toLowerCase();
 		const cleanToken = (token || '').trim();
 
+		if (newPassword !== confirmPassword) {
+			throw new BadRequestException('Passwords do not match.');
+		}
+
+		// One message for unknown email, missing, expired or wrong code, so this endpoint
+		// cannot be used to discover which emails are registered.
+		const invalidCode = new BadRequestException('Invalid or expired reset code. Please request a new one.');
+
 		const user = await this.userRepository.findOneByQueryRelation(
 			{ email: cleanEmail },
 			{ select: ['id', 'email', 'resetToken', 'resetTokenExpiry'] }
 		);
-		if (!user) {
-			throw new NotFoundException('User not found.');
+		if (!user || !user.resetToken || !user.resetTokenExpiry) {
+			throw invalidCode;
 		}
 
-		if (!user.resetToken || !user.resetTokenExpiry) {
-			throw new BadRequestException('No reset token found or already used.');
+		if (new Date(user.resetTokenExpiry) < new Date()) {
+			throw invalidCode;
 		}
 
-		const now = new Date();
-		if (new Date(user.resetTokenExpiry) < now) {
-			throw new BadRequestException('Reset token has expired.');
+		// Spend one attempt before comparing. The conditional UPDATE is atomic, so parallel
+		// guesses cannot slip past the limit; once it is reached the code is burned.
+		const consumed = await this.userRepository
+			.createQueryBuilder()
+			.update(User)
+			.set({ resetAttempts: () => '`resetAttempts` + 1' })
+			.where('id = :id AND `resetAttempts` < :max', { id: user.id, max: AuthService.MAX_RESET_ATTEMPTS })
+			.execute();
+		if (!consumed.affected) {
+			await this.userRepository.update(user.id, { resetToken: null as any, resetTokenExpiry: null as any });
+			throw new BadRequestException('Too many incorrect attempts. Please request a new reset code.');
 		}
 
 		const hashedIncomingToken = crypto.createHash('sha256').update(cleanToken).digest('hex');
-		if (user.resetToken !== hashedIncomingToken && user.resetToken !== cleanToken) {
-			throw new BadRequestException('Invalid reset token.');
-		}
-
-		if (newPassword !== confirmPassword) {
-			throw new BadRequestException('Passwords do not match.');
+		const matches =
+			hashedIncomingToken.length === user.resetToken.length &&
+			crypto.timingSafeEqual(Buffer.from(hashedIncomingToken), Buffer.from(user.resetToken));
+		if (!matches) {
+			throw invalidCode;
 		}
 
 		const hashedPassword = await bcrypt.hash(newPassword, 10);
 		await this.userRepository.update(user.id, {
 			resetToken: null as any,
 			resetTokenExpiry: null as any,
+			resetAttempts: 0,
 			password: hashedPassword
 		});
 		// A password reset signs the user out everywhere

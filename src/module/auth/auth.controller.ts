@@ -62,24 +62,28 @@ export class AuthController {
 	}
 
 	@UseGuards(JwtAuthGuard)
+	@Roles(Role.CUSTOMER)
 	@Get('me')
 	async me(@Req() req: any) {
 		return await this.authService.me(req.user);
 	}
 
 	@UseGuards(JwtAuthGuard)
+	@Roles(Role.CUSTOMER)
 	@Get('customer/me')
 	async customerMe(@Req() req: any) {
 		return await this.authService.me(req.user);
 	}
 
 	@UseGuards(JwtAuthGuard)
+	@Roles(Role.ADMIN)
 	@Get('admin/me')
 	async adminMe(@Req() req: any) {
 		return await this.authService.me(req.user);
 	}
 
 	@UseGuards(JwtAuthGuard)
+	@Roles(Role.CUSTOMER)
 	@Get('socket-token')
 	socketToken(@Req() req: any) {
 		return this.authService.issueSocketToken(req.user);

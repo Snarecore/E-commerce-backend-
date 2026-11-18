@@ -4041,8 +4041,8 @@ packages:
     resolution: {integrity: sha512-9FzQjJ7MATs1tSpnco1K6ayiYE3figslrXA72G2HQ/n76RzvYlofyi5QM+iX4YRs/pu3yzxlVQSST23+dMDknw==}
     engines: {node: '>= 0.6.0'}
 
-  jose@6.2.16:
-    resolution: {integrity: sha512-4LSJpbuBuPdGrONCdZUy0xnxtLf8eEz+EY0SMXdHQEBU7bgUHDVblU/JAjryv3wID9/LK7/YuwFwq+AQNfMscQ==}
+  jose@6.2.17:
+    resolution: {integrity: sha512-wOuK9V1yujQFH5S0ZWmLcDZN7+IKh9bUCC2ZPCf2HDlol3WWHy+PPyNjEI75FXRLMp3vDKQcupP59xhVU95hcg==}
 
   jpeg-exif@1.1.4:
     resolution: {integrity: sha512-a+bKEcCjtuW5WTdgeXFzswSrdqi0jk4XlEtZlx5A94wCoBpFjfFTbo/Tra5SpNCl/YFZPvcV1dJc+TAYeg6ROQ==}
@@ -11116,7 +11116,7 @@ snapshots:
 
   jmespath@0.16.0: {}
 
-  jose@6.2.16: {}
+  jose@6.2.17: {}
 
   jpeg-exif@1.1.4: {}
 
@@ -11222,7 +11222,7 @@ snapshots:
     dependencies:
       '@types/jsonwebtoken': 9.0.9
       debug: 4.4.3
-      jose: 6.2.16
+      jose: 6.2.17
       limiter: 1.1.5
       lru-cache: 11.0.2
       lru-memoizer: 3.0.0

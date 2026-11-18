@@ -44,6 +44,7 @@ export class ProductReviewController {
 		return await this.service.findAllforCustomer(dto, id);
 	}
 
+	@Roles(Role.CUSTOMER)
 	@Get(':id')
 	async findOne(@Param('id') id: string): Promise<ApiResponse<ProductReviewResponse>> {
 		return await this.service.findOne(id);

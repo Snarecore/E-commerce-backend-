@@ -2,7 +2,6 @@ import { AbstractEntity } from '../../../database/abstract.entity';
 import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
 import { Coupon } from './coupon.entity';
 import { User } from '../../user/entities/user.entity';
-import { Orders } from '../../order/entity/order.entity';
 
 @Entity('coupon_usage')
 @Index('IDX_coupon_user', ['couponId', 'userId'])
@@ -18,6 +17,10 @@ export class CouponUsage extends AbstractEntity {
     @Column({ type: 'varchar', length: 20, nullable: true })
     phone: string | null;
 
+    /**
+     * Human-readable order number (`orders.orderId`, e.g. BB123456), not `orders.id`.
+     * Written before the order row exists, so it deliberately has no foreign key.
+     */
     @Column({ type: 'varchar', nullable: false })
     orderId: string;
 
@@ -34,8 +37,4 @@ export class CouponUsage extends AbstractEntity {
     @ManyToOne(() => User, { onDelete: 'CASCADE', nullable: true })
     @JoinColumn({ name: 'userId' })
     user: User | null;
-
-    @ManyToOne(() => Orders, { onDelete: 'CASCADE' })
-    @JoinColumn({ name: 'orderId' })
-    order: Orders;
 }

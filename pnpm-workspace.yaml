@@ -1,0 +1,4 @@
+packages:
+  - '.'
+overrides:
+  jose: "^5.10.0"

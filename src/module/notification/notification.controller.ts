@@ -53,6 +53,7 @@ export class NotificationController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Roles(Role.CUSTOMER)
   @Get()
   async findUserNotifications(
     @Req() req: Request
@@ -65,6 +66,7 @@ export class NotificationController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Roles(Role.CUSTOMER)
   @Patch('read-all')
   async markAllAsRead(@Req() req: Request): Promise<ApiResponse<boolean>> {
     const userId = (req as any)?.user?.id || (req as any)?.user?.userId;
@@ -75,6 +77,7 @@ export class NotificationController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Roles(Role.CUSTOMER)
   @Patch(':id/read')
   async markAsRead(
     @Param('id') id: string,

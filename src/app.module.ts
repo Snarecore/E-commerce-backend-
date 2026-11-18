@@ -43,6 +43,7 @@ import { MessageModule } from './module/chat/message/message.module';
 import { ConversationModule } from './module/chat/conversation/conversation.module';
 import { PageMetaModule } from './module/seo/page-meta/page-meta.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { CourierModule } from './module/courier/courier.module';
 import { ProductSeoModule } from './module/seo/product-meta/product-seo.module';
 import { PolicyOneCmsModule } from './module/setting/policy/policy-one-cms/policy-one-cms.module';
 import { PolicyTwoCmsModule } from './module/setting/policy/policy-two-cms/policy-two-cms.module';
@@ -178,7 +179,8 @@ import { AppController } from './app.controller';
 		ProfitReportModule,
 		RiskModule,
 		InventoryEngineModule,
-		CheckoutVerificationModule
+		CheckoutVerificationModule,
+		CourierModule
 	],
 	providers: [
 		{

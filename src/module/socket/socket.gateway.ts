@@ -15,28 +15,12 @@ import { SocketService } from './socket.service';
 import { SocketCommand, SocketEvent, SocketRoom } from './socket.constants';
 import { Role } from '../../enums/role.enum';
 import { TypingEventPayload } from './socket.types';
-
-const ALLOWED_ORIGINS = [
-    'http://localhost:3000',
-    'http://localhost:3001',
-    'http://localhost:5173',
-    'http://127.0.0.1:3000',
-    'http://127.0.0.1:5173',
-    process.env.FRONTEND_URL,
-    process.env.ADMIN_URL,
-    process.env.APP_URL,
-    process.env.CORS_ORIGINS
-].filter(Boolean) as string[];
+import { corsOriginCallback } from '../../utils/cors-origins.util';
 
 @WebSocketGateway({
     cors: {
-        origin: (origin, callback) => {
-            if (!origin || ALLOWED_ORIGINS.some(allowed => origin.startsWith(allowed) || allowed === '*')) {
-                callback(null, true);
-            } else {
-                callback(null, true); // Permissive in local development, locked in production via env
-            }
-        },
+        // Same exact-match allow-list as the HTTP API (see main.ts).
+        origin: corsOriginCallback,
         credentials: true
     },
     transports: ['websocket', 'polling']

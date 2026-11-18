@@ -12,6 +12,8 @@ import { Payments } from '../../payments/entities/payment.entity';
 @Index('IDX_orders_payment_status', ['paymentStatus', 'createdAt'])
 // One gateway payment can settle at most one order
 @Index('UQ_orders_paymentIntentId', ['paymentIntentId'], { unique: true })
+// A retried checkout with the same idempotency key must not create a second order
+@Index('uq_orders_user_idempotency', ['userId', 'idempotencyKey'], { unique: true })
 export class Orders extends AbstractEntity {
     @Column({ type: 'varchar', nullable: false })
     orderId: string;

@@ -4,11 +4,11 @@ import { AdjustmentStatus, AdjustmentReason, AdjustmentMode } from '../../../enu
 import { StockAdjustmentItem } from './stock-adjustment-item.entity';
 
 @Entity('stock_adjustments')
-@Index('IDX_adjustment_number', ['adjustmentNumber'], { unique: true })
+@Index('UQ_adjustment_number', ['adjustmentNumber'], { unique: true })
 @Index('IDX_adjustment_status', ['status'])
 @Index('IDX_adjustment_date', ['createdAt'])
 export class StockAdjustment extends AbstractEntity {
-    @Column({ type: 'varchar', length: 50, unique: true, nullable: false })
+    @Column({ type: 'varchar', length: 50, nullable: false })
     adjustmentNumber: string;
 
     @Column({

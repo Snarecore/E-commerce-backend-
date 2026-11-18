@@ -106,6 +106,7 @@ export class OrdersController {
 	}
 
 	@UseGuards(OptionalJwtAuthGuard)
+	@Roles(Role.CUSTOMER)
 	@Post(':id/restore-cart')
 	async restoreCart(
 		@Param('id') id: string,

@@ -56,6 +56,7 @@ export class MessageController {
      */
     @UseGuards(JwtAuthGuard, CustomThrottlerGuard)
     @Throttle({ default: { limit: 10, ttl: 60000 } })
+    @Roles(Role.CUSTOMER)
     @Post('send')
     async sendCustomerMessage(
         @Req() req: AuthenticatedRequest,
@@ -102,6 +103,7 @@ export class MessageController {
      * Accessible by any authenticated user for their own chat.
      */
     @UseGuards(JwtAuthGuard)
+    @Roles(Role.CUSTOMER)
     @Get('my-conversation')
     async getMyConversation(
         @Req() req: AuthenticatedRequest
@@ -117,6 +119,7 @@ export class MessageController {
      * Accessible by ADMIN (any thread) and the user who owns the thread.
      */
     @UseGuards(JwtAuthGuard)
+    @Roles(Role.CUSTOMER)
     @Get('thread')
     async getThreadMessages(
         @Req() req: AuthenticatedRequest,
@@ -130,6 +133,7 @@ export class MessageController {
      * Accessible by any authenticated customer/guest.
      */
     @UseGuards(JwtAuthGuard)
+    @Roles(Role.CUSTOMER)
     @Post('upload')
     @UseInterceptors(FileInterceptor('file'))
     async uploadChatFile(

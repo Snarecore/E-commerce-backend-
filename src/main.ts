@@ -11,6 +11,7 @@ import { DataSource } from 'typeorm';
 import { validateServerMaxConnections } from './configs/typeorm.config';
 
 import helmet from 'helmet';
+import { corsOriginCallback } from './utils/cors-origins.util';
 
 async function bootstrap(): Promise<void> {
 	dotenv.config();
@@ -26,24 +27,9 @@ async function bootstrap(): Promise<void> {
 	}));
 	app.use(compression());
 	app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
-	const defaultOrigins = ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173', 'http://localhost:5174'];
-	const allowedOrigins = process.env.ALLOWED_ORIGINS
-		? process.env.ALLOWED_ORIGINS.split(',').map((url) => url.trim())
-		: defaultOrigins;
-
 	app.enableCors({
 		credentials: true,
-		origin: (origin, callback) => {
-			if (
-				!origin ||
-				allowedOrigins.includes(origin) ||
-				(!isProd && (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) || /^http:\/\/(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/.test(origin)))
-			) {
-				callback(null, true);
-			} else {
-				callback(null, false);
-			}
-		},
+		origin: corsOriginCallback,
 		methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
 	});
 	// 🛡️ Physical Body-Size Stream Abort Guard for SSLCommerz IPN (10 KB Max Stream)

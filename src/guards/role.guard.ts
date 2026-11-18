@@ -5,6 +5,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { ROLES_KEY } from '../decorators/role.decorator';
 import { Role } from '../enums/role.enum';
 
@@ -19,12 +20,18 @@ export class RolesGuard implements CanActivate {
   constructor(private readonly reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const requiredRoles = this.reflector.getAllAndOverride<Role[]>(ROLES_KEY, [
-      context.getHandler(),
-      context.getClass(),
-    ]);
+    const targets = [context.getHandler(), context.getClass()];
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, targets);
+    if (isPublic) return true;
 
-    if (!requiredRoles || requiredRoles.length === 0) return true;
+    const requiredRoles = this.reflector.getAllAndOverride<Role[]>(ROLES_KEY, targets);
+
+    // Deny by default: a protected route must say who may call it. A route that forgot
+    // @Roles would otherwise be open to every logged-in customer. Use @Roles(Role.CUSTOMER)
+    // for "any signed-in user" (admins pass via the hierarchy) or @Public() for no login.
+    if (!requiredRoles || requiredRoles.length === 0) {
+      throw new ForbiddenException('Access denied. This route declares no allowed roles.');
+    }
 
     const request = context.switchToHttp().getRequest();
     const user = request.user;

@@ -65,6 +65,7 @@ export class CustomerRiskPhoneHashEntity {
   @JoinColumn({ name: 'subject_id' })
   subject!: CustomerRiskSubjectEntity;
 
+  @Index('idx_customer_risk_phone_subject')
   @Column({ name: 'subject_id', type: 'varchar', length: 36 })
   subjectId!: string;
 

@@ -21,11 +21,16 @@ export class User extends AbstractEntity {
 	@Column({ type: 'varchar', nullable: true, select: false })
 	refreshToken: string;
 
-	@Column({ nullable: true, select: false })
+	/** SHA-256 hex digest of the emailed reset code (never the code itself). */
+	@Column({ type: 'varchar', length: 64, nullable: true, select: false })
 	resetToken: string;
 
 	@Column({ nullable: true, type: 'timestamp', select: false })
 	resetTokenExpiry: Date;
+
+	/** Wrong reset-code guesses against the current code. Reset to 0 whenever a new code is issued. */
+	@Column({ type: 'int', nullable: false, default: 0, select: false })
+	resetAttempts: number;
 
 	@Column({ type: 'enum', enum: Role, nullable: false })
 	role: Role;
