@@ -7,6 +7,7 @@ import { SslcommerzService } from './services/sslcommerz.service';
 import { PaymentConfirmationService } from './services/payment-confirmation.service';
 import { ReconciliationService } from './services/reconciliation.service';
 import { Orders } from '../order/entity/order.entity';
+import { Shipment } from '../courier/entities/shipment.entity';
 import { Payments } from './entities/payment.entity';
 import { PaymentEvents } from './entities/payment-event.entity';
 import { PaymentRefunds } from './entities/payment-refund.entity';
@@ -22,6 +23,7 @@ import { EmailServiceModule } from '../email-service/email-sender.module';
     imports: [
         TypeOrmModule.forFeature([
             Orders,
+            Shipment,
             Payments,
             PaymentEvents,
             PaymentRefunds,

@@ -867,6 +867,14 @@ export class PaymentsService {
             throw new BadRequestException('This order is already paid.');
         }
 
+        if (
+            order.status === OrderStatus.DELIVERED ||
+            order.status === OrderStatus.COMPLETED ||
+            order.status === OrderStatus.REJECTED
+        ) {
+            throw new BadRequestException(`Cannot initiate payment for an order with status "${order.status}".`);
+        }
+
         const existingPayments = order.payments || [];
         if (existingPayments.some((p) => p.status === PaymentAttemptStatus.PAID)) {
             throw new BadRequestException('A confirmed payment already exists for this order.');

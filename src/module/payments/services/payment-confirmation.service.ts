@@ -1,6 +1,7 @@
 import { Injectable, Logger, BadRequestException, NotFoundException, Optional } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { Orders } from '../../order/entity/order.entity';
+import { Shipment } from '../../courier/entities/shipment.entity';
 import { Payments } from '../entities/payment.entity';
 import { PaymentEvents } from '../entities/payment-event.entity';
 import { PaymentRefunds } from '../entities/payment-refund.entity';
@@ -367,9 +368,23 @@ export class PaymentConfirmationService {
                             adminReviewReason: null
                         });
 
-                        lockedOrder.status = OrderStatus.ORDER_PLACED;
+                        if (lockedOrder.status === OrderStatus.PENDING || lockedOrder.status === OrderStatus.CANCELLED) {
+                            lockedOrder.status = OrderStatus.ORDER_PLACED;
+                        }
                         lockedOrder.paymentStatus = PaymentStatus.PAID;
+                        lockedOrder.paymentMethod = 'SSLCOMMERZ';
                         await queryRunner.manager.save(lockedOrder);
+
+                        // If a courier shipment was already booked for this order, adjust COD amount to 0
+                        await queryRunner.manager
+                            .createQueryBuilder()
+                            .update(Shipment)
+                            .set({ codAmount: 0 })
+                            .where('orderId = :orderId OR orderCode = :orderCode', {
+                                orderId: lockedOrder.id,
+                                orderCode: lockedOrder.orderId
+                            })
+                            .execute();
 
                         await this.recordPaymentEvent(queryRunner, freshPayment, 'LATE_PAYMENT_RE_RESERVED', source, status, validationData);
                         await PaymentOutboxService.enqueueEvent(queryRunner, 'PAYMENT', freshPayment.id, 'PAYMENT_CONFIRMED', {
@@ -510,9 +525,34 @@ export class PaymentConfirmationService {
                 }
             } else {
                 // Standard Normal Order Confirmation
-                lockedOrder.status = OrderStatus.ORDER_PLACED;
+                if (lockedOrder.status === OrderStatus.PENDING) {
+                    lockedOrder.status = OrderStatus.ORDER_PLACED;
+                    const nowIso = new Date().toISOString();
+                    lockedOrder.statusHistory = [
+                        ...(lockedOrder.statusHistory || []),
+                        {
+                            status: OrderStatus.ORDER_PLACED,
+                            timestamp: nowIso,
+                            updatedBy: 'sslcommerz_confirmation',
+                            note: 'Order confirmed and paid online.'
+                        }
+                    ];
+                }
                 lockedOrder.paymentStatus = PaymentStatus.PAID;
+                lockedOrder.paymentMethod = 'SSLCOMMERZ';
                 await queryRunner.manager.save(lockedOrder);
+
+                // If a courier shipment was already booked for this order, adjust COD amount to 0
+                await queryRunner.manager
+                    .createQueryBuilder()
+                    .update(Shipment)
+                    .set({ codAmount: 0 })
+                    .where('orderId = :orderId OR orderCode = :orderCode', {
+                        orderId: lockedOrder.id,
+                        orderCode: lockedOrder.orderId
+                    })
+                    .execute();
+
                 await this.recordPaymentEvent(queryRunner, lockedPayment, 'PAYMENT_CONFIRMED', source, status, validationData);
                 await PaymentOutboxService.enqueueEvent(queryRunner, 'PAYMENT', lockedPayment.id, 'PAYMENT_CONFIRMED', {
                     paymentId: lockedPayment.id,
