@@ -26,7 +26,7 @@ export class Product extends AbstractEntity {
 	@Column({ type: 'longtext', nullable: true })
 	description: string;
 
-	@Column({ type: 'varchar', nullable: true })
+	@Column({ type: 'text', nullable: true })
 	videoUrl: string;
 
 	@Column({ type: 'varchar', nullable: true })
