@@ -125,4 +125,8 @@ export class CreateProductDto {
 
     @IsOptional()
     vendorName: string;
+
+    @IsOptional()
+    @Transform(({ value }) => value === 'true' || value === true)
+    status?: boolean;
 }
