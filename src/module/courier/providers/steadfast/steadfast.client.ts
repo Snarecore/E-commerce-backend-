@@ -135,7 +135,11 @@ export class SteadfastClient implements CourierProviderClient {
         this.logger.warn(`[Steadfast] ${path} failed: ${status ?? err.code ?? 'network'} ${err.message}`);
 
         if (!err.response) return new CourierError('TRANSIENT', `Network error: ${err.code || err.message}`);
-        if (status === 401 || status === 403) return new CourierError('CONFIG', 'Steadfast rejected the API credentials.', status);
+        if (status === 401 || status === 403) {
+            const rawMsg = typeof err.response.data === 'string' ? err.response.data.trim() : err.response.data?.message;
+            const detail = rawMsg ? `: ${rawMsg}` : '';
+            return new CourierError('CONFIG', `Steadfast rejected the API credentials${detail}`, status);
+        }
         if (status === 429 || (status !== undefined && status >= 500)) {
             return new CourierError('TRANSIENT', `Steadfast unavailable (HTTP ${status}).`, status);
         }

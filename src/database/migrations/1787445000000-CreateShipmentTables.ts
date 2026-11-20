@@ -52,7 +52,7 @@ export class CreateShipmentTables1787445000000 implements MigrationInterface {
                     UNIQUE INDEX \`UQ_shipments_provider_invoice\` (\`provider\`, \`invoice\`),
                     UNIQUE INDEX \`UQ_shipments_active_order\` (\`activeOrderKey\`),
                     PRIMARY KEY (\`id\`)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
             `);
         }
 
@@ -72,7 +72,7 @@ export class CreateShipmentTables1787445000000 implements MigrationInterface {
                     INDEX \`IDX_shipment_events_shipment\` (\`shipmentId\`, \`createdAt\`),
                     UNIQUE INDEX \`UQ_shipment_events_dedupe\` (\`dedupeKey\`),
                     PRIMARY KEY (\`id\`)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
             `);
         }
     }

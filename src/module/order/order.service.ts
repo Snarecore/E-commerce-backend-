@@ -45,7 +45,7 @@ import { AuditTargetType } from '../audit-log/constants/audit-target-type.enum';
 
 
 const ALLOWED_ORDER_TRANSITIONS: Record<string, string[]> = {
-    [OrderStatus.PENDING]: [OrderStatus.ORDER_PLACED, OrderStatus.PROCESSING, OrderStatus.REJECTED, OrderStatus.CANCELLED],
+    [OrderStatus.PENDING]: [OrderStatus.ORDER_PLACED, OrderStatus.PROCESSING, OrderStatus.SHIPPED, OrderStatus.REJECTED, OrderStatus.CANCELLED],
     [OrderStatus.ORDER_PLACED]: [OrderStatus.PROCESSING, OrderStatus.SHIPPED, OrderStatus.CANCELLED],
     [OrderStatus.PROCESSING]: [OrderStatus.SHIPPED, OrderStatus.CANCELLED],
     [OrderStatus.SHIPPED]: [OrderStatus.DELIVERED, OrderStatus.RETURNED],

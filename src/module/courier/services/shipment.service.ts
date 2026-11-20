@@ -21,8 +21,8 @@ import { AuditAction } from '../../audit-log/constants/audit-action.enum';
 import { AuditModule } from '../../audit-log/constants/audit-module.enum';
 import { AuditTargetType } from '../../audit-log/constants/audit-target-type.enum';
 
-/** Order states from which a shipment may be booked (admin has confirmed the order). */
-const DISPATCHABLE_ORDER_STATUSES: string[] = [OrderStatus.ORDER_PLACED, OrderStatus.PROCESSING];
+/** Order states from which a shipment may be booked (pending, placed or processing). */
+const DISPATCHABLE_ORDER_STATUSES: string[] = [OrderStatus.PENDING, OrderStatus.ORDER_PLACED, OrderStatus.PROCESSING];
 const MAX_TRANSIENT_ATTEMPTS = 6;
 const LEASE_MS = 2 * 60 * 1000;
 const TERMINAL_COURIER_STATUSES: ShipmentStatus[] = [
@@ -771,11 +771,14 @@ export class ShipmentService {
                 .andWhere('s.codSettledAt IS NULL')
                 .andWhere('s.codAmount > 0');
         }
-        const q = (filter.q || '').trim();
-        if (q) {
-            qb.andWhere('(s.orderCode LIKE :q OR s.invoice LIKE :q OR s.consignmentId LIKE :q OR s.trackingCode LIKE :q)', {
-                q: `%${q.replace(/[%_\\]/g, '\\$&')}%`
-            });
+        const rawQ = (filter.q || '').trim();
+        const cleanQ = rawQ.replace(/^#/, '').trim();
+        if (cleanQ) {
+            const escaped = cleanQ.replace(/[%_\\]/g, '\\$&');
+            qb.andWhere(
+                '(s.orderCode LIKE :q OR s.invoice LIKE :q OR s.consignmentId LIKE :q OR s.trackingCode LIKE :q OR s.recipientName LIKE :q OR s.recipientPhone LIKE :q)',
+                { q: `%${escaped}%` }
+            );
         }
 
         // Totals over the whole filtered set, not just this page (useful for COD payout matching).
@@ -826,11 +829,18 @@ export class ShipmentService {
             .andWhere('o.paymentStatus != :review', { review: PaymentStatus.REVIEW_REQUIRED })
             .andWhere("(UPPER(COALESCE(o.paymentMethod, 'COD')) = 'COD' OR o.paymentStatus = :paid)", { paid: PaymentStatus.PAID });
 
-        const q = (filter.q || '').trim();
-        if (q) qb.andWhere('o.orderId LIKE :q', { q: `%${q.replace(/[%_\\]/g, '\\$&')}%` });
+        const rawQ = (filter.q || '').trim();
+        const cleanQ = rawQ.replace(/^#/, '').trim();
+        if (cleanQ) {
+            const escaped = cleanQ.replace(/[%_\\]/g, '\\$&');
+            qb.andWhere(
+                '(o.orderId LIKE :q OR o.shippingAddress LIKE :q)',
+                { q: `%${escaped}%` }
+            );
+        }
 
         const [orders, total] = await qb
-            .orderBy('o.createdAt', 'ASC')
+            .orderBy('o.createdAt', 'DESC')
             .skip((page - 1) * limit)
             .take(limit)
             .getManyAndCount();

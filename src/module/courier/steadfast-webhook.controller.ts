@@ -1,4 +1,5 @@
-import { Body, Controller, Headers, HttpCode, HttpException, HttpStatus, Logger, Post } from '@nestjs/common';
+import { Body, Controller, Headers, HttpCode, HttpException, HttpStatus, Logger, Post, Req } from '@nestjs/common';
+import { Request } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { createHash, timingSafeEqual } from 'crypto';
 import { CONFIG } from '../../utils/config';
@@ -12,7 +13,7 @@ import { CourierProvider, ShipmentEventSource } from './enums/shipment-status.en
  * Always answers 200 for authenticated requests so Steadfast doesn't retry-storm on
  * events we intentionally ignore (unknown consignment, duplicates).
  */
-@Controller({ path: 'courier/webhooks', version: CONFIG.API_VERSION })
+@Controller({ path: ['courier/webhooks', 'courier/webhook'], version: CONFIG.API_VERSION })
 export class SteadfastWebhookController {
     private readonly logger = new Logger(SteadfastWebhookController.name);
 
@@ -24,8 +25,12 @@ export class SteadfastWebhookController {
     @Public()
     @Post('steadfast')
     @HttpCode(200)
-    async handle(@Headers('authorization') authorization: string | undefined, @Body() body: any) {
-        this.verifyToken(authorization);
+    async handle(
+        @Headers('authorization') authorization: string | undefined,
+        @Body() body: any,
+        @Req() req?: Request
+    ) {
+        this.verifyToken(authorization, req, body);
 
         const payload = body && typeof body === 'object' ? body : {};
         const consignmentId = payload.consignment_id != null ? String(payload.consignment_id) : null;
@@ -60,15 +65,22 @@ export class SteadfastWebhookController {
         return { status: 'success', message: `Webhook received (${outcome}).` };
     }
 
-    private verifyToken(authorization: string | undefined): void {
+    private verifyToken(authorization: string | undefined, req?: Request, body?: any): void {
         const expected = (this.config.get<string>('STEADFAST_WEBHOOK_TOKEN') || '').trim();
         if (!expected) {
             throw new HttpException('Webhook is not configured.', HttpStatus.SERVICE_UNAVAILABLE);
         }
-        const provided = String(authorization || '').replace(/^Bearer\s+/i, '').trim();
-        const a = createHash('sha256').update(provided).digest();
+        const candidate =
+            String(authorization || '').replace(/^Bearer\s+/i, '').trim() ||
+            String(req?.headers?.['x-webhook-token'] || '').trim() ||
+            String(req?.headers?.['webhook-token'] || '').trim() ||
+            String(req?.headers?.['secret-key'] || '').trim() ||
+            String((req?.query as any)?.token || '').trim() ||
+            String((req?.body as any)?.token || (req?.body as any)?.secret_token || body?.token || body?.secret_token || '').trim();
+
+        const a = createHash('sha256').update(candidate).digest();
         const b = createHash('sha256').update(expected).digest();
-        if (!provided || !timingSafeEqual(a, b)) {
+        if (!candidate || !timingSafeEqual(a, b)) {
             throw new HttpException('Unauthorized', HttpStatus.UNAUTHORIZED);
         }
     }
