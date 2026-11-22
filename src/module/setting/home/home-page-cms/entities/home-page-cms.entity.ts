@@ -86,4 +86,52 @@ export class HomePageCms extends AbstractEntity {
 
 	@Column({ type: 'varchar' })
 	bannerImageLink: string;
+
+	@Column({ type: 'boolean', default: true })
+	isDeliveryProcessVisible: boolean;
+
+	@Column({ type: 'varchar', default: 'Seamless Fulfillment Journey' })
+	deliveryProcessBadge: string;
+
+	@Column({ type: 'varchar', default: 'How Your Order Reaches Your Doorstep' })
+	deliveryProcessTitle: string;
+
+	@Column({ type: 'text', nullable: true })
+	deliveryProcessDescription: string;
+
+	@Column({ type: 'varchar', default: 'Order & Verification' })
+	deliveryStepOneTitle: string;
+
+	@Column({ type: 'varchar', default: 'Instant Confirmation' })
+	deliveryStepOneHighlight: string;
+
+	@Column({ type: 'text', nullable: true })
+	deliveryStepOneDescription: string;
+
+	@Column({ type: 'varchar', default: 'Quality Check & Packing' })
+	deliveryStepTwoTitle: string;
+
+	@Column({ type: 'varchar', default: '100% Inspected' })
+	deliveryStepTwoHighlight: string;
+
+	@Column({ type: 'text', nullable: true })
+	deliveryStepTwoDescription: string;
+
+	@Column({ type: 'varchar', default: 'Express Dispatch & Transit' })
+	deliveryStepThreeTitle: string;
+
+	@Column({ type: 'varchar', default: '24-48h Fast Dispatch' })
+	deliveryStepThreeHighlight: string;
+
+	@Column({ type: 'text', nullable: true })
+	deliveryStepThreeDescription: string;
+
+	@Column({ type: 'varchar', default: 'Doorstep Delivery & Trial' })
+	deliveryStepFourTitle: string;
+
+	@Column({ type: 'varchar', default: '7-Day Easy Returns' })
+	deliveryStepFourHighlight: string;
+
+	@Column({ type: 'text', nullable: true })
+	deliveryStepFourDescription: string;
 }

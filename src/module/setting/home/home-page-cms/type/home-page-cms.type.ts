@@ -31,4 +31,20 @@ export interface HomePageCmsInterface {
 	productSectionSixBackgroundColor: string;
 	bannerImage: string;
 	bannerImageLink: string;
+	isDeliveryProcessVisible?: boolean;
+	deliveryProcessBadge?: string;
+	deliveryProcessTitle?: string;
+	deliveryProcessDescription?: string;
+	deliveryStepOneTitle?: string;
+	deliveryStepOneHighlight?: string;
+	deliveryStepOneDescription?: string;
+	deliveryStepTwoTitle?: string;
+	deliveryStepTwoHighlight?: string;
+	deliveryStepTwoDescription?: string;
+	deliveryStepThreeTitle?: string;
+	deliveryStepThreeHighlight?: string;
+	deliveryStepThreeDescription?: string;
+	deliveryStepFourTitle?: string;
+	deliveryStepFourHighlight?: string;
+	deliveryStepFourDescription?: string;
 }
