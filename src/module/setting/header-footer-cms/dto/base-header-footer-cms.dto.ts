@@ -56,4 +56,7 @@ export class BaseHeaderFooterCmsDto {
 
 	@IsOptional()
 	themeConfig?: any;
+
+	@IsOptional()
+	paymentBanner?: string;
 }

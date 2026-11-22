@@ -14,4 +14,8 @@ export interface HeaderFooterCmsInterface {
 	footerLogo: string;
 	footerSectionTwo: { value: string; link: string }[];
 	footerSectionThree: { value: string; link: string }[];
+	primaryColor?: string;
+	secondaryColor?: string;
+	themeConfig?: any;
+	paymentBanner?: string;
 }

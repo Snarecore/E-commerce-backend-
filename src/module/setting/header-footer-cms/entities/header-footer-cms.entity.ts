@@ -50,4 +50,7 @@ export class HeaderFooterCms extends AbstractEntity {
 
 	@Column({ type: 'json', nullable: true })
 	themeConfig: any;
+
+	@Column({ type: 'varchar', length: 500, nullable: true })
+	paymentBanner: string;
 }
