@@ -683,6 +683,25 @@ export class OrdersService {
                         );
                     }
 
+                    if (dto.checkoutSessionToken && dto.checkoutSessionToken.trim()) {
+                        try {
+                            const tokenHash = crypto.createHash('sha256').update(dto.checkoutSessionToken.trim()).digest('hex');
+                            await queryRunner.manager
+                                .createQueryBuilder()
+                                .update('incomplete_checkouts')
+                                .set({
+                                    status: 'converted',
+                                    convertedOrderId: savedOrder.id,
+                                    convertedAt: new Date(),
+                                })
+                                .where('sessionTokenHash = :tokenHash', { tokenHash })
+                                .andWhere('status IN (:...convStatuses)', { convStatuses: ['active', 'abandoned'] })
+                                .execute();
+                        } catch (checkoutErr: any) {
+                            this.logger.warn(`[Order Create] Incomplete checkout auto-conversion non-fatal check: ${checkoutErr?.message}`);
+                        }
+                    }
+
                     await queryRunner.commitTransaction();
                     savedOrderResult = savedOrder;
                     preparedItemsResult = preparedItems;

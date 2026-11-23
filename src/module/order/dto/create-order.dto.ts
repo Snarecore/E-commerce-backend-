@@ -173,4 +173,8 @@ export class CreateOrdersDto {
     @IsOptional()
     @IsString()
     otpCode?: string;
+
+    @IsOptional()
+    @IsString()
+    checkoutSessionToken?: string;
 }
