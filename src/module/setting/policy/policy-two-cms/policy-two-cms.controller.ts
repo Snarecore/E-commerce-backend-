@@ -11,7 +11,7 @@ import { UpdatePolicyTwoCmsDto } from './dto/update-policy-two-cms.dto';
 import { PolicyTwoCmsInterface } from './type/policy-two-cms.type';
 import { PolicyTwoCms } from './entities/policy-two-cms.entity';
 
-@Controller({ path: "policy-two-cms", version: CONFIG.API_VERSION })
+@Controller({ path: ["return-policy-cms", "policy-two-cms"], version: CONFIG.API_VERSION })
 export class PolicyTwoCmsController {
 	constructor(private readonly service: PolicyTwoCmsService) { }
 

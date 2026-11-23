@@ -11,7 +11,7 @@ import { UpdatePolicyFourCmsDto } from './dto/update-policy-four-cms.dto';
 import { PolicyFourCmsInterface } from './type/policy-four-cms.type';
 import { PolicyFourCms } from './entities/policy-four-cms.entity';
 
-@Controller({ path: "policy-four-cms", version: CONFIG.API_VERSION })
+@Controller({ path: ["terms-and-conditions-cms", "policy-four-cms"], version: CONFIG.API_VERSION })
 export class PolicyFourCmsController {
 	constructor(private readonly service: PolicyFourCmsService) { }
 

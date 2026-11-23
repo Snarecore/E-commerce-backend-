@@ -47,16 +47,7 @@ import { CourierModule } from './module/courier/courier.module';
 import { ProductSeoModule } from './module/seo/product-meta/product-seo.module';
 import { PolicyOneCmsModule } from './module/setting/policy/policy-one-cms/policy-one-cms.module';
 import { PolicyTwoCmsModule } from './module/setting/policy/policy-two-cms/policy-two-cms.module';
-import { PolicyThreeCmsModule } from './module/setting/policy/policy-three-cms/policy-three-cms.module';
 import { PolicyFourCmsModule } from './module/setting/policy/policy-four-cms/policy-four-cms.module';
-import { PolicyFiveCmsModule } from './module/setting/policy/policy-five-cms/policy-five-cms.module';
-import { PolicySixCmsModule } from './module/setting/policy/policy-six-cms/policy-six-cms.module';
-import { PolicySevenCmsModule } from './module/setting/policy/policy-seven-cms/policy-seven-cms.module';
-import { PolicyEightCmsModule } from './module/setting/policy/policy-eight-cms/policy-eight-cms.module';
-import { PolicyNineCmsModule } from './module/setting/policy/policy-nine-cms/policy-nine-cms.module';
-import { PolicyTenCmsModule } from './module/setting/policy/policy-ten-cms/policy-ten-cms.module';
-import { PolicyElevenCmsModule } from './module/setting/policy/policy-eleven-cms/policy-eleven-cms.module';
-import { PolicyTwelveCmsModule } from './module/setting/policy/policy-twelve-cms/policy-twelve-cms.module';
 import { ProductCommentModule } from './module/inventory/product-comment/product-comment.module';
 import { MailerModule } from '@nestjs-modules/mailer';
 import { join } from 'path';
@@ -158,16 +149,7 @@ import { AppController } from './app.controller';
 		ProductSeoModule,
 		PolicyOneCmsModule,
 		PolicyTwoCmsModule,
-		PolicyThreeCmsModule,
 		PolicyFourCmsModule,
-		PolicyFiveCmsModule,
-		PolicySixCmsModule,
-		PolicySevenCmsModule,
-		PolicyEightCmsModule,
-		PolicyNineCmsModule,
-		PolicyTenCmsModule,
-		PolicyElevenCmsModule,
-		PolicyTwelveCmsModule,
 		ProductCommentModule,
 		EmailServiceModule,
 		EmailSettingModule,

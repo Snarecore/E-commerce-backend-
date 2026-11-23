@@ -11,7 +11,7 @@ import { UpdatePolicyOneCmsDto } from './dto/update-policy-one-cms.dto';
 import { PolicyOneCmsInterface } from './type/policy-one-cms.type';
 import { PolicyOneCms } from './entities/policy-one-cms.entity';
 
-@Controller({ path: "policy-one-cms", version: CONFIG.API_VERSION })
+@Controller({ path: ["privacy-policy-cms", "policy-one-cms"], version: CONFIG.API_VERSION })
 export class PolicyOneCmsController {
 	constructor(private readonly service: PolicyOneCmsService) { }
 
