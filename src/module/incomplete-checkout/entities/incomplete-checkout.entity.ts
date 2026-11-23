@@ -96,25 +96,25 @@ export class IncompleteCheckout extends AbstractEntity {
     @Column({ type: 'int', unsigned: true, default: 0 })
     recoveryAttemptCount: number;
 
-    @VersionColumn()
+    @VersionColumn({ default: 1 })
     version: number;
 
-    @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP(6)' })
+    @Column({ type: 'timestamp', precision: 6, default: () => 'CURRENT_TIMESTAMP(6)' })
     startedAt: Date;
 
-    @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP(6)' })
+    @Column({ type: 'timestamp', precision: 6, default: () => 'CURRENT_TIMESTAMP(6)' })
     lastActivityAt: Date;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamp', precision: 6, nullable: true })
     abandonedAt: Date | null;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamp', precision: 6, nullable: true })
     convertedAt: Date | null;
 
-    @Column({ type: 'timestamp', nullable: true })
+    @Column({ type: 'timestamp', precision: 6, nullable: true })
     cancelledAt: Date | null;
 
-    @Column({ type: 'timestamp' })
+    @Column({ type: 'timestamp', precision: 6 })
     expiresAt: Date;
 
     @OneToMany(() => CheckoutRecoveryActivity, (activity) => activity.checkout)

@@ -1,4 +1,12 @@
-import { Column, CreateDateColumn, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import {
+    Column,
+    CreateDateColumn,
+    Entity,
+    Index,
+    JoinColumn,
+    ManyToOne,
+    PrimaryGeneratedColumn,
+} from 'typeorm';
 import { RecoveryAction } from '../enums/recovery-action.enum';
 import { IncompleteCheckout } from './incomplete-checkout.entity';
 import { User } from '../../user/entities/user.entity';
@@ -13,7 +21,9 @@ export class CheckoutRecoveryActivity {
     @Column({ type: 'varchar', length: 36 })
     checkoutId: string;
 
-    @ManyToOne(() => IncompleteCheckout, (checkout) => checkout.recoveryActivities, { onDelete: 'CASCADE' })
+    @ManyToOne(() => IncompleteCheckout, (checkout) => checkout.recoveryActivities, {
+        onDelete: 'CASCADE',
+    })
     @JoinColumn({ name: 'checkoutId' })
     checkout: IncompleteCheckout;
 

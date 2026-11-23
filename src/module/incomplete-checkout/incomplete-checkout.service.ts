@@ -1,4 +1,11 @@
-import { BadRequestException, HttpException, HttpStatus, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+    BadRequestException,
+    HttpException,
+    HttpStatus,
+    Injectable,
+    Logger,
+    NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, DataSource, In, LessThanOrEqual, MoreThan, Repository } from 'typeorm';
 import * as crypto from 'crypto';
@@ -28,7 +35,7 @@ export class IncompleteCheckoutService {
         @InjectRepository(Product)
         private readonly productRepo: Repository<Product>,
         private readonly dataSource: DataSource,
-        private readonly ordersService: OrdersService,
+        private readonly ordersService: OrdersService
     ) {}
 
     /**
@@ -47,7 +54,9 @@ export class IncompleteCheckoutService {
         while (attempts < 10) {
             const randomCode = Math.floor(100000 + Math.random() * 900000).toString();
             const candidateId = `IC-${randomCode}`;
-            const existing = await this.checkoutRepo.findOne({ where: { publicCheckoutId: candidateId } });
+            const existing = await this.checkoutRepo.findOne({
+                where: { publicCheckoutId: candidateId },
+            });
             if (!existing) {
                 return candidateId;
             }
@@ -66,7 +75,8 @@ export class IncompleteCheckoutService {
 
         if (phone) {
             const waPhone = phone.replace(/^\+/, '');
-            const customerGreeting = item.customerName && item.customerName !== 'No name yet' ? item.customerName : '';
+            const customerGreeting =
+                item.customerName && item.customerName !== 'No name yet' ? item.customerName : '';
             const greetingPart = customerGreeting ? ` ${customerGreeting}` : '';
             const message = encodeURIComponent(
                 `Assalamu Alaikum${greetingPart}! You recently showed interest in products from our store (${item.publicCheckoutId}). Do you need any assistance to complete your order?`
@@ -79,7 +89,8 @@ export class IncompleteCheckoutService {
             item.status !== CheckoutStatus.CONVERTED &&
             item.status !== CheckoutStatus.CANCELLED &&
             Boolean(item.cartItemsSnapshot && item.cartItemsSnapshot.length > 0);
-        const canCancel = item.status !== CheckoutStatus.CANCELLED && item.status !== CheckoutStatus.CONVERTED;
+        const canCancel =
+            item.status !== CheckoutStatus.CANCELLED && item.status !== CheckoutStatus.CONVERTED;
         const canCall = Boolean(phone) && item.status !== CheckoutStatus.CONVERTED;
         const canWhatsApp = Boolean(phone) && item.status !== CheckoutStatus.CONVERTED;
 
@@ -100,7 +111,10 @@ export class IncompleteCheckoutService {
      * Track or Update Checkout draft from Storefront.
      * Client is NOT trusted for prices or totals; catalog products are re-resolved server-side.
      */
-    async trackCheckout(dto: TrackCheckoutDto, customerId?: string | null): Promise<ApiResponse<any>> {
+    async trackCheckout(
+        dto: TrackCheckoutDto,
+        customerId?: string | null
+    ): Promise<ApiResponse<any>> {
         if (!dto.sessionToken || dto.sessionToken.trim().length < 8) {
             throw new BadRequestException('Valid sessionToken is required.');
         }
@@ -120,7 +134,10 @@ export class IncompleteCheckoutService {
 
         // Re-resolve items and calculate prices in Minor Units (cents/paisa: BDT x 100)
         const productIds = dto.items.map((it) => it.productId);
-        const products = productIds.length > 0 ? await this.productRepo.find({ where: { id: In(productIds) } }) : [];
+        const products =
+            productIds.length > 0
+                ? await this.productRepo.find({ where: { id: In(productIds) } })
+                : [];
         const productMap = new Map(products.map((p) => [p.id, p]));
 
         const cartSnapshots: CartItemSnapshot[] = [];
@@ -165,10 +182,15 @@ export class IncompleteCheckoutService {
         if (checkout) {
             // If already converted or explicitly cancelled, do not mutate state
             if (checkout.status === CheckoutStatus.CONVERTED) {
-                return ResponseUtils.successResponseHandler(200, 'Checkout already converted to order.', 'data', {
-                    publicCheckoutId: checkout.publicCheckoutId,
-                    status: checkout.status,
-                });
+                return ResponseUtils.successResponseHandler(
+                    200,
+                    'Checkout already converted to order.',
+                    'data',
+                    {
+                        publicCheckoutId: checkout.publicCheckoutId,
+                        status: checkout.status,
+                    }
+                );
             }
 
             checkout.customerName = dto.customer?.name?.trim() || checkout.customerName;
@@ -271,7 +293,9 @@ export class IncompleteCheckoutService {
             .andWhere('c.isDeleted = false')
             .getRawOne();
 
-        const recoverableValueMinor = BigInt(recoverableSumResult?.sumTotal || '0');
+        const rawSum = recoverableSumResult?.sumTotal;
+        const rawSumClean = rawSum != null ? String(rawSum).split('.')[0] : '0';
+        const recoverableValueMinor = BigInt(rawSumClean || '0');
         const recoverableValue = Number(recoverableValueMinor) / 100;
 
         // 3. CONVERTED count (in date range if provided)
@@ -280,8 +304,10 @@ export class IncompleteCheckoutService {
             .where('c.status = :status', { status: CheckoutStatus.CONVERTED })
             .andWhere('c.isDeleted = false');
 
-        if (fromDate) convertedQuery.andWhere('c.convertedAt >= :fromDate', { fromDate: new Date(fromDate) });
-        if (toDate) convertedQuery.andWhere('c.convertedAt <= :toDate', { toDate: new Date(toDate) });
+        if (fromDate)
+            convertedQuery.andWhere('c.convertedAt >= :fromDate', { fromDate: new Date(fromDate) });
+        if (toDate)
+            convertedQuery.andWhere('c.convertedAt <= :toDate', { toDate: new Date(toDate) });
         const convertedCount = await convertedQuery.getCount();
 
         // 4. CANCELLED count
@@ -290,8 +316,10 @@ export class IncompleteCheckoutService {
             .where('c.status = :status', { status: CheckoutStatus.CANCELLED })
             .andWhere('c.isDeleted = false');
 
-        if (fromDate) cancelledQuery.andWhere('c.cancelledAt >= :fromDate', { fromDate: new Date(fromDate) });
-        if (toDate) cancelledQuery.andWhere('c.cancelledAt <= :toDate', { toDate: new Date(toDate) });
+        if (fromDate)
+            cancelledQuery.andWhere('c.cancelledAt >= :fromDate', { fromDate: new Date(fromDate) });
+        if (toDate)
+            cancelledQuery.andWhere('c.cancelledAt <= :toDate', { toDate: new Date(toDate) });
         const cancelledCount = await cancelledQuery.getCount();
 
         // 5. EXPIRED count
@@ -299,15 +327,20 @@ export class IncompleteCheckoutService {
             where: { status: CheckoutStatus.EXPIRED, isDeleted: false },
         });
 
-        return ResponseUtils.successResponseHandler(200, 'Incomplete checkout statistics retrieved.', 'data', {
-            activeCount,
-            abandonedCount, // This is the "INCOMPLETE" card on the screenshot
-            recoverableValue, // Formatted BDT value
-            recoverableValueMinor: recoverableValueMinor.toString(),
-            convertedCount,
-            cancelledCount,
-            expiredCount,
-        });
+        return ResponseUtils.successResponseHandler(
+            200,
+            'Incomplete checkout statistics retrieved.',
+            'data',
+            {
+                activeCount,
+                abandonedCount, // This is the "INCOMPLETE" card on the screenshot
+                recoverableValue, // Formatted BDT value
+                recoverableValueMinor: recoverableValueMinor.toString(),
+                convertedCount,
+                cancelledCount,
+                expiredCount,
+            }
+        );
     }
 
     /**
@@ -377,13 +410,18 @@ export class IncompleteCheckoutService {
             };
         });
 
-        return ResponseUtils.successResponseHandler(200, 'Incomplete checkouts retrieved.', 'data', {
-            items: formattedItems,
-            total,
-            page,
-            limit,
-            totalPages: Math.ceil(total / limit),
-        });
+        return ResponseUtils.successResponseHandler(
+            200,
+            'Incomplete checkouts retrieved.',
+            'data',
+            {
+                items: formattedItems,
+                total,
+                page,
+                limit,
+                totalPages: Math.ceil(total / limit),
+            }
+        );
     }
 
     /**
@@ -392,7 +430,12 @@ export class IncompleteCheckoutService {
     async getCheckoutDetails(id: string): Promise<ApiResponse<any>> {
         const checkout = await this.checkoutRepo.findOne({
             where: [{ id }, { publicCheckoutId: id }],
-            relations: ['customer', 'recoveryActivities', 'recoveryActivities.admin', 'convertedOrder'],
+            relations: [
+                'customer',
+                'recoveryActivities',
+                'recoveryActivities.admin',
+                'convertedOrder',
+            ],
         });
 
         if (!checkout) {
@@ -459,9 +502,10 @@ export class IncompleteCheckoutService {
             throw new NotFoundException('Checkout not found.');
         }
 
+        const safeAdminId = adminId && adminId.trim() ? adminId : null;
         const activity = this.activityRepo.create({
             checkoutId: checkout.id,
-            adminId,
+            adminId: safeAdminId,
             action: dto.action,
             note: dto.note?.trim() || null,
         });
@@ -469,12 +513,20 @@ export class IncompleteCheckoutService {
         await this.activityRepo.save(activity);
 
         // Increment recovery attempts for calls and whatsapp
-        if (dto.action === RecoveryAction.CALL_INITIATED || dto.action === RecoveryAction.WHATSAPP_OPENED) {
+        if (
+            dto.action === RecoveryAction.CALL_INITIATED ||
+            dto.action === RecoveryAction.WHATSAPP_OPENED
+        ) {
             checkout.recoveryAttemptCount = (checkout.recoveryAttemptCount || 0) + 1;
             await this.checkoutRepo.save(checkout);
         }
 
-        return ResponseUtils.successResponseHandler(201, 'Recovery activity recorded.', 'data', activity);
+        return ResponseUtils.successResponseHandler(
+            201,
+            'Recovery activity recorded.',
+            'data',
+            activity
+        );
     }
 
     /**
@@ -501,18 +553,27 @@ export class IncompleteCheckoutService {
         await this.checkoutRepo.save(checkout);
 
         // Record status change activity
+        const safeAdminId = adminId && adminId.trim() ? adminId : null;
         const activity = this.activityRepo.create({
             checkoutId: checkout.id,
-            adminId,
-            action: dto.status === CheckoutStatus.CANCELLED ? RecoveryAction.CANCELLED : RecoveryAction.NOTE_ADDED,
+            adminId: safeAdminId,
+            action:
+                dto.status === CheckoutStatus.CANCELLED
+                    ? RecoveryAction.CANCELLED
+                    : RecoveryAction.NOTE_ADDED,
             note: dto.note || `Status manually changed to ${dto.status}`,
         });
         await this.activityRepo.save(activity);
 
-        return ResponseUtils.successResponseHandler(200, `Checkout marked as ${dto.status}.`, 'data', {
-            id: checkout.id,
-            status: checkout.status,
-        });
+        return ResponseUtils.successResponseHandler(
+            200,
+            `Checkout marked as ${dto.status}.`,
+            'data',
+            {
+                id: checkout.id,
+                status: checkout.status,
+            }
+        );
     }
 
     /**
@@ -530,7 +591,10 @@ export class IncompleteCheckoutService {
         }
 
         if (checkout.status === CheckoutStatus.CONVERTED) {
-            throw new HttpException('This checkout has already been converted to an order.', HttpStatus.CONFLICT);
+            throw new HttpException(
+                'This checkout has already been converted to an order.',
+                HttpStatus.CONFLICT
+            );
         }
 
         if (!checkout.cartItemsSnapshot || checkout.cartItemsSnapshot.length === 0) {
@@ -542,7 +606,9 @@ export class IncompleteCheckoutService {
         for (const it of checkout.cartItemsSnapshot) {
             const product = await this.productRepo.findOne({ where: { id: it.productId } });
             if (!product || product.isDeleted) {
-                throw new BadRequestException(`Cannot convert checkout: Product '${it.title}' is no longer active in catalog.`);
+                throw new BadRequestException(
+                    `Cannot convert checkout: Product '${it.title}' is no longer active in catalog.`
+                );
             }
             if (Number(product.quantity || 0) < it.quantity) {
                 throw new BadRequestException(
@@ -575,7 +641,10 @@ export class IncompleteCheckoutService {
         };
 
         // Create official order using existing OrderService
-        const orderResult = await this.ordersService.create(createOrderDto, checkout.customerId || adminId);
+        const orderResult = await this.ordersService.create(
+            createOrderDto,
+            checkout.customerId || adminId
+        );
 
         const newOrder = (orderResult as any)?.data;
         const newOrderId = newOrder?.id || newOrder?.orderId;
@@ -587,17 +656,23 @@ export class IncompleteCheckoutService {
         await this.checkoutRepo.save(checkout);
 
         // Record conversion activity
+        const safeAdminId = adminId && adminId.trim() ? adminId : null;
         const activity = this.activityRepo.create({
             checkoutId: checkout.id,
-            adminId,
+            adminId: safeAdminId,
             action: RecoveryAction.CONVERTED,
             note: `Successfully converted to Order #${newOrder?.orderId || newOrderId}`,
         });
         await this.activityRepo.save(activity);
 
-        return ResponseUtils.successResponseHandler(201, 'Checkout converted to official order.', 'data', {
-            order: newOrder,
-            publicCheckoutId: checkout.publicCheckoutId,
-        });
+        return ResponseUtils.successResponseHandler(
+            201,
+            'Checkout converted to official order.',
+            'data',
+            {
+                order: newOrder,
+                publicCheckoutId: checkout.publicCheckoutId,
+            }
+        );
     }
 }

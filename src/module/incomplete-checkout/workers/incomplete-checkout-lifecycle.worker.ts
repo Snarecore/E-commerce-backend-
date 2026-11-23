@@ -36,11 +36,14 @@ export class IncompleteCheckoutLifecycleWorker {
 
             lockAcquired = lockResult && (lockResult.isLocked === 1 || lockResult.isLocked === '1');
             if (!lockAcquired) {
-                this.logger.debug('[Lifecycle Worker] Lock acquisition skipped (another instance running).');
+                this.logger.debug(
+                    '[Lifecycle Worker] Lock acquisition skipped (another instance running).'
+                );
                 return;
             }
 
-            const inactivityMinutesRaw = this.configService?.get<string>('CHECKOUT_ABANDON_INACTIVITY_MINUTES') || '15';
+            const inactivityMinutesRaw =
+                this.configService?.get<string>('CHECKOUT_ABANDON_INACTIVITY_MINUTES') || '15';
             const inactivityMinutes = Math.max(5, parseInt(inactivityMinutesRaw, 10) || 15);
 
             // 1. Transition 'active' -> 'abandoned' atomically
@@ -57,7 +60,9 @@ export class IncompleteCheckoutLifecycleWorker {
                 .execute();
 
             if (transitionResult.affected && transitionResult.affected > 0) {
-                this.logger.log(`[Lifecycle Worker] Transitioned ${transitionResult.affected} checkouts from active to abandoned.`);
+                this.logger.log(
+                    `[Lifecycle Worker] Transitioned ${transitionResult.affected} checkouts from active to abandoned.`
+                );
             }
 
             // 2. Transition 'abandoned' -> 'expired' atomically
@@ -72,24 +77,35 @@ export class IncompleteCheckoutLifecycleWorker {
                 .execute();
 
             if (expireResult.affected && expireResult.affected > 0) {
-                this.logger.log(`[Lifecycle Worker] Expired ${expireResult.affected} abandoned checkouts past expiration window.`);
+                this.logger.log(
+                    `[Lifecycle Worker] Expired ${expireResult.affected} abandoned checkouts past expiration window.`
+                );
             }
         } catch (error: any) {
-            this.logger.error(`[Lifecycle Worker] Error during lifecycle processing: ${error?.message}`, error?.stack);
+            this.logger.error(
+                `[Lifecycle Worker] Error during lifecycle processing: ${error?.message}`,
+                error?.stack
+            );
         } finally {
             if (queryRunner) {
                 try {
                     if (lockAcquired) {
-                        await queryRunner.query("SELECT RELEASE_LOCK('incomplete_checkout_lifecycle_lock')");
+                        await queryRunner.query(
+                            "SELECT RELEASE_LOCK('incomplete_checkout_lifecycle_lock')"
+                        );
                     }
                 } catch (relLockErr: any) {
-                    this.logger.error(`[Lifecycle Worker] Failed to release advisory lock: ${relLockErr?.message}`);
+                    this.logger.error(
+                        `[Lifecycle Worker] Failed to release advisory lock: ${relLockErr?.message}`
+                    );
                 }
 
                 try {
                     await queryRunner.release();
                 } catch (relErr: any) {
-                    this.logger.error(`[Lifecycle Worker] Failed to release query runner: ${relErr?.message}`);
+                    this.logger.error(
+                        `[Lifecycle Worker] Failed to release query runner: ${relErr?.message}`
+                    );
                 }
             }
         }

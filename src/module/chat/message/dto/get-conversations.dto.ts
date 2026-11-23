@@ -1,5 +1,5 @@
-import { IsOptional, IsInt, Min, Max } from 'class-validator';
 import { Type } from 'class-transformer';
+import { IsInt, IsOptional, Max, Min } from 'class-validator';
 
 export class GetConversationsDto {
     @IsOptional()
@@ -12,6 +12,6 @@ export class GetConversationsDto {
     @Type(() => Number)
     @IsInt()
     @Min(1)
-    @Max(50)
+    @Max(100)
     limit?: number;
 }

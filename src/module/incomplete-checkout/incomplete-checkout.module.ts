@@ -10,11 +10,7 @@ import { IncompleteCheckoutLifecycleWorker } from './workers/incomplete-checkout
 
 @Module({
     imports: [
-        TypeOrmModule.forFeature([
-            IncompleteCheckout,
-            CheckoutRecoveryActivity,
-            Product,
-        ]),
+        TypeOrmModule.forFeature([IncompleteCheckout, CheckoutRecoveryActivity, Product]),
         OrdersModule,
     ],
     controllers: [IncompleteCheckoutController],

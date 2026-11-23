@@ -1,14 +1,4 @@
-import {
-    Body,
-    Controller,
-    Get,
-    Param,
-    Patch,
-    Post,
-    Query,
-    Req,
-    UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 import { CONFIG } from '../../utils/config';
 import { Public } from '../../decorators/public.decorator';
@@ -45,10 +35,7 @@ export class IncompleteCheckoutController {
     @UseGuards(JwtAuthGuard, RolesGuard)
     @Roles(Role.ADMIN)
     @Get('stats')
-    async getStats(
-        @Query('fromDate') fromDate?: string,
-        @Query('toDate') toDate?: string
-    ) {
+    async getStats(@Query('fromDate') fromDate?: string, @Query('toDate') toDate?: string) {
         return await this.service.getAdminStats(fromDate, toDate);
     }
 
