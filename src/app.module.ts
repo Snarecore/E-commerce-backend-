@@ -74,6 +74,7 @@ import { ProfitReportModule } from './module/profit-report/profit-report.module'
 import { SocketModule } from './module/socket/socket.module';
 import { RiskModule } from './module/risk/risk.module';
 import { InventoryEngineModule } from './module/inventory-engine/inventory-engine.module';
+import { IncompleteCheckoutModule } from './module/incomplete-checkout/incomplete-checkout.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -180,7 +181,8 @@ import { AppController } from './app.controller';
 		RiskModule,
 		InventoryEngineModule,
 		CheckoutVerificationModule,
-		CourierModule
+		CourierModule,
+		IncompleteCheckoutModule
 	],
 	providers: [
 		{
