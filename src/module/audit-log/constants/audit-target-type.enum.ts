@@ -7,4 +7,8 @@ export enum AuditTargetType {
     COUPON = 'Coupon',
     POLICY = 'Policy',
     SETTING = 'Setting',
+    INVENTORY = 'Inventory',
+    CMS = 'CMS',
+    PAYMENT = 'Payment',
+    BLACKLIST = 'Blacklist',
 }

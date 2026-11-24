@@ -6,5 +6,10 @@ export enum AuditModule {
     USER = 'USER',
     COUPON = 'COUPON',
     SETTINGS = 'SETTINGS',
+    INVENTORY = 'INVENTORY',
+    CMS = 'CMS',
+    POLICY = 'POLICY',
+    PAYMENTS = 'PAYMENTS',
+    RISK = 'RISK',
     SEO = 'SEO',
 }
