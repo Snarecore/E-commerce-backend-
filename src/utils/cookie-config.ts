@@ -50,7 +50,26 @@ export const clearSessionCookies = (res: Response): void => {
 	[...Object.values(COOKIE_NAMES), ...LEGACY_COOKIE_NAMES].forEach((name) => clearAuthCookie(res, name));
 };
 
-export const readRefreshCookie = (cookies: Record<string, unknown> | undefined): string | null => {
-	const token = cookies?.[COOKIE_NAMES.ADMIN_REFRESH] || cookies?.[COOKIE_NAMES.CUSTOMER_REFRESH];
-	return typeof token === 'string' && token ? token : null;
+export const readRefreshCookie = (reqOrCookies: any): string | null => {
+	if (!reqOrCookies) return null;
+	// 1. Direct cookie map passed
+	const directToken = reqOrCookies[COOKIE_NAMES.ADMIN_REFRESH] || reqOrCookies[COOKIE_NAMES.CUSTOMER_REFRESH];
+	if (typeof directToken === 'string' && directToken) return directToken;
+
+	// 2. Request object passed with req.cookies
+	const cookies = reqOrCookies.cookies;
+	if (cookies) {
+		const cookieToken = cookies[COOKIE_NAMES.ADMIN_REFRESH] || cookies[COOKIE_NAMES.CUSTOMER_REFRESH];
+		if (typeof cookieToken === 'string' && cookieToken) return cookieToken;
+	}
+
+	// 3. Request body (for environments where third-party cookies are blocked like Incognito)
+	const bodyToken = reqOrCookies.body?.refreshToken;
+	if (typeof bodyToken === 'string' && bodyToken) return bodyToken;
+
+	// 4. Custom header
+	const headerToken = reqOrCookies.headers?.['x-refresh-token'];
+	if (typeof headerToken === 'string' && headerToken) return headerToken;
+
+	return null;
 };

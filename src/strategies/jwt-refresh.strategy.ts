@@ -15,7 +15,7 @@ import { AuthTokenType, getRefreshTokenSecret } from '../module/auth/session/aut
 export class JwtRefreshStrategy extends PassportStrategy(Strategy, 'jwt-refresh') {
     constructor(private readonly configService: ConfigService) {
         super({
-            jwtFromRequest: (req: Request) => readRefreshCookie(req?.cookies),
+            jwtFromRequest: (req: Request) => readRefreshCookie(req),
             secretOrKey: getRefreshTokenSecret((key) => configService.get<string>(key)),
             passReqToCallback: false,
         });

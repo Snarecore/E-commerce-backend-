@@ -799,23 +799,28 @@ export class OrdersService {
                             productImage: p.product?.featuredImage || ''
                         }));
 
-                        this.emailService.sendOrderConfirmationEmail({
-                            to: recipientEmail.trim(),
-                            orderId: savedOrderResult.orderId || savedOrderResult.id,
-                            customerName,
-                            totalAmount: savedOrderResult.totalAmount,
-                            subtotal: savedOrderResult.subtotal,
-                            deliveryCharge: savedOrderResult.deliveryCharge,
-                            discountAmount: savedOrderResult.discountAmount,
-                            paymentMethod: savedOrderResult.paymentMethod || 'COD',
-                            paymentStatus: savedOrderResult.paymentStatus || 'Pending',
-                            shippingAddress: savedOrderResult.shippingAddress,
-                            items: emailItems,
-                            createdAt: savedOrderResult.createdAt ? new Date(savedOrderResult.createdAt).toLocaleDateString('en-US', { dateStyle: 'medium' }) : undefined,
-                            viewOrderUrl: `${frontendUrl}/order-confirmation/${savedOrderResult.orderId || savedOrderResult.id}`
-                        }).catch((emailErr) => {
+                        try {
+                            await Promise.race([
+                                this.emailService.sendOrderConfirmationEmail({
+                                    to: recipientEmail.trim(),
+                                    orderId: savedOrderResult.orderId || savedOrderResult.id,
+                                    customerName,
+                                    totalAmount: savedOrderResult.totalAmount,
+                                    subtotal: savedOrderResult.subtotal,
+                                    deliveryCharge: savedOrderResult.deliveryCharge,
+                                    discountAmount: savedOrderResult.discountAmount,
+                                    paymentMethod: savedOrderResult.paymentMethod || 'COD',
+                                    paymentStatus: savedOrderResult.paymentStatus || 'Pending',
+                                    shippingAddress: savedOrderResult.shippingAddress,
+                                    items: emailItems,
+                                    createdAt: savedOrderResult.createdAt ? new Date(savedOrderResult.createdAt).toLocaleDateString('en-US', { dateStyle: 'medium' }) : undefined,
+                                    viewOrderUrl: `${frontendUrl}/order-confirmation/${savedOrderResult.orderId || savedOrderResult.id}`
+                                }),
+                                new Promise((_, reject) => setTimeout(() => reject(new Error('Email dispatch timed out')), 4000))
+                            ]);
+                        } catch (emailErr: any) {
                             this.logger.warn(`[Order Create] Failed to send order confirmation email: ${emailErr?.message}`);
-                        });
+                        }
                     }
                 } catch (emailPrepErr: any) {
                     this.logger.warn(`[Order Create] Error preparing order confirmation email: ${emailPrepErr?.message}`);
@@ -1095,23 +1100,28 @@ export class OrdersService {
                             process.env.FRONTEND_PUBLIC_URL ||
                             'http://localhost:3000';
 
-                        this.emailService.sendOrderStatusUpdateEmail({
-                            to: recipientEmail.trim(),
-                            orderId: updatedOrder.orderId || updatedOrder.id,
-                            customerName,
-                            status: targetStatus,
-                            previousStatus: currentStatus,
-                            totalAmount: updatedOrder.totalAmount,
-                            paymentMethod: updatedOrder.paymentMethod,
-                            note: historyNote,
-                            courierName: updatedOrder.courierName,
-                            trackingId: updatedOrder.trackingId,
-                            courierTrackingLink: updatedOrder.courierTrackingLink,
-                            shippingAddress: updatedOrder.shippingAddress,
-                            viewOrderUrl: `${frontendUrl}/customer-dashboard?tab=order`
-                        }).catch((emailErr) => {
+                        try {
+                            await Promise.race([
+                                this.emailService.sendOrderStatusUpdateEmail({
+                                    to: recipientEmail.trim(),
+                                    orderId: updatedOrder.orderId || updatedOrder.id,
+                                    customerName,
+                                    status: targetStatus,
+                                    previousStatus: currentStatus,
+                                    totalAmount: updatedOrder.totalAmount,
+                                    paymentMethod: updatedOrder.paymentMethod,
+                                    note: historyNote,
+                                    courierName: updatedOrder.courierName,
+                                    trackingId: updatedOrder.trackingId,
+                                    courierTrackingLink: updatedOrder.courierTrackingLink,
+                                    shippingAddress: updatedOrder.shippingAddress,
+                                    viewOrderUrl: `${frontendUrl}/customer-dashboard?tab=order`
+                                }),
+                                new Promise((_, reject) => setTimeout(() => reject(new Error('Email dispatch timed out')), 4000))
+                            ]);
+                        } catch (emailErr: any) {
                             this.logger.warn(`[Order Status Update] Failed to send status update email: ${emailErr?.message}`);
-                        });
+                        }
                     }
                 } catch (statusEmailPrepErr: any) {
                     this.logger.warn(`[Order Status Update] Error preparing status update email: ${statusEmailPrepErr?.message}`);
@@ -1238,22 +1248,27 @@ export class OrdersService {
                             process.env.FRONTEND_PUBLIC_URL ||
                             'http://localhost:3000';
 
-                        this.emailService.sendOrderStatusUpdateEmail({
-                            to: recipientEmail.trim(),
-                            orderId: updatedOrder.orderId || updatedOrder.id,
-                            customerName,
-                            status: updatedOrder.status || 'Shipped',
-                            totalAmount: updatedOrder.totalAmount,
-                            paymentMethod: updatedOrder.paymentMethod,
-                            note: `Shipment Tracking Updated: Courier ${dto.courierName} (Tracking ID: ${dto.trackingId})`,
-                            courierName: dto.courierName,
-                            trackingId: dto.trackingId,
-                            courierTrackingLink: dto.courierTrackingLink,
-                            shippingAddress: updatedOrder.shippingAddress,
-                            viewOrderUrl: `${frontendUrl}/customer-dashboard?tab=order`
-                        }).catch((emailErr) => {
+                        try {
+                            await Promise.race([
+                                this.emailService.sendOrderStatusUpdateEmail({
+                                    to: recipientEmail.trim(),
+                                    orderId: updatedOrder.orderId || updatedOrder.id,
+                                    customerName,
+                                    status: updatedOrder.status || 'Shipped',
+                                    totalAmount: updatedOrder.totalAmount,
+                                    paymentMethod: updatedOrder.paymentMethod,
+                                    note: `Shipment Tracking Updated: Courier ${dto.courierName} (Tracking ID: ${dto.trackingId})`,
+                                    courierName: dto.courierName,
+                                    trackingId: dto.trackingId,
+                                    courierTrackingLink: dto.courierTrackingLink,
+                                    shippingAddress: updatedOrder.shippingAddress,
+                                    viewOrderUrl: `${frontendUrl}/customer-dashboard?tab=order`
+                                }),
+                                new Promise((_, reject) => setTimeout(() => reject(new Error('Email dispatch timed out')), 4000))
+                            ]);
+                        } catch (emailErr: any) {
                             this.logger.warn(`[Courier Update] Failed to send courier update email: ${emailErr?.message}`);
-                        });
+                        }
                     }
                 } catch (courierEmailPrepErr: any) {
                     this.logger.warn(`[Courier Update] Error preparing courier update email: ${courierEmailPrepErr?.message}`);

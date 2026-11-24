@@ -149,10 +149,12 @@ export class AuthService {
 
 	async login(dto: LoginDto, res: Response, req?: Request) {
 		const user = await this.validateUser(dto, req);
-		await this.startSession(user, res, req);
+		const tokens = await this.startSession(user, res, req);
 
 		return ResponseUtils.successResponseHandler(HttpStatus.OK, 'Login successful.', 'data', {
-			user: this.toSessionUser(user)
+			user: this.toSessionUser(user),
+			accessToken: tokens.accessToken,
+			refreshToken: tokens.refreshToken,
 		});
 	}
 
@@ -160,10 +162,11 @@ export class AuthService {
 		return { id: user.id, name: user.name, email: user.email, role: user.role };
 	}
 
-	/** Creates a refresh session and writes both auth cookies. Tokens never go in the body. */
-	private async startSession(user: Pick<User, 'id' | 'name' | 'email' | 'role'>, res: Response, req?: Request): Promise<void> {
+	/** Creates a refresh session and writes both auth cookies, and returns tokens for environments where third-party cookies are blocked. */
+	private async startSession(user: Pick<User, 'id' | 'name' | 'email' | 'role'>, res: Response, req?: Request): Promise<{ accessToken: string; refreshToken?: string }> {
 		const tokens = await this.authSessionService.createSession(this.toSessionUser(user), this.extractClientInfo(req));
 		setSessionCookies(res, user.role, tokens);
+		return tokens;
 	}
 
 	async firebaseLogin(dto: FirebaseLoginDto, res: Response, req?: Request) {
@@ -211,7 +214,7 @@ export class AuthService {
 			}
 		}
 
-		await this.startSession(user, res, req);
+		const tokens = await this.startSession(user, res, req);
 
 		// Record audit log for Google/Firebase login
 		this.auditLogService.createAsyncLog({
@@ -236,7 +239,9 @@ export class AuthService {
 		});
 
 		return ResponseUtils.successResponseHandler(HttpStatus.OK, 'Google login successful.', 'data', {
-			user: this.toSessionUser(user)
+			user: this.toSessionUser(user),
+			accessToken: tokens.accessToken,
+			refreshToken: tokens.refreshToken,
 		});
 	}
 
@@ -360,7 +365,7 @@ export class AuthService {
 	}
 
 	async refreshToken(req: Request, res: Response) {
-		const rawRefreshToken = readRefreshCookie(req.cookies);
+		const rawRefreshToken = readRefreshCookie(req);
 		if (!rawRefreshToken) {
 			throw new UnauthorizedException('Refresh token not found.');
 		}
@@ -382,14 +387,19 @@ export class AuthService {
 			setSessionCookies(res, user?.role, { accessToken: result.accessToken });
 		}
 
+		const accessToken = result.kind === 'rotated' ? result.tokens.accessToken : result.accessToken;
+		const refreshToken = result.kind === 'rotated' ? result.tokens.refreshToken : rawRefreshToken;
+
 		return ResponseUtils.successResponseHandler(HttpStatus.OK, 'Session refreshed.', 'data', {
-			user: user ? this.toSessionUser(user) : null
+			user: user ? this.toSessionUser(user) : null,
+			accessToken,
+			refreshToken,
 		});
 	}
 
 	async logout(res: Response, req?: Request): Promise<void> {
 		try {
-			await this.authSessionService.revokeByRefreshToken(readRefreshCookie(req?.cookies));
+			await this.authSessionService.revokeByRefreshToken(readRefreshCookie(req));
 		} finally {
 			clearSessionCookies(res);
 		}
