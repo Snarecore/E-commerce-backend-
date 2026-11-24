@@ -20,6 +20,7 @@ import { OrderSummaryRepository } from '../order-summary/order-summary.repositor
 import { OrderStatus, PaymentStatus } from '../../enums/order-status.enum';
 import { CostSource } from '../../enums/profit-report.enum';
 import { toSafeUser } from '../../utils/safe-user.utils';
+import { User } from '../user/entities/user.entity';
 import { ProductRepository } from '../inventory/product/product.repository';
 import { Product } from '../inventory/product/entities/product.entity';
 import { OrderSummary } from '../order-summary/entity/order-summary.entity';
@@ -264,8 +265,64 @@ export class OrdersService {
         return crypto.createHash('sha256').update(JSON.stringify(canonicalPayload)).digest('hex');
     }
 
+    /**
+     * Resolves the customer user ID using multi-level fallback:
+     * 1. Explicit userId (from session / token)
+     * 2. Registered user matching customer email
+     * 3. Registered user matching canonical phone
+     */
+    private async resolveCustomerUserId(orderOrDto: {
+        userId?: string | null;
+        customerEmail?: string | null;
+        email?: string | null;
+        shippingAddress?: { email?: string | null; phone?: string | null } | null;
+        phone?: string | null;
+    }): Promise<string | null> {
+        if (orderOrDto.userId && String(orderOrDto.userId).trim()) {
+            return String(orderOrDto.userId).trim();
+        }
+
+        const email = (
+            orderOrDto.shippingAddress?.email ||
+            orderOrDto.customerEmail ||
+            orderOrDto.email ||
+            ''
+        ).trim().toLowerCase();
+
+        if (email && email.includes('@')) {
+            try {
+                const user = await this.dataSource.getRepository(User).findOne({
+                    where: { email },
+                    select: ['id']
+                });
+                if (user?.id) return user.id;
+            } catch {
+                // Non-fatal
+            }
+        }
+
+        const rawPhone = (orderOrDto.shippingAddress?.phone || orderOrDto.phone || '').trim();
+        if (rawPhone) {
+            try {
+                const canonicalPhone = normalizeBDPhone(rawPhone);
+                if (canonicalPhone) {
+                    const user = await this.dataSource.getRepository(User).findOne({
+                        where: { phone: canonicalPhone },
+                        select: ['id']
+                    });
+                    if (user?.id) return user.id;
+                }
+            } catch {
+                // Non-fatal
+            }
+        }
+
+        return null;
+    }
+
     async create(dto: CreateOrdersDto, userId: string): Promise<ApiResponse<OrdersInterface>> {
         try {
+            const customerUserId = await this.resolveCustomerUserId({ userId, ...dto });
             // Pre-validate phone number and check verification policy
             const rawCustomerPhone = (dto.shippingAddress?.phone || dto.phone || '').trim();
             let canonicalCustomerPhone = '';
@@ -518,7 +575,7 @@ export class OrdersService {
                             dto.couponCode,
                             subtotal,
                             deliveryCharge,
-                            userId,
+                            customerUserId || userId,
                             uniqueOrderId,
                             canonicalCustomerPhone
                         );
@@ -554,7 +611,7 @@ export class OrdersService {
 
                     const orderEntity = queryRunner.manager.create(Orders, {
                         orderId: uniqueOrderId,
-                        userId,
+                        userId: customerUserId || userId || null,
                         paymentMethod: finalPaymentMethod,
                         paymentIntentId: null as any,
                         totalAmount,
@@ -743,6 +800,8 @@ export class OrdersService {
                 throw new HttpException('Unable to complete order transaction due to repeated concurrency contention.', HttpStatus.CONFLICT);
             }
 
+            const effectiveCustomerUserId = savedOrderResult.userId || customerUserId;
+
             if (this.socketService) {
                 try {
                     this.socketService.emitToRoom(SOCKET_ROOMS.ADMIN_ROOM, SocketEvent.ORDER_CREATED, {
@@ -751,6 +810,21 @@ export class OrdersService {
                         totalAmount: savedOrderResult.totalAmount,
                         createdAt: savedOrderResult.createdAt ? new Date(savedOrderResult.createdAt).toISOString() : new Date().toISOString()
                     });
+
+                    if (effectiveCustomerUserId) {
+                        const customerOrderPayload = {
+                            orderId: savedOrderResult.id,
+                            rawOrderId: savedOrderResult.orderId,
+                            orderNumber: savedOrderResult.orderId,
+                            status: savedOrderResult.status || OrderStatus.PENDING,
+                            totalAmount: savedOrderResult.totalAmount,
+                            changedAt: savedOrderResult.createdAt ? new Date(savedOrderResult.createdAt).toISOString() : new Date().toISOString(),
+                            createdAt: savedOrderResult.createdAt ? new Date(savedOrderResult.createdAt).toISOString() : new Date().toISOString(),
+                            note: 'Order placed successfully'
+                        };
+                        this.socketService.emitToRoom(SOCKET_ROOMS.USER(effectiveCustomerUserId), SocketEvent.ORDER_CREATED, customerOrderPayload);
+                        this.socketService.emitToRoom(SOCKET_ROOMS.USER(effectiveCustomerUserId), SocketEvent.ORDER_STATUS_UPDATED, customerOrderPayload);
+                    }
 
                     for (const prepItem of preparedItemsResult) {
                         if (prepItem.product?.id) {
@@ -767,6 +841,22 @@ export class OrdersService {
                     }
                 } catch (socketErr) {
                     // Socket emission failure must not abort successful DB response
+                }
+            }
+
+            // Customer in-app notification for order placement
+            if (this.notificationService && effectiveCustomerUserId) {
+                try {
+                    const displayNum = savedOrderResult.orderId || savedOrderResult.id;
+                    const amountStr = Number(savedOrderResult.totalAmount) ? ` Total: ৳${Number(savedOrderResult.totalAmount).toLocaleString()}` : '';
+                    await this.notificationService.createOrderNotification(
+                        effectiveCustomerUserId,
+                        displayNum,
+                        'Order Placed',
+                        `Your order #${displayNum} has been placed successfully!${amountStr}. We are preparing your order.`
+                    );
+                } catch (notifErr: any) {
+                    this.logger.warn(`[Order Create] Customer notification dispatch non-fatal failure: ${notifErr?.message}`);
                 }
             }
 
@@ -1020,6 +1110,14 @@ export class OrdersService {
 
             await queryRunner.commitTransaction();
 
+            let customerUserId: string | null = updatedOrder.userId || null;
+            if (!customerUserId) {
+                customerUserId = await this.resolveCustomerUserId(updatedOrder);
+                if (customerUserId) {
+                    await this.repository.update(updatedOrder.id, { userId: customerUserId }).catch(() => null);
+                }
+            }
+
             if (this.socketService) {
                 try {
                     const statusPayload = {
@@ -1030,8 +1128,8 @@ export class OrdersService {
                         note: historyNote
                     };
                     this.socketService.emitToRoom(SOCKET_ROOMS.ADMIN_ROOM, SocketEvent.ORDER_STATUS_UPDATED, statusPayload);
-                    if (updatedOrder.userId) {
-                        this.socketService.emitToRoom(SOCKET_ROOMS.USER(updatedOrder.userId), SocketEvent.ORDER_STATUS_UPDATED, statusPayload);
+                    if (customerUserId) {
+                        this.socketService.emitToRoom(SOCKET_ROOMS.USER(customerUserId), SocketEvent.ORDER_STATUS_UPDATED, statusPayload);
                     }
                 } catch (socketErr) {
                     // Socket failure must not block response
@@ -1058,13 +1156,13 @@ export class OrdersService {
                 });
             }
 
-            if (this.notificationService && updatedOrder?.userId) {
+            if (this.notificationService && customerUserId) {
                 const notifNote = targetStatus === OrderStatus.REJECTED || (targetStatus as string) === 'Rejected'
                     ? `Your order #${updatedOrder.orderId || updatedOrder.id} was rejected. Reason: ${dto.rejectionReason || 'Admin Decision'}${dto.rejectionMessage ? ` (${dto.rejectionMessage})` : ''}`
                     : dto.note || `Order status updated to "${targetStatus}"`;
 
                 await this.notificationService.createOrderNotification(
-                    updatedOrder.userId,
+                    customerUserId,
                     updatedOrder.orderId || updatedOrder.id,
                     targetStatus,
                     notifNote
@@ -1204,6 +1302,14 @@ export class OrdersService {
 
             const updatedOrder = (await this.repository.save(order)) as Orders;
 
+            let customerUserId: string | null = updatedOrder.userId || null;
+            if (!customerUserId) {
+                customerUserId = await this.resolveCustomerUserId(updatedOrder);
+                if (customerUserId) {
+                    await this.repository.update(updatedOrder.id, { userId: customerUserId }).catch(() => null);
+                }
+            }
+
             if (this.socketService) {
                 try {
                     const statusPayload = {
@@ -1213,15 +1319,15 @@ export class OrdersService {
                         note: `Courier updated: ${dto.courierName} (Tracking ID: ${dto.trackingId})`
                     };
                     this.socketService.emitToRoom(SOCKET_ROOMS.ADMIN_ROOM, SocketEvent.ORDER_STATUS_UPDATED, statusPayload);
-                    if (updatedOrder.userId) {
-                        this.socketService.emitToRoom(SOCKET_ROOMS.USER(updatedOrder.userId), SocketEvent.ORDER_STATUS_UPDATED, statusPayload);
+                    if (customerUserId) {
+                        this.socketService.emitToRoom(SOCKET_ROOMS.USER(customerUserId), SocketEvent.ORDER_STATUS_UPDATED, statusPayload);
                     }
                 } catch (socketErr) {}
             }
 
-            if (this.notificationService && updatedOrder?.userId) {
+            if (this.notificationService && customerUserId) {
                 await this.notificationService.createOrderNotification(
-                    updatedOrder.userId,
+                    customerUserId,
                     updatedOrder.orderId || updatedOrder.id,
                     updatedOrder.status || 'Shipped',
                     `Courier updated: ${dto.courierName} (Tracking ID: ${dto.trackingId})`

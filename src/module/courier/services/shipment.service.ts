@@ -496,6 +496,8 @@ export class ShipmentService {
                         patch.lastError = `Unrecognised courier status "${update.providerStatus}".`;
                     } else if (shipment.status !== newStatus && newStatus === ShipmentStatus.DELIVERED && !wasTerminal) {
                         orderEffect = { target: OrderStatus.DELIVERED, note: 'Delivered by Steadfast' };
+                    } else if (shipment.status !== newStatus && newStatus === ShipmentStatus.IN_TRANSIT && !wasTerminal) {
+                        orderEffect = { target: OrderStatus.SHIPPED, note: 'In transit with Steadfast courier' };
                     } else if (shipment.status !== newStatus && newStatus === ShipmentStatus.RETURN_IN_TRANSIT && !wasTerminal) {
                         orderEffect = {
                             target: OrderStatus.RETURNED,
