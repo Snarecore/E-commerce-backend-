@@ -18,6 +18,11 @@ export class AuditLogController {
         return await this.auditLogService.findAll(filterDto);
     }
 
+    @Get('stats')
+    async getStats() {
+        return await this.auditLogService.getStats();
+    }
+
     @Get(':id')
     async findOne(@Param('id') id: string) {
         return await this.auditLogService.findOne(id);

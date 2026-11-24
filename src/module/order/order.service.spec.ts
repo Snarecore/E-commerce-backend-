@@ -624,4 +624,171 @@ describe('OrdersService', () => {
         expect(result.statusCode).toBe(201);
         expect(sendOrderConfirmationEmailMock).toHaveBeenCalled();
     });
+
+    it('TEST 20: Order placement creates customer in-app notification and emits socket event to customer room', async () => {
+        const mockProduct = {
+            id: 'prod-notif-1',
+            name: 'Notification Test T-Shirt',
+            price: 1500,
+            quantity: 10
+        };
+
+        queryRunnerMock.manager.findOne.mockImplementation((entityClass: any, options: any) => {
+            if (options?.where?.id === 'prod-notif-1') return Promise.resolve(mockProduct);
+            return Promise.resolve(null);
+        });
+
+        const createOrderNotificationMock = jest.fn().mockResolvedValue({ id: 'notif-1' });
+        const createAdminOrderNotificationMock = jest.fn().mockResolvedValue({ id: 'admin-notif-1' });
+        const emitToRoomMock = jest.fn();
+
+        (service as any).notificationService = {
+            createOrderNotification: createOrderNotificationMock,
+            createAdminOrderNotification: createAdminOrderNotificationMock
+        };
+        (service as any).socketService = {
+            emitToRoom: emitToRoomMock
+        };
+
+        const result = await service.create({
+            paymentMethod: 'COD',
+            items: [{ productId: 'prod-notif-1', quantity: 1 }],
+            shippingAddress: {
+                name: 'Majba Customer',
+                email: 'majba@test.com',
+                phone: '01700000000',
+                city: 'Dhaka',
+                address: 'Mirpur'
+            }
+        } as any, 'customer-user-123');
+
+        expect(result.statusCode).toBe(201);
+
+        // 1. In-app customer notification created
+        expect(createOrderNotificationMock).toHaveBeenCalledWith(
+            'customer-user-123',
+            'BB123456',
+            'Order Placed',
+            expect.stringContaining('Your order #BB123456 has been placed successfully')
+        );
+
+        // 2. Admin notification also created
+        expect(createAdminOrderNotificationMock).toHaveBeenCalled();
+
+        // 3. Socket event emitted to customer user room
+        expect(emitToRoomMock).toHaveBeenCalledWith(
+            'user_customer-user-123',
+            'order_created',
+            expect.objectContaining({
+                orderNumber: 'BB123456',
+                status: OrderStatus.PENDING
+            })
+        );
+    });
+
+    it('TEST 21: Order status update resolves customer userId and creates customer notification', async () => {
+        const existingOrder: any = {
+            id: 'order-status-notif-test',
+            orderId: 'BB554433',
+            userId: 'customer-user-456',
+            status: OrderStatus.PENDING,
+            totalAmount: 2500,
+            paymentMethod: 'COD',
+            shippingAddress: {
+                name: 'Sadia',
+                email: 'sadia@test.com',
+                phone: '01600000000'
+            },
+            statusHistory: []
+        };
+
+        queryRunnerMock.manager.findOne.mockImplementation((entityClass: any, options: any) => {
+            if (options?.where?.id === 'order-status-notif-test') return Promise.resolve(existingOrder);
+            return Promise.resolve(null);
+        });
+
+        const createOrderNotificationMock = jest.fn().mockResolvedValue({ id: 'notif-status-1' });
+        const emitToRoomMock = jest.fn();
+
+        (service as any).notificationService = {
+            createOrderNotification: createOrderNotificationMock
+        };
+        (service as any).socketService = {
+            emitToRoom: emitToRoomMock
+        };
+
+        const result = await service.updateOrderStatus('order-status-notif-test', {
+            newStatus: OrderStatus.PROCESSING,
+            note: 'Package is being packed'
+        });
+
+        expect(result.statusCode).toBe(200);
+
+        // Verify customer notification was triggered
+        expect(createOrderNotificationMock).toHaveBeenCalledWith(
+            'customer-user-456',
+            'BB554433',
+            OrderStatus.PROCESSING,
+            'Package is being packed'
+        );
+
+        // Verify customer socket room was notified
+        expect(emitToRoomMock).toHaveBeenCalledWith(
+            'user_customer-user-456',
+            'order_status_updated',
+            expect.objectContaining({
+                rawOrderId: 'BB554433',
+                status: OrderStatus.PROCESSING
+            })
+        );
+    });
+
+    it('TEST 22: Order creation resolves customer from matching email when explicit userId is null', async () => {
+        const mockProduct = {
+            id: 'prod-resolve-user',
+            name: 'Resolvable T-Shirt',
+            price: 990,
+            quantity: 5
+        };
+
+        queryRunnerMock.manager.findOne.mockImplementation((entityClass: any, options: any) => {
+            if (options?.where?.id === 'prod-resolve-user') return Promise.resolve(mockProduct);
+            return Promise.resolve(null);
+        });
+
+        // Mock DataSource getRepository(User).findOne to return a registered user
+        const mockUserRepo = {
+            findOne: jest.fn().mockResolvedValue({ id: 'resolved-user-789', email: 'registered@user.com' })
+        };
+        (service as any).dataSource.getRepository = jest.fn().mockReturnValue(mockUserRepo);
+
+        const createOrderNotificationMock = jest.fn().mockResolvedValue({ id: 'notif-resolved' });
+        (service as any).notificationService = {
+            createOrderNotification: createOrderNotificationMock,
+            createAdminOrderNotification: jest.fn().mockResolvedValue({ id: 'admin-notif' })
+        };
+        (service as any).socketService = {
+            emitToRoom: jest.fn()
+        };
+
+        const result = await service.create({
+            paymentMethod: 'COD',
+            items: [{ productId: 'prod-resolve-user', quantity: 1 }],
+            shippingAddress: {
+                name: 'Registered User',
+                email: 'registered@user.com',
+                phone: '01800000000'
+            }
+        } as any, null as any); // explicit userId is NULL!
+
+        expect(result.statusCode).toBe(201);
+
+        // Notification must be delivered to the resolved user ID
+        expect(createOrderNotificationMock).toHaveBeenCalledWith(
+            'resolved-user-789',
+            'BB123456',
+            'Order Placed',
+            expect.stringContaining('Your order #BB123456 has been placed successfully')
+        );
+    });
 });

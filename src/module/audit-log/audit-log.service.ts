@@ -1,5 +1,5 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository, MoreThanOrEqual } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { AuditLog } from './entities/audit-log.entity';
 import { CreateAuditLogDto } from './dto/create-audit-log.dto';
@@ -97,7 +97,7 @@ export class AuditLogService implements OnModuleInit {
         if (dto.search && dto.search.trim()) {
             const searchKeyword = `%${dto.search.trim()}%`;
             qb.andWhere(
-                '(log.actorName LIKE :search OR log.actorEmail LIKE :search OR log.ipAddress LIKE :search OR log.targetId LIKE :search)',
+                '(log.actorName LIKE :search OR log.actorEmail LIKE :search OR log.ipAddress LIKE :search OR log.targetId LIKE :search OR log.action LIKE :search OR log.route LIKE :search)',
                 { search: searchKeyword }
             );
         }
@@ -153,5 +153,68 @@ export class AuditLogService implements OnModuleInit {
             return ResponseUtils.errorResponseHandler(404, 'Audit log entry not found.');
         }
         return ResponseUtils.successResponseHandler(200, 'Audit log details retrieved successfully.', 'data', log);
+    }
+
+    /**
+     * Aggregated audit statistics for Admin Audit Dashboard
+     */
+    async getStats(): Promise<ApiResponse<{
+        total: number;
+        today: number;
+        successCount: number;
+        failedCount: number;
+        moduleStats: Array<{ module: string; count: number }>;
+        topAdmins: Array<{ name: string; email: string; count: number }>;
+    }>> {
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+
+        const totalPromise = this.auditLogRepository.count({ where: { isDeleted: false } });
+        const todayPromise = this.auditLogRepository.count({
+            where: {
+                isDeleted: false,
+                createdAt: MoreThanOrEqual(todayStart)
+            }
+        });
+        const successPromise = this.auditLogRepository.count({ where: { isDeleted: false, status: 'SUCCESS' } });
+        const failedPromise = this.auditLogRepository.count({ where: { isDeleted: false, status: 'FAILED' } });
+
+        const moduleStatsPromise = this.auditLogRepository
+            .createQueryBuilder('log')
+            .select('log.module', 'module')
+            .addSelect('COUNT(log.id)', 'count')
+            .where('log.isDeleted = false')
+            .groupBy('log.module')
+            .orderBy('count', 'DESC')
+            .getRawMany();
+
+        const topAdminsPromise = this.auditLogRepository
+            .createQueryBuilder('log')
+            .select('log.actorEmail', 'actorEmail')
+            .addSelect('MAX(log.actorName)', 'actorName')
+            .addSelect('COUNT(log.id)', 'count')
+            .where('log.isDeleted = false AND log.actorEmail IS NOT NULL AND log.actorEmail != \'\'')
+            .groupBy('log.actorEmail')
+            .orderBy('count', 'DESC')
+            .limit(5)
+            .getRawMany();
+
+        const [total, today, successCount, failedCount, moduleStats, topAdmins] = await Promise.all([
+            totalPromise,
+            todayPromise,
+            successPromise,
+            failedPromise,
+            moduleStatsPromise,
+            topAdminsPromise
+        ]);
+
+        return ResponseUtils.successResponseHandler(200, 'Audit statistics retrieved successfully.', 'data', {
+            total,
+            today,
+            successCount,
+            failedCount,
+            moduleStats: moduleStats.map(m => ({ module: m.module, count: Number(m.count) })),
+            topAdmins: topAdmins.map(a => ({ name: a.actorName || a.actorEmail, email: a.actorEmail, count: Number(a.count) }))
+        });
     }
 }

@@ -129,6 +129,17 @@ describe('ShipmentService.applyProviderStatus', () => {
         );
     });
 
+    it('moves the order to SHIPPED when courier status is pending / in_transit', async () => {
+        const { service, ordersService } = makeService({ ...baseShipment(), status: ShipmentStatus.IN_REVIEW });
+        await service.applyProviderStatus('s1', update('pending'));
+        expect(ordersService.updateOrderStatus).toHaveBeenCalledWith(
+            'o1',
+            expect.objectContaining({ newStatus: OrderStatus.SHIPPED, note: 'In transit with Steadfast courier' }),
+            expect.anything(),
+            expect.anything()
+        );
+    });
+
     it('flags partial delivery for a human and leaves the order alone', async () => {
         const { service, manager, ordersService } = makeService(baseShipment());
         await service.applyProviderStatus('s1', update('partial_delivered'));
