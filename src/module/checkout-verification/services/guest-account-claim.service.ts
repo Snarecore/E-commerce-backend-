@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, Injectable, Logger } from '@nes
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import * as crypto from 'crypto';
-import * as bcrypt from 'bcryptjs';
+import { hashPassword } from '../../../utils/bcrypt.utils';
 import { GuestAccountClaim, GuestClaimStatus } from '../entities/guest-account-claim.entity';
 import { User } from '../../user/entities/user.entity';
 import { Orders } from '../../order/entity/order.entity';
@@ -118,7 +118,7 @@ export class GuestAccountClaimService {
                     );
                 }
             }
-            const hashedPassword = await bcrypt.hash(password, 10);
+            const hashedPassword = await hashPassword(password);
 
             // Create new User entity
             const newUser = queryRunner.manager.create(User, {

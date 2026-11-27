@@ -4,7 +4,8 @@ import {
     IsString,
     IsUUID,
     IsNumber,
-    IsEnum
+    IsEnum,
+    MaxLength,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { DiscountType } from '../../../../enums/product.enum';
@@ -31,9 +32,11 @@ export class CreateProductDto {
     @IsString()
     name: string;
 
-    @IsNotEmpty()
+    /** Optional: the server generates a unique SKU when omitted, and rejects one already in use. */
+    @IsOptional()
     @IsString()
-    sku: string;
+    @MaxLength(64)
+    sku?: string;
 
     @IsOptional()
     featuredImage?: string;
@@ -76,9 +79,10 @@ export class CreateProductDto {
     @IsUUID()
     mainCategoryId: string;
 
-    @IsNotEmpty()
+    /** Ignored on input: category names are looked up from the ids on the server. */
+    @IsOptional()
     @IsString()
-    mainCategoryName: string;
+    mainCategoryName?: string;
 
     @IsOptional()
     firstCategoryId?: string;

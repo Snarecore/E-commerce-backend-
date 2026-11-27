@@ -1,5 +1,7 @@
 import { Injectable, ExecutionContext } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
+import { Request } from 'express';
+import { getClientIp } from '../utils/request-ip.util';
 
 @Injectable()
 export class CustomThrottlerGuard extends ThrottlerGuard {
@@ -10,10 +12,14 @@ export class CustomThrottlerGuard extends ThrottlerGuard {
 		return super.canActivate(context);
 	}
 
-	protected async getTracker(req: Record<string, any>): Promise<string> {
-		const rawIp = req.headers?.['x-forwarded-for'] || req.headers?.['x-real-ip'] || req.ip || req.socket?.remoteAddress || '127.0.0.1';
-		const ip = Array.isArray(rawIp) ? rawIp[0] : (typeof rawIp === 'string' ? rawIp.split(',')[0].trim() : '127.0.0.1');
-		return ip;
+	/**
+	 * Rate-limit key = the client IP as resolved by Express.
+	 *
+	 * `req.ip` honours the `trust proxy` setting (configure-app.ts trusts exactly one hop),
+	 * so it is the address our own reverse proxy saw. Reading `X-Forwarded-For` directly
+	 * would let any client pick its own key by sending a fake header and bypass every limit.
+	 */
+	protected getTracker(req: Record<string, any>): Promise<string> {
+		return Promise.resolve(getClientIp(req as Request) ?? 'unknown');
 	}
 }
-

@@ -1,3 +1,4 @@
+import { UploadPolicy, uploadOptions } from '../../common/upload/upload.policy';
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UploadedFiles, UseGuards, UseInterceptors } from '@nestjs/common';
 import { CONFIG } from '../../utils/config';
 import { UserService } from './user.service';
@@ -21,11 +22,9 @@ export class UserController {
     @UseGuards(JwtAuthGuard, RolesGuard)
     @Roles(Role.CUSTOMER)
     @Patch('/customer-profile')
-    @UseInterceptors(FileFieldsInterceptor(
-        [
+    @UseInterceptors(FileFieldsInterceptor([
             { name: "profileImage", maxCount: 1 }
-        ]
-    ))
+        ], uploadOptions(UploadPolicy.CUSTOMER_IMAGE)))
     async updateCustomerProfile(
         @Req() req: Request,
         @Body() dto: UpdateUserProfileDto,

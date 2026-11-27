@@ -25,6 +25,15 @@ export interface AccessTokenPayload {
 	type: AuthTokenType.ACCESS;
 }
 
+export interface SocketTokenPayload {
+	sub: string;
+	email: string;
+	role: string;
+	name: string;
+	sid: string;
+	type: AuthTokenType.SOCKET;
+}
+
 export interface RefreshTokenPayload {
 	sub: string;
 	jti: string;

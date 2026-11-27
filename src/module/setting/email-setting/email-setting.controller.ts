@@ -1,3 +1,4 @@
+import { getClientIp } from '../../../utils/request-ip.util';
 import { Body, Controller, Get, Post, Req, UseGuards, Optional } from '@nestjs/common';
 import { Request } from 'express';
 import { CONFIG } from '../../../utils/config';
@@ -36,7 +37,7 @@ export class EmailSettingController {
     ): Promise<ApiResponse<any>> {
         const result = await this.service.saveSetting(dto);
         const user = (req as any).user;
-        const clientIp = (req.ip || req.socket.remoteAddress || '').replace('::ffff:', '');
+        const clientIp = getClientIp(req) ?? '';
 
         if (this.auditLogService) {
             this.auditLogService.createAsyncLog({
@@ -79,7 +80,7 @@ export class EmailSettingController {
     ): Promise<ApiResponse<any>> {
         const result = await this.service.testConnection(dto);
         const user = (req as any).user;
-        const clientIp = (req.ip || req.socket.remoteAddress || '').replace('::ffff:', '');
+        const clientIp = getClientIp(req) ?? '';
 
         if (this.auditLogService) {
             this.auditLogService.createAsyncLog({

@@ -1,3 +1,4 @@
+import { PaidOrderApplier } from '../services/paid-order-applier.service';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { getRepositoryToken } from '@nestjs/typeorm';
@@ -193,6 +194,7 @@ describe('Phase 5: 16 Failure Injection Chaos Tests', () => {
 
         const module: TestingModule = await Test.createTestingModule({
             providers: [
+                PaidOrderApplier,
                 PaymentsService,
                 PaymentConfirmationService,
                 PaymentOutboxService,
@@ -294,6 +296,7 @@ describe('Phase 5: 16 Failure Injection Chaos Tests', () => {
             orderId: 'ORD-INIT-001',
             paymentStatus: PaymentStatus.PENDING,
             status: OrderStatus.PENDING,
+            totalAmount: '1000.00',
             totalPrice: 120.0,
             currency: 'USD',
             userId: 'cust-1',
@@ -602,6 +605,7 @@ describe('Phase 5: 16 Failure Injection Chaos Tests', () => {
                 id: 'ord-late-11a',
                 orderId: 'ORD-LATE-11A',
                 status: OrderStatus.CANCELLED,
+                statusHistory: [{ status: OrderStatus.CANCELLED, timestamp: '2026-01-01T00:00:00.000Z', updatedBy: 'system', note: 'Payment window expired' }],
                 paymentStatus: PaymentStatus.UNPAID,
             };
 
@@ -673,6 +677,7 @@ describe('Phase 5: 16 Failure Injection Chaos Tests', () => {
                 id: 'ord-late-11b',
                 orderId: 'ORD-LATE-11B',
                 status: OrderStatus.CANCELLED,
+                statusHistory: [{ status: OrderStatus.CANCELLED, timestamp: '2026-01-01T00:00:00.000Z', updatedBy: 'system', note: 'Payment window expired' }],
                 paymentStatus: PaymentStatus.UNPAID,
             };
 

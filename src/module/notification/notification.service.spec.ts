@@ -88,4 +88,26 @@ describe('NotificationService', () => {
         expect(res.statusCode).toBe(200);
         expect(repositoryMock.save).toHaveBeenCalledWith(expect.objectContaining({ isRead: true }));
     });
+
+    it('refuses to let a customer mark an admin notification (no userId) as read', async () => {
+        repositoryMock.findOne.mockResolvedValue({ id: 'admin-n', userId: null, role: Role.ADMIN, isRead: false });
+        await expect(service.markAsRead('admin-n', 'customer-user-1')).rejects.toThrow('Notification not found');
+        expect(repositoryMock.save).not.toHaveBeenCalled();
+    });
+
+    it('refreshes the existing stage notification instead of dropping a later status', async () => {
+        const existing = { id: 'n-ship', type: 'ORDER_SHIPPED', orderId: 'BB1', isRead: true, title: 'Order Status: Shipped' };
+        repositoryMock.create.mockRejectedValueOnce({ code: 'ER_DUP_ENTRY' });
+        repositoryMock.findOneByQuery = jest.fn().mockResolvedValue(existing);
+
+        const result = await service.createOrderNotification('customer-user-1', 'BB1', 'Out for Delivery');
+
+        expect(result).toMatchObject({ id: 'n-ship', isRead: false, title: 'Order Status: Out for Delivery' });
+        expect(socketServiceMock.emitToRoom).toHaveBeenCalledWith(
+            SOCKET_ROOMS.USER('customer-user-1'),
+            SocketEvent.ORDER_STATUS_UPDATED,
+            expect.objectContaining({ status: 'Out for Delivery' })
+        );
+    });
 });
+

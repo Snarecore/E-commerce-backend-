@@ -1,87 +1,31 @@
-import { ValidationPipe, VersioningType } from '@nestjs/common';
+import { Server } from 'http';
 import { NestFactory } from '@nestjs/core';
-import cookieParser from 'cookie-parser';
 import * as dotenv from 'dotenv';
-import { AppModule } from './app.module';
-import { CONFIG } from './utils/config';
-import bodyParser from 'body-parser';
-import compression from 'compression';
-
 import { DataSource } from 'typeorm';
+import { AppModule } from './app.module';
+import { configureApp } from './bootstrap/configure-app';
 import { validateServerMaxConnections } from './configs/typeorm.config';
 
-import helmet from 'helmet';
-import { corsOriginCallback } from './utils/cors-origins.util';
-
 async function bootstrap(): Promise<void> {
-	dotenv.config();
-	const isProd = process.env.NODE_ENV === 'production';
-	const app = await NestFactory.create(AppModule, {
-		rawBody: true,
-		logger: isProd ? ['error', 'warn', 'log'] : ['error', 'warn', 'log', 'debug', 'verbose']
-	});
-	app.getHttpAdapter().getInstance().set('trust proxy', 1);
-	app.use(helmet({
-		crossOriginResourcePolicy: { policy: "cross-origin" },
-		contentSecurityPolicy: false, // Managed at gateway/CDN level or customized as needed
-	}));
-	app.use(compression());
-	app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
-	app.enableCors({
-		credentials: true,
-		origin: corsOriginCallback,
-		methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-	});
-	// 🛡️ Physical Body-Size Stream Abort Guard for SSLCommerz IPN (10 KB Max Stream)
-	// Mounted strictly BEFORE the generic 50MB parser to abort oversized streams before buffer memory allocation
-	const ipnRoutePath = `/${CONFIG.API}/v${CONFIG.API_VERSION}/payments/sslcommerz/ipn`;
-	app.use(
-		ipnRoutePath,
-		bodyParser.urlencoded({
-			limit: '10kb',
-			extended: false,
-			verify: (req: any, _res, buf) => {
-				req.rawBody = buf;
-			},
-		})
-	);
-	app.use(
-		ipnRoutePath,
-		bodyParser.json({
-			limit: '10kb',
-			verify: (req: any, _res, buf) => {
-				req.rawBody = buf;
-			},
-		})
-	);
-
-	app.use(
-		bodyParser.json({
-			limit: '50mb',
-			verify: (req: any, _res, buf) => {
-				req.rawBody = buf;
-			},
-		}),
-	);
-	app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
-	app.use(cookieParser());
-	app.setGlobalPrefix(CONFIG.API, { exclude: ['/', 'health', 'health/live', 'health/ready'] });
-    app.enableVersioning({
-        type: VersioningType.URI
+    dotenv.config();
+    const isProd = process.env.NODE_ENV === 'production';
+    const app = await NestFactory.create(AppModule, {
+        rawBody: true,
+        logger: isProd ? ['error', 'warn', 'log'] : ['error', 'warn', 'log', 'debug', 'verbose'],
     });
-	app.enableShutdownHooks();
+    configureApp(app);
+    app.enableShutdownHooks();
 
-	try {
-		const ds = app.get(DataSource);
-		await validateServerMaxConnections(ds);
-	} catch (e: any) {
-		console.warn(`[DB Budget Check Note] ${e.message}`);
-	}
+    try {
+        const ds = app.get(DataSource);
+        await validateServerMaxConnections(ds);
+    } catch (e: unknown) {
+        console.warn(`[DB Budget Check Note] ${e instanceof Error ? e.message : String(e)}`);
+    }
 
-	const server = await app.listen(process.env.PORT ?? 5000);
-	if (server && 'keepAliveTimeout' in server) {
-		server.keepAliveTimeout = 65000;
-		server.headersTimeout = 66000;
-	}
+    const server = (await app.listen(process.env.PORT ?? 5000)) as Server;
+    // Must exceed the load balancer's idle timeout so it never reuses a socket we just closed
+    server.keepAliveTimeout = 65000;
+    server.headersTimeout = 66000;
 }
-bootstrap();
+void bootstrap();

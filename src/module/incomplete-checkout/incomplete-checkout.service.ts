@@ -22,6 +22,7 @@ import { normalizeBDPhone, isValidBDPhone } from '../../utils/phone-normalizer.u
 import { ApiResponse, ResponseUtils } from '../../utils/response.utils';
 import { OrdersService } from '../order/order.service';
 import { CreateOrdersDto } from '../order/dto/create-order.dto';
+import { resolvePagination } from '../../utils/pagination.util';
 
 @Injectable()
 export class IncompleteCheckoutService {
@@ -158,6 +159,7 @@ export class IncompleteCheckoutService {
                 productId: product.id,
                 variantId: item.variantId || null,
                 sku: item.sku || product.sku || null,
+                size: item.size?.trim() || null,
                 title: product.name,
                 image: product.featuredImage || null,
                 unitPriceMinor,
@@ -347,9 +349,7 @@ export class IncompleteCheckoutService {
      * Admin Paginated Listing with Search, Status, and Date Range Filters
      */
     async getAdminList(dto: IncompleteCheckoutFilterDto): Promise<ApiResponse<any>> {
-        const page = Math.max(1, Number(dto.page) || 1);
-        const limit = Math.max(1, Math.min(100, Number(dto.limit) || 20));
-        const skip = (page - 1) * limit;
+        const { page, limit, skip } = resolvePagination(dto.page, dto.limit, 20);
 
         const qb = this.checkoutRepo
             .createQueryBuilder('c')
@@ -601,32 +601,47 @@ export class IncompleteCheckoutService {
             throw new BadRequestException('Checkout has no items to create an order.');
         }
 
-        // Authoritative Server-side Stock Re-validation:
-        // Ensure products have not been depleted or deleted since checkout abandonment
+        // Authoritative server-side re-validation: the product must still be sold, a sized product
+        // needs the size the customer picked, and that size (or the total) must still be in stock.
         for (const it of checkout.cartItemsSnapshot) {
             const product = await this.productRepo.findOne({ where: { id: it.productId } });
             if (!product || product.isDeleted) {
+                throw new BadRequestException(`Cannot convert checkout: Product '${it.title}' is no longer active in catalog.`);
+            }
+            const sizeStock = product.sizeStock && typeof product.sizeStock === 'object' ? product.sizeStock : null;
+            const hasSizes = !!sizeStock && Object.keys(sizeStock).length > 0;
+            if (hasSizes && !it.size) {
                 throw new BadRequestException(
-                    `Cannot convert checkout: Product '${it.title}' is no longer active in catalog.`
+                    `Cannot convert checkout: '${it.title}' is sold by size but this checkout did not record one. Please create the order manually.`
                 );
             }
-            if (Number(product.quantity || 0) < it.quantity) {
+            const available = hasSizes ? Number(sizeStock![it.size!]) || 0 : product.quantity;
+            if (available !== null && available !== undefined && Number(available) < it.quantity) {
                 throw new BadRequestException(
-                    `Cannot convert checkout: Product '${it.title}' has insufficient stock (Available: ${product.quantity}, Required: ${it.quantity}).`
+                    `Cannot convert checkout: '${it.title}'${it.size ? ` (${it.size})` : ''} has insufficient stock (Available: ${available}, Required: ${it.quantity}).`
                 );
             }
         }
 
-        // Format items for CreateOrdersDto
-        const orderItems = checkout.cartItemsSnapshot.map((item) => ({
-            productId: item.productId,
-            quantity: item.quantity,
-            price: item.unitPriceMinor / 100,
-            productName: item.title,
-        }));
+        // Claim the checkout atomically so a double click or two admins cannot create two orders
+        const claim = await this.checkoutRepo
+            .createQueryBuilder()
+            .update()
+            .set({ convertedAt: () => 'CURRENT_TIMESTAMP' })
+            .where('id = :id AND convertedAt IS NULL AND status <> :converted', { id: checkout.id, converted: CheckoutStatus.CONVERTED })
+            .execute();
+        if (!claim.affected) {
+            throw new HttpException('This checkout is already being converted to an order.', HttpStatus.CONFLICT);
+        }
 
         const createOrderDto: CreateOrdersDto = {
-            items: orderItems,
+            items: checkout.cartItemsSnapshot.map((item) => ({
+                productId: item.productId,
+                quantity: item.quantity,
+                price: item.unitPriceMinor / 100,
+                productName: item.title,
+                ...(item.size ? { size: item.size } : {}),
+            })),
             phone: checkout.customerPhone || undefined,
             address: checkout.shippingAddress || 'Not specified',
             shippingAddress: {
@@ -637,14 +652,18 @@ export class IncompleteCheckoutService {
             },
             paymentMethod: 'COD',
             specialNote: `Converted from Incomplete Checkout ${checkout.publicCheckoutId}`,
-            idempotencyKey: `convert_${checkout.id}_${Date.now()}`,
+            // Deterministic: retrying the same conversion can never produce a second order
+            idempotencyKey: `convert_${checkout.id}`,
         };
 
-        // Create official order using existing OrderService
-        const orderResult = await this.ordersService.create(
-            createOrderDto,
-            checkout.customerId || adminId
-        );
+        let orderResult: Awaited<ReturnType<OrdersService['create']>>;
+        try {
+            // The order belongs to the customer (or stays a guest order), never to the admin
+            orderResult = await this.ordersService.create(createOrderDto, checkout.customerId || null, { placedByAdminId: adminId });
+        } catch (err) {
+            await this.checkoutRepo.update(checkout.id, { convertedAt: null });
+            throw err;
+        }
 
         const newOrder = (orderResult as any)?.data;
         const newOrderId = newOrder?.id || newOrder?.orderId;

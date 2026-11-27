@@ -6,7 +6,7 @@ import { StockMovementType, StockReferenceType } from '../../../enums/stock-move
 @Index('IDX_stock_movement_product_created', ['productId', 'createdAt'])
 @Index('IDX_stock_movement_ref', ['referenceType', 'referenceId'])
 @Index('IDX_stock_movement_type', ['movementType', 'createdAt'])
-@Index('IDX_stock_movement_idempotency', ['idempotencyKey'])
+@Index('UQ_stock_movement_idempotency', ['idempotencyKey'], { unique: true })
 export class StockMovement extends AbstractEntity {
     @Column({ type: 'varchar', length: 36, nullable: false })
     productId: string;

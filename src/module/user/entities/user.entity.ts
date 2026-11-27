@@ -32,6 +32,15 @@ export class User extends AbstractEntity {
 	@Column({ type: 'int', nullable: false, default: 0, select: false })
 	resetAttempts: number;
 
+	/**
+	 * When the owner proved control of this email (Google sign-in, or a reset code sent to it).
+	 * Null for accounts created from an unverified email (registration, guest checkout claim):
+	 * their first verified sign-in invalidates the existing password and sessions, so whoever
+	 * created the account with someone else's address loses access.
+	 */
+	@Column({ type: 'timestamp', nullable: true, select: false })
+	emailVerifiedAt: Date | null;
+
 	@Column({ type: 'enum', enum: Role, nullable: false })
 	role: Role;
 

@@ -1,3 +1,4 @@
+import { decimalTransformer } from '../../../../database/transformers/decimal.transformer';
 import { AbstractEntity } from '../../../../database/abstract.entity';
 import { ProductSeo } from '../../../seo/product-meta/entity/product-seo.entity';
 import { Column, Entity, Index, OneToMany, OneToOne } from 'typeorm';
@@ -5,6 +6,7 @@ import { ProductComment } from '../../product-comment/entities/product-comment.e
 import { DiscountType } from '../../../../enums/product.enum';
 
 @Entity('product')
+@Index('UQ_product_sku', ['sku'], { unique: true })
 @Index('IDX_product_slug', ['slug'])
 @Index('IDX_product_main_category', ['mainCategoryId', 'status', 'isApprove', 'isDeleted'])
 @Index('IDX_product_first_category', ['firstCategoryId', 'status', 'isApprove', 'isDeleted'])
@@ -35,16 +37,16 @@ export class Product extends AbstractEntity {
 	@Column({ type: 'longtext', nullable: true })
 	summary: string;
 
-	@Column({ type: 'float', nullable: false })
+	@Column({ type: 'decimal', precision: 12, scale: 2, nullable: false, transformer: decimalTransformer })
 	price: number;
 
-	@Column({ type: 'float', nullable: true })
+	@Column({ type: 'decimal', precision: 12, scale: 2, nullable: true, transformer: decimalTransformer })
 	cost: number;
 
 	@Column({ type: 'enum', enum: DiscountType, default: DiscountType.NONE })
   	discountType: DiscountType;
 
-	@Column({ type: 'float', nullable: true })
+	@Column({ type: 'decimal', precision: 12, scale: 2, nullable: true, transformer: decimalTransformer })
 	discountAmount: number;
 
 	@Column({ type: 'uuid', nullable: false })

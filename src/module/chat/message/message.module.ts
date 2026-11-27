@@ -1,7 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { SpaceService } from '../../space-module/space-service/space.service';
-import { R2ServiceProvider } from '../../space-module/space-service';
 import { Message } from './entities/message.entity';
 import { MessageController } from './message.controller';
 import { MessageService } from './message.service';
@@ -14,7 +13,7 @@ import { UserRepository } from '../../user/user.repository';
         TypeOrmModule.forFeature([Message])
     ],
     controllers: [MessageController],
-    providers: [MessageService, MessageRepository, SpaceService, R2ServiceProvider, ConversationRepository, UserRepository],
+    providers: [MessageService, MessageRepository, SpaceService, ConversationRepository, UserRepository],
     exports: [MessageService, MessageRepository]
 })
 

@@ -79,8 +79,8 @@ export class PopupService {
             if (error instanceof BadRequestException || error instanceof HttpException) {
                 throw error;
             }
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -123,8 +123,8 @@ export class PopupService {
 
             return ResponseUtils.successResponseHandler(200, 'Popups retrieved successfully.', 'data', payload);
         } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -139,8 +139,8 @@ export class PopupService {
             if (error instanceof BadRequestException) {
                 throw error;
             }
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -193,8 +193,8 @@ export class PopupService {
             if (error instanceof BadRequestException || error instanceof HttpException) {
                 throw error;
             }
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -211,8 +211,8 @@ export class PopupService {
             if (error instanceof BadRequestException) {
                 throw error;
             }
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -221,8 +221,8 @@ export class PopupService {
             const popup = await this.repository.getActivePopup();
             return ResponseUtils.successResponseHandler(200, 'Active popup retrieved successfully.', 'data', popup || null);
         } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 }

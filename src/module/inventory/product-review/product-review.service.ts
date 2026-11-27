@@ -33,9 +33,8 @@ export class ProductReviewService {
 			.getRawOne();
 
 		const count = parseInt(result?.count ?? '0', 10);
-		if (count === 0) return;
-
-		const averageRating = parseFloat(parseFloat(result?.average ?? '0').toFixed(2));
+		// No reviews left: the product has no rating, rather than keeping the last deleted one's average
+		const averageRating = count === 0 ? 0 : parseFloat(parseFloat(result?.average ?? '0').toFixed(2));
 		await this.productRepository.update(productId, { rating: averageRating });
 	}
 
@@ -73,8 +72,8 @@ export class ProductReviewService {
 
 			return ResponseUtils.successResponseHandler(200, message, 'data', output);
 		} catch (error: unknown) {
-			const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-			throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+			// HttpExceptions keep their status; anything else is logged and masked by the global filter
+			throw error;
 		}
 	}
 
@@ -133,8 +132,8 @@ export class ProductReviewService {
 
 			return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', payload);
 		} catch (error: unknown) {
-			const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-			throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+			// HttpExceptions keep their status; anything else is logged and masked by the global filter
+			throw error;
 		}
 	}
 
@@ -207,8 +206,8 @@ export class ProductReviewService {
 
 			return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', payload);
 		} catch (error: unknown) {
-			const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-			throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+			// HttpExceptions keep their status; anything else is logged and masked by the global filter
+			throw error;
 		}
 	}
 
@@ -252,8 +251,8 @@ export class ProductReviewService {
 
 			return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', response);
 		} catch (error: unknown) {
-			const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-			throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+			// HttpExceptions keep their status; anything else is logged and masked by the global filter
+			throw error;
 		}
 	}
 
@@ -264,11 +263,12 @@ export class ProductReviewService {
 				throw new HttpException('Data not found!', HttpStatus.BAD_REQUEST);
 			}
 			const response = await this.repository.softDelete(id);
+			await this.updateProductAverageRating(output.productId);
 			const result = response !== null;
 			return ResponseUtils.deleteResponseHandler(200, 'Data deleted successfully.', result);
 		} catch (error: unknown) {
-			const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-			throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+			// HttpExceptions keep their status; anything else is logged and masked by the global filter
+			throw error;
 		}
 	}
 

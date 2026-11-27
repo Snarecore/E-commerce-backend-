@@ -1,3 +1,4 @@
+import { resolvePagination } from '../utils/pagination.util';
 import { Injectable } from '@nestjs/common';
 import {
     Repository,
@@ -129,15 +130,16 @@ export abstract class AbstractRepository<T extends BaseEntity> implements IRepos
         limit: number;
         pageCount: number;
     }> {
+        const paging = resolvePagination(page, limit);
         const [data, total] = await this.repository.findAndCount({
             where: this.isDeletedCondition(query),
-            skip: (page - 1) * limit,
-            take: limit,
+            skip: paging.skip,
+            take: paging.limit,
             order: order || ({ createdAt: 'DESC' } as unknown as FindOptionsOrder<T>),
             relations
         });
-        const pageCount = Math.ceil(total / limit);
-        return { data, total, page, limit, pageCount };
+        const pageCount = Math.ceil(total / paging.limit);
+        return { data, total, page: paging.page, limit: paging.limit, pageCount };
     }
 
     async paginateWithHardLimit({
@@ -154,18 +156,19 @@ export abstract class AbstractRepository<T extends BaseEntity> implements IRepos
         limit: number;
         pageCount: number;
     }> {
+        const paging = resolvePagination(page, limit);
         const [data, actualTotal] = await this.repository.findAndCount({
             where: this.isDeletedCondition(query),
-            skip: (page - 1) * limit,
-            take: limit,
+            skip: paging.skip,
+            take: paging.limit,
             order: order || ({ createdAt: 'DESC' } as unknown as FindOptionsOrder<T>),
             relations
         });
 
         const total = Math.min(actualTotal, maxTotal);
-        const pageCount = Math.ceil(total / limit);
+        const pageCount = Math.ceil(total / paging.limit);
 
-        return { data, total, page, limit, pageCount };
+        return { data, total, page: paging.page, limit: paging.limit, pageCount };
     }
 
     async findOne(id: string | number): Promise<T | null> {

@@ -5,14 +5,13 @@ import { HeroSliderController } from './hero-slider.controller';
 import { HeroSliderService } from './hero-slider.service';
 import { HeroSliderRepository } from './hero-slider.repository';
 import { SpaceService } from '../../space-module/space-service/space.service';
-import { R2ServiceProvider } from '../../space-module/space-service';
 
 @Module({
 	imports: [
 		TypeOrmModule.forFeature([HeroSlider])
 	],
 	controllers: [HeroSliderController],
-	providers: [HeroSliderService, HeroSliderRepository, SpaceService, R2ServiceProvider],
+	providers: [HeroSliderService, HeroSliderRepository, SpaceService],
 	exports: [HeroSliderService, HeroSliderRepository]
 })
 

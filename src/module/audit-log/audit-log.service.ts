@@ -6,6 +6,7 @@ import { CreateAuditLogDto } from './dto/create-audit-log.dto';
 import { AuditLogFilterDto } from './dto/audit-log-filter.dto';
 import { AuditSanitizer } from './audit-log.sanitizer';
 import { ResponseUtils, ApiResponse } from '../../utils/response.utils';
+import { resolvePagination } from '../../utils/pagination.util';
 
 @Injectable()
 export class AuditLogService implements OnModuleInit {
@@ -87,9 +88,7 @@ export class AuditLogService implements OnModuleInit {
     async findAll(
         dto: AuditLogFilterDto
     ): Promise<ApiResponse<{ data: AuditLog[]; total: number; page: number; limit: number; pageCount: number }>> {
-        const page = dto.page ? Math.max(1, Number(dto.page)) : 1;
-        const limit = dto.limit ? Math.max(1, Math.min(100, Number(dto.limit))) : 20;
-        const skip = (page - 1) * limit;
+        const { page, limit, skip } = resolvePagination(dto.page, dto.limit, 20);
 
         const qb = this.auditLogRepository.createQueryBuilder('log')
             .where('log.isDeleted = false');

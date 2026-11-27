@@ -55,7 +55,16 @@ export class PaymentOutboxService {
     async processOutbox(): Promise<void> {
         if (this.isProcessing) return;
         this.isProcessing = true;
+        try {
+            await this.runOutboxCycle();
+        } finally {
+            // Single reset point: every exit path of a cycle (empty batch, claim error, crash) releases the worker
+            this.isProcessing = false;
+        }
+    }
 
+    /** One claim-and-dispatch cycle. Must only be called through processOutbox(), which owns the busy flag. */
+    private async runOutboxCycle(): Promise<void> {
         const workerId = `worker-${process.pid}-${randomUUID().slice(0, 8)}`;
         const batchLeaseToken = randomUUID();
         const leaseDurationMs = 60 * 1000; // 60 seconds initial lease
@@ -183,7 +192,6 @@ export class PaymentOutboxService {
             }
         } finally {
             clearInterval(heartbeatInterval);
-            this.isProcessing = false;
         }
     }
 

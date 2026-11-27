@@ -9,6 +9,8 @@ export interface CartItemSnapshot {
     productId: string;
     variantId?: string | null;
     sku?: string | null;
+    /** Selected size, required to deduct per-size stock when the checkout is converted. */
+    size?: string | null;
     title: string;
     image?: string | null;
     unitPriceMinor: number;

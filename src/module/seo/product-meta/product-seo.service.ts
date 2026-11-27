@@ -83,8 +83,8 @@ export class ProductSeoService {
 
             return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', payload);
         } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 }

@@ -1,10 +1,12 @@
-import { Controller, Get, HttpStatus, Res } from '@nestjs/common';
+import { Controller, Get, HttpStatus, Logger, Res } from '@nestjs/common';
 import { Response } from 'express';
 import { DataSource } from 'typeorm';
 import { Public } from './decorators/public.decorator';
 
 @Controller()
 export class AppController {
+	private readonly logger = new Logger(AppController.name);
+
 	constructor(private readonly dataSource: DataSource) {}
 
 	@Public()
@@ -41,11 +43,12 @@ export class AppController {
 				database: 'CONNECTED',
 				timestamp: new Date().toISOString(),
 			});
-		} catch (error: any) {
+		} catch (error: unknown) {
+			// Public endpoint: the driver error (host names, credentials hints) goes to the log only
+			this.logger.error(`Readiness check failed: ${error instanceof Error ? error.message : String(error)}`);
 			return res.status(HttpStatus.SERVICE_UNAVAILABLE).json({
 				status: 'NOT_READY',
 				database: 'DISCONNECTED',
-				error: error?.message || 'Database unreachable',
 				timestamp: new Date().toISOString(),
 			});
 		}

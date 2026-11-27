@@ -87,6 +87,9 @@ import {
 import { EmailService } from '../email-service/email-sender.service';
 import { InventoryEngineService } from '../inventory-engine/services/inventory-engine.service';
 import { StockMovementType, StockReferenceType } from '../../enums/stock-movement.enum';
+import { releaseOrderStock, toReleaseMovements } from './stock/order-stock';
+import { releaseCouponUsage } from '../coupon/coupon-usage.ledger';
+import { PaidOrderApplier } from '../payments/services/paid-order-applier.service';
 
 @Injectable()
 export class OrdersService {
@@ -109,7 +112,8 @@ export class OrdersService {
         @Optional() private readonly inventoryEngineService?: InventoryEngineService,
         @Optional() private readonly verificationConsumptionService?: VerificationConsumptionService,
         @Optional() private readonly verificationOrchestratorService?: VerificationOrchestratorService,
-        @Optional() private readonly guestAccountClaimService?: GuestAccountClaimService
+        @Optional() private readonly guestAccountClaimService?: GuestAccountClaimService,
+        @Optional() private readonly paidOrderApplier?: PaidOrderApplier
     ) {}
 
     /**
@@ -242,7 +246,7 @@ export class OrdersService {
      * Builds deterministic SHA-256 fingerprint of customer checkout intent
      * (items, variants/sizes, quantities, coupon, and delivery destination).
      */
-    private buildCustomerIntentFingerprint(dto: CreateOrdersDto, userId: string): string {
+    private buildCustomerIntentFingerprint(dto: CreateOrdersDto, userId: string | null): string {
         const sortedItems = [...(dto.items || [])]
             .map((it) => ({
                 productId: String(it.productId || (it as any).id || ''),
@@ -320,7 +324,12 @@ export class OrdersService {
         return null;
     }
 
-    async create(dto: CreateOrdersDto, userId: string): Promise<ApiResponse<OrdersInterface>> {
+    /**
+     * @param options.placedByAdminId set when an admin places the order on the customer's behalf
+     *        (e.g. converting an abandoned checkout after a phone call). The admin vouches for the
+     *        phone number, so checkout OTP is not required; the admin id is logged for audit.
+     */
+    async create(dto: CreateOrdersDto, userId: string | null, options: { placedByAdminId?: string } = {}): Promise<ApiResponse<OrdersInterface>> {
         try {
             const customerUserId = await this.resolveCustomerUserId({ userId, ...dto });
             // Pre-validate phone number and check verification policy
@@ -337,7 +346,10 @@ export class OrdersService {
             const requireOtpEnv = this.configService?.get<string>('REQUIRE_CHECKOUT_OTP') ?? process.env.REQUIRE_CHECKOUT_OTP;
             // Default to true so checkout requires verified phone even if no OTP env var is configured
             const requireOtpConfig = requireOtpEnv !== undefined ? requireOtpEnv.toLowerCase() === 'true' : true;
-            const isOtpMandatory = requireOtpConfig;
+            const isOtpMandatory = requireOtpConfig && !options.placedByAdminId;
+            if (options.placedByAdminId) {
+                this.logger.log(`[Order Create] Order placed by admin ${options.placedByAdminId} on behalf of the customer (checkout OTP waived).`);
+            }
 
             if (isOtpMandatory && !canonicalCustomerPhone) {
                 throw new HttpException('A valid Bangladeshi mobile phone number is required to place an order.', HttpStatus.BAD_REQUEST);
@@ -945,8 +957,8 @@ export class OrdersService {
             if (errno === 1213 || code === 'ER_LOCK_DEADLOCK' || errno === 1205 || code === 'ER_LOCK_WAIT_TIMEOUT') {
                 throw new HttpException('High concurrency detected on stock reservation. Please try placing your order again in a few moments.', HttpStatus.CONFLICT);
             }
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -1004,73 +1016,23 @@ export class OrdersService {
             const willBeRestocked = RESTOCKED_STATUS_GROUP.has(targetStatus);
 
             if (wasDeducted && willBeRestocked) {
-                const summaries = order.orderSummaries || [];
-                const restockMap = new Map<string, { totalQty: number; sizeMap: Map<string, number> }>();
-
-                for (const item of summaries) {
-                    if (!item.productId) continue;
-                    const pid = String(item.productId);
-                    const qty = Math.max(1, Number(item.quantity) || 1);
-                    const size = (item.size || (item as any).selectedSize || '').trim();
-
-                    if (!restockMap.has(pid)) {
-                        restockMap.set(pid, { totalQty: 0, sizeMap: new Map() });
-                    }
-                    const entry = restockMap.get(pid)!;
-                    entry.totalQty += qty;
-                    if (size) {
-                        entry.sizeMap.set(size, (entry.sizeMap.get(size) || 0) + qty);
-                    }
-                }
-
-                const sortedProductIds = Array.from(restockMap.keys()).sort();
-                for (const pid of sortedProductIds) {
-                    const product = await queryRunner.manager.findOne(Product, {
-                        where: { id: pid },
-                        lock: { mode: 'pessimistic_write' }
+                const stockChanges = await releaseOrderStock(queryRunner.manager, order.orderSummaries || []);
+                if (this.inventoryEngineService) {
+                    const movements = toReleaseMovements(stockChanges, {
+                        orderId: order.orderId,
+                        reason: dto.rejectionReason || targetStatus,
+                        note: `Order ${order.orderId} transition to ${targetStatus} restock`,
                     });
-
-                    if (product) {
-                        const req = restockMap.get(pid)!;
-                        const currentQty = Number(product.quantity) || 0;
-                        let updatedSizeStock = product.sizeStock;
-
-                        if (updatedSizeStock && typeof updatedSizeStock === 'object') {
-                            updatedSizeStock = { ...updatedSizeStock };
-                            for (const [sizeName, qtyToReturn] of req.sizeMap.entries()) {
-                                const curSizeQty = Number(updatedSizeStock[sizeName]) || 0;
-                                updatedSizeStock[sizeName] = curSizeQty + qtyToReturn;
-                            }
-                        }
-
-                        await queryRunner.manager.update(Product, product.id, {
-                            quantity: currentQty + req.totalQty,
-                            sizeStock: updatedSizeStock
-                        });
-
-                        if (this.inventoryEngineService) {
-                            for (const [sizeName, qtyToReturn] of req.sizeMap.entries()) {
-                                const curVariantQty = (product.sizeStock && typeof product.sizeStock === 'object')
-                                    ? (Number(product.sizeStock[sizeName]) || 0)
-                                    : currentQty;
-
-                                await this.inventoryEngineService.recordMovement({
-                                    productId: product.id,
-                                    sku: product.sku || null,
-                                    size: sizeName || null,
-                                    movementType: StockMovementType.SALE_CANCEL_RELEASE,
-                                    quantityChange: qtyToReturn,
-                                    onHandBefore: curVariantQty,
-                                    onHandAfter: curVariantQty + qtyToReturn,
-                                    referenceType: StockReferenceType.ORDER,
-                                    referenceId: order.orderId,
-                                    reason: dto.rejectionReason || targetStatus,
-                                    note: `Order ${order.orderId} transition to ${targetStatus} restock`
-                                }, queryRunner.manager);
-                            }
-                        }
+                    for (const movement of movements) {
+                        await this.inventoryEngineService.recordMovement(movement, queryRunner.manager);
                     }
                 }
+                await releaseCouponUsage(queryRunner.manager, order.orderId);
+            }
+
+            // Cancelling or rejecting an order that was paid online must give the money back
+            if (willBeRestocked && order.paymentStatus === PaymentStatus.PAID && this.paidOrderApplier) {
+                await this.paidOrderApplier.queueRefundsForClosedOrder(queryRunner, order, `ORDER_${String(targetStatus).toUpperCase()}_AFTER_PAYMENT`);
             }
 
             // 4. Update Order Fields
@@ -1236,8 +1198,8 @@ export class OrdersService {
                 }
             }
             if (error instanceof HttpException) throw error;
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         } finally {
             if (queryRunner.isReleased !== true) {
                 try {
@@ -1384,8 +1346,8 @@ export class OrdersService {
             return ResponseUtils.successResponseHandler(200, 'Courier information updated successfully.', 'data', updatedOrder);
         } catch (error: unknown) {
             if (error instanceof HttpException) throw error;
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -1529,8 +1491,8 @@ export class OrdersService {
             return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', payload);
         } catch (error: unknown) {
             if (error instanceof HttpException) throw error;
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -1642,8 +1604,8 @@ export class OrdersService {
             return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', payload);
         } catch (error: unknown) {
             if (error instanceof HttpException) throw error;
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -1820,8 +1782,8 @@ export class OrdersService {
             return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', enrichedData);
         } catch (error: unknown) {
             if (error instanceof HttpException) throw error;
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -1840,8 +1802,8 @@ export class OrdersService {
             return ResponseUtils.successResponseHandler(200, 'Data updated successfully.', 'data', response);
         } catch (error: unknown) {
             if (error instanceof HttpException) throw error;
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -1856,8 +1818,8 @@ export class OrdersService {
             return ResponseUtils.deleteResponseHandler(200, 'Data deleted successfully.', result);
         } catch (error: unknown) {
             if (error instanceof HttpException) throw error;
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 

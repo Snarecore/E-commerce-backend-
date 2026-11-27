@@ -40,6 +40,7 @@ describe('PaymentOutboxService (Transactional Outbox Pattern)', () => {
             orderBy: jest.fn().mockReturnThis(),
             take: jest.fn().mockReturnThis(),
             setLock: jest.fn().mockReturnThis(),
+            setOnLocked: jest.fn().mockReturnThis(),
             getMany: jest.fn().mockResolvedValue([]),
         };
 
@@ -76,6 +77,21 @@ describe('PaymentOutboxService (Transactional Outbox Pattern)', () => {
         }).compile();
 
         service = module.get<PaymentOutboxService>(PaymentOutboxService);
+    });
+
+    describe('processOutbox (worker busy flag)', () => {
+        it('keeps polling after a cycle that found no events', async () => {
+            await service.processOutbox();
+            await service.processOutbox();
+            expect(mockQueryRunner.connect).toHaveBeenCalledTimes(2);
+        });
+
+        it('keeps polling after a cycle whose claim failed', async () => {
+            mockQueryRunner.startTransaction.mockRejectedValueOnce(new Error('db down'));
+            await service.processOutbox();
+            await service.processOutbox();
+            expect(mockQueryRunner.connect).toHaveBeenCalledTimes(2);
+        });
     });
 
     describe('enqueueEvent (Transactional Consistency)', () => {

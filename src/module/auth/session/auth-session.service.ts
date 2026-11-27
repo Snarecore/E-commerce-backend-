@@ -1,11 +1,13 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, IsNull, Repository } from 'typeorm';
+import { DataSource, IsNull, Not, Repository } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
 import * as crypto from 'crypto';
 import { AuthSession } from './auth-session.entity';
+import { AUTH_SESSION_EVENTS, SessionRevokedEvent } from './auth-session.events';
 import {
 	ACCESS_TOKEN_TTL,
 	AuthTokenType,
@@ -21,6 +23,9 @@ import {
 } from './auth-token.types';
 import { REFRESH_TOKEN_MAX_AGE } from '../../../utils/cookie-config';
 
+/** Upper bound on rotation hops followed when checking whether a session is still live. */
+const MAX_ROTATION_HOPS = 10;
+
 export type RotationResult =
 	| { kind: 'rotated'; userId: string; tokens: SessionTokens }
 	// Concurrent refresh with an already-rotated token: hand back an access token only
@@ -35,6 +40,7 @@ export class AuthSessionService {
 		@InjectDataSource() private readonly dataSource: DataSource,
 		private readonly jwtService: JwtService,
 		private readonly configService: ConfigService,
+		private readonly eventEmitter: EventEmitter2,
 	) {}
 
 	private get accessSecret(): string {
@@ -176,17 +182,63 @@ export class AuthSessionService {
 			{ id: payload.jti, userId: payload.sub, revokedAt: IsNull() },
 			{ revokedAt: new Date(), revokedReason: reason },
 		);
+		this.publishRevoked(payload.sub, reason);
 	}
 
 	async revokeAllForUser(userId: string, reason: string): Promise<void> {
 		await this.sessionRepository.update({ userId, revokedAt: IsNull() }, { revokedAt: new Date(), revokedReason: reason });
+		this.publishRevoked(userId, reason);
 	}
 
-	/** Short-lived token the browser passes in the Socket.IO handshake. */
-	signSocketToken(user: SessionUser): string {
+	/**
+	 * True while the login session behind `sessionId` is still usable by `userId`.
+	 *
+	 * Refresh rotation revokes a row with reason `rotated` and points `replacedById` at its
+	 * successor, while access tokens minted before the rotation keep the old id. So a rotated
+	 * row is followed forward until the live head is reached; any other revocation, expiry,
+	 * owner mismatch or a chain longer than MAX_ROTATION_HOPS means the session is dead.
+	 */
+	async isSessionActive(sessionId: string, userId: string): Promise<boolean> {
+		return (await this.findLiveSession(sessionId, userId)) !== null;
+	}
+
+	/** The live head of a session's rotation chain, or null when the session has ended. */
+	private async findLiveSession(sessionId: string, userId: string): Promise<AuthSession | null> {
+		let currentId: string | null = sessionId;
+		for (let hop = 0; currentId && hop < MAX_ROTATION_HOPS; hop++) {
+			const session: AuthSession | null = await this.sessionRepository.findOne({ where: { id: currentId } });
+			if (!session || session.userId !== userId || session.expiresAt.getTime() <= Date.now()) {
+				return null;
+			}
+			if (!session.revokedAt) {
+				return session;
+			}
+			currentId = session.revokedReason === 'rotated' ? session.replacedById : null;
+		}
+		return null;
+	}
+
+	/**
+	 * Ends every session of a user except the one making the request (e.g. after a password
+	 * change: other devices are signed out, the person who changed it stays signed in).
+	 */
+	async revokeOtherSessions(userId: string, currentSessionId: string | null | undefined, reason: string): Promise<void> {
+		const current = currentSessionId ? await this.findLiveSession(currentSessionId, userId) : null;
+		const where = current ? { userId, revokedAt: IsNull(), id: Not(current.id) } : { userId, revokedAt: IsNull() };
+		await this.sessionRepository.update(where, { revokedAt: new Date(), revokedReason: reason });
+		this.publishRevoked(userId, reason);
+	}
+
+	/** Short-lived token the browser passes in the Socket.IO handshake. Carries `sid` so the
+	 * gateway can tie the socket to the login session and drop it when that session ends. */
+	signSocketToken(user: SessionUser, sessionId: string): string {
 		return this.jwtService.sign(
-			{ sub: user.id, email: user.email, role: user.role, name: user.name, type: AuthTokenType.SOCKET },
+			{ sub: user.id, email: user.email, role: user.role, name: user.name, sid: sessionId, type: AuthTokenType.SOCKET },
 			{ secret: this.accessSecret, expiresIn: SOCKET_TOKEN_TTL },
 		);
+	}
+
+	private publishRevoked(userId: string, reason: string): void {
+		this.eventEmitter.emit(AUTH_SESSION_EVENTS.REVOKED, new SessionRevokedEvent(userId, reason));
 	}
 }

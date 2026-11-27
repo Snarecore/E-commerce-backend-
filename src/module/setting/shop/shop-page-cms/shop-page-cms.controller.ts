@@ -1,3 +1,4 @@
+import { UploadPolicy, uploadOptions } from '../../../../common/upload/upload.policy';
 import { Controller, Get, Post, Body, UseInterceptors, UploadedFiles, UseGuards } from '@nestjs/common';
 import { CONFIG } from '../../../../utils/config';
 import { ApiResponse } from '../../../../utils/response.utils';
@@ -19,11 +20,9 @@ export class ShopPageCmsController {
 	@UseGuards(JwtAuthGuard, RolesGuard)
 	@Roles(Role.ADMIN)
 	@Post()
-	@UseInterceptors(FileFieldsInterceptor(
-        [
+	@UseInterceptors(FileFieldsInterceptor([
             { name: "bannerImage", maxCount: 1 }
-        ]
-    ))
+        ], uploadOptions(UploadPolicy.ADMIN_MEDIA)))
 	async updateOrCreateData(
 		@Body() dto: UpdateShopPageCmsDto,
 		@UploadedFiles() files: {

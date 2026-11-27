@@ -35,7 +35,7 @@ describe('Steadfast status mapping', () => {
 });
 
 describe('ShipmentService pure rules', () => {
-    const service = new ShipmentService({} as any, {} as any, {} as any, {} as any);
+    const service = new ShipmentService({} as any, {} as any, {} as any, {} as any, {} as any);
 
     it('sends COD 0 for prepaid orders', () => {
         expect(service.computeCodAmount({ paymentStatus: PaymentStatus.PAID, totalAmount: 1520 } as any)).toBe(0);
@@ -80,7 +80,7 @@ describe('ShipmentService.applyProviderStatus', () => {
         };
         const steadfast = { mapStatus: mapSteadfastStatus };
         const ordersService = { updateOrderStatus: jest.fn().mockResolvedValue({}) };
-        const service = new ShipmentService(dataSource as any, steadfast as any, ordersService as any, {} as any);
+        const service = new ShipmentService(dataSource as any, steadfast as any, ordersService as any, {} as any, {} as any);
         return { service, manager, ordersService, shipmentsRepo };
     };
 
@@ -234,7 +234,7 @@ describe('SteadfastWebhookController auth', () => {
 
 describe('ShipmentService bulk operations', () => {
     it('queues valid orders and reports per-order failures without aborting the batch', async () => {
-        const service = new ShipmentService({} as any, {} as any, {} as any, {} as any);
+        const service = new ShipmentService({} as any, {} as any, {} as any, {} as any, {} as any);
         jest.spyOn(service, 'requestDispatch')
             .mockResolvedValueOnce({ id: 'ship-1' } as any)
             .mockRejectedValueOnce(new HttpException('Recipient phone is not a valid Bangladeshi mobile number.', 400))
@@ -250,12 +250,38 @@ describe('ShipmentService bulk operations', () => {
     });
 
     it('settles COD for many shipments and reports the ones that cannot be settled', async () => {
-        const service = new ShipmentService({} as any, {} as any, {} as any, {} as any);
+        const service = new ShipmentService({} as any, {} as any, {} as any, {} as any, {} as any);
         jest.spyOn(service, 'markCodSettled')
             .mockResolvedValueOnce({} as any)
             .mockRejectedValueOnce(new HttpException('COD is already marked as settled.', 400));
         const results = await service.markCodSettledBulk(['s1', 's2'], {} as any, 'SFC-1');
         expect(results.map((r) => r.ok)).toEqual([true, false]);
         expect(service.markCodSettled).toHaveBeenCalledWith('s1', {}, 'SFC-1');
+    });
+});
+
+describe('ShipmentService risk hold', () => {
+    const orderRow = { id: 'o1', orderId: 'BB1', status: 'Order Placed', paymentStatus: 'Pending', paymentMethod: 'COD', shippingAddress: { phone: '01700000000' } };
+
+    const build = (risk: any) => {
+        const manager: any = { findOne: jest.fn().mockResolvedValue(orderRow) };
+        const queryRunner: any = {
+            connect: jest.fn(), startTransaction: jest.fn(), commitTransaction: jest.fn(),
+            rollbackTransaction: jest.fn(), release: jest.fn(), isTransactionActive: true, manager,
+        };
+        const dataSource: any = { createQueryRunner: () => queryRunner };
+        const steadfast: any = { isEnabled: () => true };
+        const blacklist: any = { evaluateRiskForCustomer: risk };
+        return new ShipmentService(dataSource, steadfast, {} as any, {} as any, blacklist);
+    };
+
+    it('refuses to book a courier for a customer on risk hold', async () => {
+        const service = build(jest.fn().mockResolvedValue({ fulfillmentHold: true, policyDecision: 'HARD_BLOCK', reason: 'fraud' }));
+        await expect(service.requestDispatch('o1', { id: 'admin' } as any)).rejects.toThrow(/risk hold/);
+    });
+
+    it('fails closed when the risk store cannot be read', async () => {
+        const service = build(jest.fn().mockRejectedValue(new Error('db down')));
+        await expect(service.requestDispatch('o1', { id: 'admin' } as any)).rejects.toThrow(/unavailable/);
     });
 });

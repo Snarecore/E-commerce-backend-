@@ -83,16 +83,38 @@ Rules:
 
 ## Deployment
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+Production runs on a VPS under PM2 (`ecosystem.config.js`). The Vercel entry point (`api/index.ts`) shares the same HTTP setup but cannot hold WebSocket connections or run cron jobs, so real-time events and background workers only work under PM2.
 
 ```bash
-$ pnpm install -g mau
-$ mau deploy
+pnpm install --frozen-lockfile
+pnpm run build                 # outputs dist/main.js
+pnpm run migration:run         # back up the database first
+pm2 start ecosystem.config.js  # or: pm2 reload bazaarbound-backend
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+**Single process.** Socket.IO rooms, the session-status cache and auth events live in memory, so the app must run as exactly one Node process. `ecosystem.config.js` refuses `PM2_INSTANCES` other than 1. Scaling out requires a Socket.IO Redis adapter first.
+
+**Node.js ≥ 22.12** (see `engines`).
+
+### Configuration added by the security hardening
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `TRUST_PROXY_HOPS` | `1` | Number of reverse proxies in front of Node (nginx/Cloudflare). Drives `req.ip` for rate limits, audit logs and IP blacklists. Set `0` if Node is exposed directly, or clients can spoof their IP. |
+| `ADMIN_URL` | – | Admin panel origin. Used for CORS/CSRF and to pick the admin identity on sockets when a browser holds both cookies. |
+| `STORE_UTC_OFFSET` | `+06:00` | Shop time zone for report day boundaries. |
+| `PHONE_HMAC_SECRET_V1/V2` | public default | Must be set in production; phone hashes made with the default key are reversible. Changing them requires re-hashing stored phone hashes. |
+
+### Request rules worth knowing
+
+- **CSRF:** state-changing requests authenticated by cookie must come from an allowed origin (`ALLOWED_ORIGINS`, `ADMIN_URL`, …). Bearer-token and `@Public` routes are not affected.
+- **Uploads:** JPEG/PNG/WebP/GIF/AVIF (and PDF where allowed), checked by file content; 5 MB for customers, 10 MB for admin media. SVG is rejected.
+- **Errors:** unexpected server errors return a generic message with an `errorId`; look that id up in the logs.
+- **Lists:** every list endpoint returns at most 100 items per page.
+
+### Dependency overrides
+
+Security overrides for transitive dependencies live in `package.json` → `pnpm.overrides` (read by the pinned pnpm 10.4). When upgrading pnpm past 10.5, move them to `pnpm-workspace.yaml` → `overrides`.
 
 ## Resources
 

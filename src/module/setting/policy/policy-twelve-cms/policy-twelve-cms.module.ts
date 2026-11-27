@@ -1,7 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { SpaceService } from '../../../space-module/space-service/space.service';
-import { R2ServiceProvider } from '../../../space-module/space-service';
 import { PolicyTwelveCms } from './entities/policy-twelve-cms.entity';
 import { PolicyTwelveCmsController } from './policy-twelve-cms.controller';
 import { PolicyTwelveCmsService } from './policy-twelve-cms.service';
@@ -12,7 +11,7 @@ import { PolicyTwelveCmsRepository } from './policy-twelve-cms.repository';
 		TypeOrmModule.forFeature([PolicyTwelveCms])
 	],
 	controllers: [PolicyTwelveCmsController],
-	providers: [PolicyTwelveCmsService, PolicyTwelveCmsRepository, SpaceService, R2ServiceProvider],
+	providers: [PolicyTwelveCmsService, PolicyTwelveCmsRepository, SpaceService],
 	exports: [PolicyTwelveCmsService, PolicyTwelveCmsRepository]
 })
 

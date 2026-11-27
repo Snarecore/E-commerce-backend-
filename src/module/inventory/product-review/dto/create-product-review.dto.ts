@@ -1,10 +1,5 @@
-import {
-    IsNotEmpty,
-    IsString,
-    IsUUID,
-    IsNumber,
-    IsOptional
-} from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsInt, IsNotEmpty, IsOptional, IsUUID, Max, Min } from 'class-validator';
 
 export class CreateProductReviewDto {
     @IsNotEmpty()
@@ -15,9 +10,12 @@ export class CreateProductReviewDto {
     @IsUUID()
     vendorId: string;
 
-    @IsNotEmpty()
-    @IsNumber()
-    rating: number;  
+    /** Whole stars, 1 to 5. */
+    @Type(() => Number)
+    @IsInt()
+    @Min(1)
+    @Max(5)
+    rating: number;
 
     @IsOptional()
     userId: string;

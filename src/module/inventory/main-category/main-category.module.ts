@@ -5,14 +5,13 @@ import { MainCategoryController } from './main-category.controller';
 import { MainCategoryService } from './main-category.service';
 import { MainCategoryRepository } from './main-category.repository';
 import { SpaceService } from '../../space-module/space-service/space.service';
-import { R2ServiceProvider } from '../../space-module/space-service';
 
 @Module({
 	imports: [
 		TypeOrmModule.forFeature([MainCategory])
 	],
 	controllers: [MainCategoryController],
-	providers: [MainCategoryService, MainCategoryRepository, SpaceService, R2ServiceProvider],
+	providers: [MainCategoryService, MainCategoryRepository, SpaceService],
 	exports: [MainCategoryService, MainCategoryRepository]
 })
 

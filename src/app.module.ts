@@ -9,7 +9,6 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { getTypeOrmConfig } from './configs/typeorm.config';
 import { AuthModule } from './module/auth/auth.module';
-import { CoreModule } from './module/core/core.module';
 import { RolesModule } from './module/roles/roles.module';
 import { UserModule } from './module/user/user.module';
 import { HeroSliderModule } from './module/setting/hero-slider/hero-slider.module';
@@ -30,7 +29,6 @@ import { ShopPageCmsModule } from './module/setting/shop/shop-page-cms/shop-page
 import { ContactUsMessageModule } from './module/setting/contact-us/contact-us-message/contact-us-message.module';
 import { ContactPageCmsModule } from './module/setting/contact-us/contact-page-cms/contact-page-cms.module';
 import { RolesGuard } from './guards/role.guard';
-import { JwtAuthModule } from './module/core/jwt/jwt-auth.module';
 import { HeaderFooterCmsModule } from './module/setting/header-footer-cms/header-footer-cms.module';
 import { PaymentsModule } from './module/payments/payments.module';
 import { OrdersModule } from './module/order/order.module';
@@ -66,12 +64,14 @@ import { EmailSettingModule } from './module/setting/email-setting/email-setting
 import { SesModule } from './common/ses/ses.module';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { CustomThrottlerGuard } from './guards/custom-throttler.guard';
+import { CsrfOriginGuard } from './guards/csrf-origin.guard';
 
 import { CouponModule } from './module/coupon/coupon.module';
 import { MegaDiscountModule } from './module/setting/mega-discount/mega-discount.module';
 import { AuditLogModule } from './module/audit-log/audit-log.module';
 import { ProfitReportModule } from './module/profit-report/profit-report.module';
 import { SocketModule } from './module/socket/socket.module';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 import { RiskModule } from './module/risk/risk.module';
 import { InventoryEngineModule } from './module/inventory-engine/inventory-engine.module';
 import { IncompleteCheckoutModule } from './module/incomplete-checkout/incomplete-checkout.module';
@@ -80,6 +80,7 @@ import { AppController } from './app.controller';
 @Module({
 	controllers: [AppController],
 	imports: [
+		EventEmitterModule.forRoot(),
 		SocketModule,
 		ThrottlerModule.forRoot({
 			throttlers: [
@@ -125,11 +126,9 @@ import { AppController } from './app.controller';
 		}),
 		TypeOrmModule.forRoot(getTypeOrmConfig()),
 		ScheduleModule.forRoot(),
-		JwtAuthModule,
 		SpaceModule,
 		AuthModule,
 		UserModule,
-		CoreModule,
 		RolesModule,
 		HeroSliderModule,
 		PromotionsModule,
@@ -188,6 +187,11 @@ import { AppController } from './app.controller';
 		{
 			provide: APP_GUARD,
 			useClass: CustomThrottlerGuard
+		},
+		{
+			// Before authentication: a forged cross-site request is rejected without touching the session
+			provide: APP_GUARD,
+			useClass: CsrfOriginGuard
 		},
 		{
 			provide: APP_GUARD,

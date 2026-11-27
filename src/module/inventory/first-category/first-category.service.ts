@@ -61,8 +61,8 @@ export class FirstCategoryService {
                 output
             );
         } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -113,8 +113,8 @@ export class FirstCategoryService {
                 payload
             );
         } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -131,8 +131,8 @@ export class FirstCategoryService {
                 data
             );
         } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -195,8 +195,8 @@ export class FirstCategoryService {
                 response
             );
         } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -210,8 +210,8 @@ export class FirstCategoryService {
             const result = response !== null;
             return ResponseUtils.deleteResponseHandler(200, 'Data deleted successfully.', result);
         } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 

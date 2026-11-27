@@ -1,3 +1,4 @@
+import { UploadPolicy, uploadOptions } from '../../../common/upload/upload.policy';
 import {
     Body,
     Controller,
@@ -43,7 +44,7 @@ export class PopupController {
     @UseGuards(JwtAuthGuard, RolesGuard)
     @Roles(Role.ADMIN)
     @Post()
-    @UseInterceptors(FileFieldsInterceptor([{ name: 'image', maxCount: 1 }]))
+    @UseInterceptors(FileFieldsInterceptor([{ name: 'image', maxCount: 1 }], uploadOptions(UploadPolicy.ADMIN_MEDIA)))
     async create(
         @Body() dto: CreatePopupDto,
         @UploadedFiles()
@@ -81,7 +82,7 @@ export class PopupController {
     @UseGuards(JwtAuthGuard, RolesGuard)
     @Roles(Role.ADMIN)
     @Patch(':id')
-    @UseInterceptors(FileFieldsInterceptor([{ name: 'image', maxCount: 1 }]))
+    @UseInterceptors(FileFieldsInterceptor([{ name: 'image', maxCount: 1 }], uploadOptions(UploadPolicy.ADMIN_MEDIA)))
     async update(
         @Param('id') id: string,
         @Body() dto: UpdatePopupDto,

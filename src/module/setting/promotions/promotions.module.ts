@@ -5,14 +5,13 @@ import { PromotionsController } from './promotions.controller';
 import { PromotionsService } from './promotions.service';
 import { PromotionsRepository } from './promotions.repository';
 import { SpaceService } from '../../space-module/space-service/space.service';
-import { R2ServiceProvider } from '../../space-module/space-service';
 
 @Module({
 	imports: [
 		TypeOrmModule.forFeature([Promotions])
 	],
 	controllers: [PromotionsController],
-	providers: [PromotionsService, PromotionsRepository, SpaceService, R2ServiceProvider],
+	providers: [PromotionsService, PromotionsRepository, SpaceService],
 	exports: [PromotionsService, PromotionsRepository]
 })
 

@@ -5,6 +5,7 @@ import {
     InternalServerErrorException,
     NotFoundException,
     Logger,
+    ConflictException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -16,7 +17,6 @@ import { SslcommerzInitDto } from './dto/sslcommerz-init.dto';
 import { PaymentFilterDto } from './dto/payment-filter.dto';
 import { ResponseUtils, ApiResponse } from '../../utils/response.utils';
 import { Orders } from '../order/entity/order.entity';
-import { OrderSummary } from '../order-summary/entity/order-summary.entity';
 import { Product } from '../inventory/product/entities/product.entity';
 import { MegaDiscount } from '../setting/mega-discount/entities/mega-discount.entity';
 import { SINGLETON_MEGA_DISCOUNT_ID } from '../setting/mega-discount/mega-discount.repository';
@@ -29,6 +29,10 @@ import { PaymentAuditLogs } from './entities/payment-audit-log.entity';
 import { PaymentOutboxEvents } from './entities/payment-outbox-event.entity';
 import { PaymentAttemptStatus, PaymentEventSource, PaymentGateway, PaymentMethodType, RefundStatus, OutboxStatus } from './enums/payment.enum';
 import { SslcommerzService } from './services/sslcommerz.service';
+import { PaidOrderApplier } from './services/paid-order-applier.service';
+import { getPaymentStartBlocker } from './utils/paid-order.policy';
+import { findOrderLines, releaseOrderStock, reserveOrderStock } from '../order/stock/order-stock';
+import { couponUsageOwner, releaseCouponUsage, reclaimCouponUsage } from '../coupon/coupon-usage.ledger';
 import { PaymentConfirmationService } from './services/payment-confirmation.service';
 import { PaymentOutboxService } from './services/payment-outbox.service';
 import { CurrencyUtils } from '../../utils/currency.utils';
@@ -37,6 +41,7 @@ import { TransactionIdUtil } from './utils/transaction-id.util';
 import { randomUUID } from 'crypto';
 import { resolveOrderAccess } from '../order/utils/order-access.policy';
 import { getStoreCurrency } from '../../configs/store-currency';
+import { resolvePagination } from '../../utils/pagination.util';
 
 @Injectable()
 export class PaymentsService {
@@ -49,7 +54,8 @@ export class PaymentsService {
         private readonly orderRepository: Repository<Orders>,
         private readonly dataSource: DataSource,
         private readonly sslcommerzService: SslcommerzService,
-        private readonly paymentConfirmationService: PaymentConfirmationService
+        private readonly paymentConfirmationService: PaymentConfirmationService,
+        private readonly paidOrderApplier: PaidOrderApplier
     ) {
         const secretKey =
             this.configService.get<string>('STRIPE_SECRET_KEY') ||
@@ -215,25 +221,22 @@ export class PaymentsService {
                 await this.handlePaymentIntentFailed(intent);
                 break;
             }
-            case 'checkout.session.completed': {
-                const session = event.data.object as Stripe.Checkout.Session;
-                await this.handleCheckoutSessionCompleted(session);
-                break;
-            }
-            case 'checkout.session.expired': {
-                const session = event.data.object as Stripe.Checkout.Session;
-                await this.updateOrderStatusBySession(
-                    session,
-                    OrderStatus.FAILED,
-                    PaymentStatus.FAILED
-                );
-                break;
-            }
+            // Stripe Checkout Sessions are no longer created (PaymentIntents only). Their legacy events
+            // are ignored instead of being trusted to mark orders paid without amount/currency checks.
             default:
                 this.logger.log(`Unhandled webhook event type: ${event.type}`);
         }
 
         return { received: true };
+    }
+
+    /**
+     * Applies a PaymentIntent that Stripe reports as succeeded but whose webhook was lost (called by
+     * the order-expiry worker). Goes through exactly the same verification as the webhook.
+     */
+    async recoverStripeIntent(intent: Stripe.PaymentIntent): Promise<void> {
+        if (intent.status !== 'succeeded') return;
+        await this.handlePaymentIntentSucceeded(intent);
     }
 
     /**
@@ -304,8 +307,8 @@ export class PaymentsService {
                 });
             }
 
-            // Idempotency: If already confirmed as PAID, exit cleanly without duplicate processing
-            if (lockedPayment.status === PaymentAttemptStatus.PAID && lockedOrder.paymentStatus === PaymentStatus.PAID) {
+            // Idempotency: this attempt was already confirmed by an earlier delivery of the same webhook
+            if (lockedPayment.status === PaymentAttemptStatus.PAID) {
                 this.logger.log(`[Stripe Webhook] Duplicate webhook for Intent ${intent.id}. Already confirmed.`);
                 await queryRunner.rollbackTransaction();
                 return;
@@ -343,50 +346,27 @@ export class PaymentsService {
                 return;
             }
 
-            // Update Payment attempt
+            // Record the capture on the attempt, then let the shared policy decide what it means for the order
             lockedPayment.tranId = intent.id;
             lockedPayment.gatewayTransactionId = intent.id;
             lockedPayment.status = PaymentAttemptStatus.PAID;
             lockedPayment.paidAt = new Date();
             lockedPayment.paymentMethod = PaymentMethodType.VISA;
-            lockedPayment.needsAdminReview = false;
-            await queryRunner.manager.save(lockedPayment);
+            // Keep the intent that paid first; a second capture is handled as a duplicate below
+            lockedOrder.paymentIntentId = lockedOrder.paymentIntentId || intent.id;
 
-            // Update Order
-            lockedOrder.status = OrderStatus.ORDER_PLACED;
-            lockedOrder.paymentStatus = PaymentStatus.PAID;
-            lockedOrder.paymentIntentId = intent.id;
-
-            const nowIso = new Date().toISOString();
-            lockedOrder.statusHistory = [
-                ...(lockedOrder.statusHistory || []),
-                {
-                    status: OrderStatus.ORDER_PLACED,
-                    timestamp: nowIso,
-                    updatedBy: 'stripe_webhook',
-                    note: `Payment confirmed via Stripe (Intent: ${intent.id})`
-                }
-            ];
-
-            await queryRunner.manager.save(lockedOrder);
-
-            // Enqueue Transactional Outbox Event
-            await PaymentOutboxService.enqueueEvent(
+            const { outcome, decision } = await this.paidOrderApplier.apply({
                 queryRunner,
-                'PAYMENT',
-                lockedPayment.id,
-                'PAYMENT_CONFIRMED',
-                {
-                    paymentId: lockedPayment.id,
-                    orderId: lockedOrder.orderId,
-                    tranId: intent.id,
-                    amount: lockedPayment.amount,
-                    currency: lockedPayment.currency
-                }
-            );
+                order: lockedOrder,
+                payment: lockedPayment,
+                gatewayLabel: PaymentGateway.STRIPE,
+                actor: 'stripe_webhook',
+                note: `Payment confirmed via Stripe (Intent: ${intent.id})`,
+                eventDetails: { tranId: intent.id },
+            });
 
             await queryRunner.commitTransaction();
-            this.logger.log(`[Stripe Webhook] Successfully confirmed payment for order ${lockedOrder.orderId} (Intent: ${intent.id})`);
+            this.logger.log(`[Stripe Webhook] Intent ${intent.id} applied to order ${lockedOrder.orderId}: ${outcome} (${decision.reason ?? decision.action})`);
         } catch (err: any) {
             await queryRunner.rollbackTransaction();
             this.logger.error(`[Stripe Webhook Error] ${err?.message}`, err?.stack);
@@ -424,50 +404,6 @@ export class PaymentsService {
         this.logger.log(`[Stripe Webhook] Payment attempt ${payment.id} marked as FAILED: ${payment.failureReason}`);
     }
 
-    private async handleCheckoutSessionCompleted(session: Stripe.Checkout.Session): Promise<void> {
-        const orderId = session.metadata?.orderId;
-        const stripeSessionId = session.id;
-
-        let order: Orders | null = null;
-
-        if (orderId) {
-            order = await this.orderRepository.findOne({ where: [{ id: orderId }, { orderId: orderId }] });
-        } else if (session.metadata?.businessOrderId) {
-            order = await this.orderRepository.findOne({ where: { orderId: session.metadata.businessOrderId } });
-        } else if (stripeSessionId) {
-            order = await this.orderRepository.findOne({ where: { stripeSessionId } });
-        }
-
-        if (!order) {
-            this.logger.warn(`Order not found for Stripe session ID: ${stripeSessionId}`);
-            return;
-        }
-
-        order.status = OrderStatus.COMPLETED;
-        order.paymentStatus = PaymentStatus.PAID;
-        order.stripeSessionId = stripeSessionId;
-        if (session.payment_intent) {
-            order.paymentIntentId =
-                typeof session.payment_intent === 'string'
-                    ? session.payment_intent
-                    : session.payment_intent.id;
-        }
-
-        await this.orderRepository.save(order);
-        this.logger.log(`Order ${order.id} updated to PAID and COMPLETED`);
-    }
-
-    private async updateOrderStatusBySession(
-        session: Stripe.Checkout.Session,
-        status: OrderStatus,
-        paymentStatus: PaymentStatus
-    ): Promise<void> {
-        const orderId = session.metadata?.orderId;
-        if (orderId) {
-            await this.orderRepository.update({ id: orderId }, { status, paymentStatus });
-        }
-    }
-
     /**
      * Payments on an order may be started or inspected only by an admin, the order's owner,
      * or a guest holding the signed token issued at checkout. Anyone else gets 404, so
@@ -503,12 +439,9 @@ export class PaymentsService {
 
         this.assertOrderAccess(order, requestUser, guestToken);
 
-        if (order.paymentStatus === PaymentStatus.PAID) {
-            throw new BadRequestException('This order is already paid.');
-        }
-
-        if (order.status === OrderStatus.CANCELLED) {
-            throw new BadRequestException('This order is cancelled and cannot accept new payments.');
+        const paymentBlocker = getPaymentStartBlocker(order);
+        if (paymentBlocker) {
+            throw new BadRequestException(paymentBlocker);
         }
 
         const now = new Date();
@@ -638,12 +571,9 @@ export class PaymentsService {
 
         this.assertOrderAccess(order, requestUser, guestToken);
 
-        if (order.paymentStatus === PaymentStatus.PAID) {
-            throw new BadRequestException('This order is already paid.');
-        }
-
-        if (order.status === OrderStatus.CANCELLED) {
-            throw new BadRequestException('This order is cancelled and cannot accept new payments.');
+        const paymentBlocker = getPaymentStartBlocker(order);
+        if (paymentBlocker) {
+            throw new BadRequestException(paymentBlocker);
         }
 
         const now = new Date();
@@ -682,7 +612,7 @@ export class PaymentsService {
         const initParams = {
             tranId: uniqueTranId,
             amount: String(Number(order.totalAmount || 0).toFixed(2)),
-            currency: 'BDT',
+            currency: getStoreCurrency(),
             customerName,
             customerEmail: (order as any).email || (order as any).customerEmail || 'customer@bazaarbound.com',
             customerPhone,
@@ -715,7 +645,7 @@ export class PaymentsService {
                     tranId: currentTranId,
                     gatewaySessionId: initRes.sessionKey || null,
                     amount: String(Number(order.totalAmount || 0).toFixed(2)),
-                    currency: 'BDT',
+                    currency: getStoreCurrency(),
                     status: PaymentAttemptStatus.PENDING,
                     sessionExpiresAt: new Date(Date.now() + 20 * 60 * 1000), // 20 min session window
                     nextCheckAt: new Date(Date.now() + 5 * 60 * 1000),
@@ -757,86 +687,6 @@ export class PaymentsService {
     /**
      * Atomically re-reserves inventory for a cancelled order using strict ASC Clustered-PK row locking.
      */
-    private async reReserveOrderStock(queryRunner: any, summaries: OrderSummary[]): Promise<boolean> {
-        try {
-            const aggregatedMap = new Map<string, { totalQty: number; sizeMap: Map<string, number> }>();
-            for (const item of summaries) {
-                if (!item.productId) continue;
-                if (!aggregatedMap.has(item.productId)) {
-                    aggregatedMap.set(item.productId, { totalQty: 0, sizeMap: new Map() });
-                }
-                const entry = aggregatedMap.get(item.productId)!;
-                const qty = Number(item.quantity) || 1;
-                entry.totalQty += qty;
-                const selectedSize = (item as any).size || (item as any).selectedSize || '';
-                if (selectedSize) {
-                    entry.sizeMap.set(selectedSize, (entry.sizeMap.get(selectedSize) || 0) + qty);
-                }
-            }
-
-            const sortedProductIds = Array.from(aggregatedMap.keys()).sort(); // 🔒 Deterministic ASC Clustered-PK Order
-            const lockedProductMap = new Map<string, Product>();
-
-            // Sequential Clustered-PK row locks in ASC order
-            for (const productId of sortedProductIds) {
-                const lockedProduct = await queryRunner.manager.findOne(Product, {
-                    where: { id: productId, isDeleted: false },
-                    lock: { mode: 'pessimistic_write' }
-                });
-                if (!lockedProduct) return false;
-                lockedProductMap.set(productId, lockedProduct);
-            }
-
-            // Verify stock availability
-            for (const productId of sortedProductIds) {
-                const product = lockedProductMap.get(productId)!;
-                const req = aggregatedMap.get(productId)!;
-
-                if (product.quantity !== null && product.quantity !== undefined && Number(product.quantity || 0) < req.totalQty) {
-                    return false;
-                }
-
-                if (product.sizeStock && typeof product.sizeStock === 'object') {
-                    for (const [sizeName, neededQty] of req.sizeMap.entries()) {
-                        const currentSizeStock = Number(product.sizeStock[sizeName]) || 0;
-                        if (currentSizeStock < neededQty) {
-                            return false;
-                        }
-                    }
-                }
-            }
-
-            // Deduct stock atomically in same sorted order
-            for (const productId of sortedProductIds) {
-                const product = lockedProductMap.get(productId)!;
-                const req = aggregatedMap.get(productId)!;
-
-                let updatedSizeStock = product.sizeStock;
-                if (updatedSizeStock && typeof updatedSizeStock === 'object') {
-                    updatedSizeStock = { ...updatedSizeStock };
-                    for (const [sizeName, neededQty] of req.sizeMap.entries()) {
-                        const currentSizeQty = Number(updatedSizeStock[sizeName]) || 0;
-                        updatedSizeStock[sizeName] = Math.max(0, currentSizeQty - neededQty);
-                    }
-                }
-
-                const newTotalQty = (product.quantity !== null && product.quantity !== undefined)
-                    ? Math.max(0, Number(product.quantity || 0) - req.totalQty)
-                    : 0;
-
-                await queryRunner.manager.update(Product, product.id, {
-                    quantity: newTotalQty,
-                    sizeStock: updatedSizeStock
-                });
-            }
-
-            return true;
-        } catch (err: any) {
-            this.logger.error(`[Re-reserve Stock Error] ${err?.message}`);
-            return false;
-        }
-    }
-
     /**
      * Zero-trust Payment Retry Handler.
      * Initiates a fresh SSLCommerz gateway session for an order whose previous attempt failed or expired.
@@ -862,17 +712,10 @@ export class PaymentsService {
 
         this.assertOrderAccess(order, requestUser, guestToken);
 
-        // 2. Immutability & Double-Payment Guards
-        if (order.paymentStatus === PaymentStatus.PAID) {
-            throw new BadRequestException('This order is already paid.');
-        }
-
-        if (
-            order.status === OrderStatus.DELIVERED ||
-            order.status === OrderStatus.COMPLETED ||
-            order.status === OrderStatus.REJECTED
-        ) {
-            throw new BadRequestException(`Cannot initiate payment for an order with status "${order.status}".`);
+        // 2. Same start rules as every other payment entry point; expired orders may be revived
+        const paymentBlocker = getPaymentStartBlocker(order, { allowExpiredRevival: true });
+        if (paymentBlocker) {
+            throw new BadRequestException(paymentBlocker);
         }
 
         const existingPayments = order.payments || [];
@@ -900,9 +743,7 @@ export class PaymentsService {
         if (order.status === OrderStatus.CANCELLED) {
             let summaries = order.orderSummaries;
             if (!summaries || summaries.length === 0) {
-                summaries = await this.dataSource.getRepository(OrderSummary).find({
-                    where: { orderId: order.orderId }
-                });
+                summaries = await findOrderLines(this.dataSource.manager, order);
             }
 
             if (!summaries || summaries.length === 0) {
@@ -923,16 +764,21 @@ export class PaymentsService {
                     throw new NotFoundException(`Order not found: ${order.id}`);
                 }
 
-                if (lockedOrder.paymentStatus === PaymentStatus.PAID) {
-                    await queryRunner.rollbackTransaction();
-                    throw new BadRequestException('This order is already paid.');
+                // Re-check under the row lock: a concurrent retry may already have revived this order
+                // (which would otherwise deduct its stock twice), or an admin may have acted meanwhile.
+                if (lockedOrder.status !== OrderStatus.CANCELLED) {
+                    throw new ConflictException('This order is already being processed. Please refresh and try again.');
+                }
+                const lockedBlocker = getPaymentStartBlocker(lockedOrder, { allowExpiredRevival: true });
+                if (lockedBlocker) {
+                    throw new BadRequestException(lockedBlocker);
                 }
 
-                const stockReserved = await this.reReserveOrderStock(queryRunner, summaries);
+                const stockReserved = await reserveOrderStock(queryRunner.manager, summaries);
                 if (!stockReserved) {
-                    await queryRunner.rollbackTransaction();
                     throw new BadRequestException('Cannot retry payment: One or more items in your order are now out of stock.');
                 }
+                await reclaimCouponUsage(queryRunner.manager, couponUsageOwner(lockedOrder));
 
                 // Revive order to PENDING and refresh payment expiry window (48 hours window)
                 lockedOrder.status = OrderStatus.PENDING;
@@ -984,7 +830,7 @@ export class PaymentsService {
         const initParams = {
             tranId: uniqueTranId,
             amount: String(Number(order.totalAmount || 0).toFixed(2)),
-            currency: 'BDT',
+            currency: getStoreCurrency(),
             customerName,
             customerEmail: (order as any).email || (order as any).customerEmail || 'customer@bazaarbound.com',
             customerPhone,
@@ -1017,7 +863,7 @@ export class PaymentsService {
                     tranId: currentTranId,
                     gatewaySessionId: initRes.sessionKey || null,
                     amount: String(Number(order.totalAmount || 0).toFixed(2)),
-                    currency: 'BDT',
+                    currency: getStoreCurrency(),
                     status: PaymentAttemptStatus.PENDING,
                     sessionExpiresAt: new Date(Date.now() + 20 * 60 * 1000), // 20 min gateway session
                     nextCheckAt: new Date(Date.now() + 5 * 60 * 1000),
@@ -1084,9 +930,7 @@ export class PaymentsService {
      * Dedicated Admin Payment & Transaction query with pagination, metrics, and multi-field search.
      */
     async getAllPayments(dto: PaymentFilterDto): Promise<ApiResponse<any>> {
-        const page = Math.max(1, Number(dto.page) || 1);
-        const limit = Math.max(1, Math.min(100, Number(dto.limit) || 15));
-        const skip = (page - 1) * limit;
+        const { page, limit, skip } = resolvePagination(dto.page, dto.limit, 15);
 
         const paymentRepo = this.dataSource.getRepository(Payments);
         const qb = paymentRepo.createQueryBuilder('payment')
@@ -1182,9 +1026,7 @@ export class PaymentsService {
      * Dedicated Admin Refund Query with pagination and status filtering.
      */
     async getAllRefunds(dto: any): Promise<ApiResponse<any>> {
-        const page = Math.max(1, Number(dto.page) || 1);
-        const limit = Math.max(1, Math.min(100, Number(dto.limit) || 15));
-        const skip = (page - 1) * limit;
+        const { page, limit, skip } = resolvePagination(dto.page, dto.limit, 15);
 
         const refundRepo = this.dataSource.getRepository(PaymentRefunds);
         const qb = refundRepo.createQueryBuilder('refund')
@@ -1311,7 +1153,16 @@ export class PaymentsService {
                     r.status === RefundStatus.PROCESSING ||
                     r.status === RefundStatus.UNKNOWN
             );
-            if (inFlightRefund) {
+            // A refund the system queued automatically (late payment, duplicate capture, cancelled paid
+            // order) has not reached the gateway yet: the admin processes that record instead of a new one.
+            const adoptableSystemRefund =
+                inFlightRefund &&
+                inFlightRefund.initiatedBy === 'SYSTEM' &&
+                inFlightRefund.status === RefundStatus.PENDING &&
+                !inFlightRefund.gatewayRefundId
+                    ? inFlightRefund
+                    : null;
+            if (inFlightRefund && !adoptableSystemRefund) {
                 throw new BadRequestException(
                     `Cannot initiate refund: Another refund (${inFlightRefund.refundId}) is currently in ${inFlightRefund.status} state. Please wait for it to settle.`
                 );
@@ -1335,21 +1186,28 @@ export class PaymentsService {
                 );
             }
 
-            const refundIndex = existingRefunds.length + 1;
-            const refundId = `REF-${lockedPayment.order?.orderId || lockedPayment.tranId}-R${refundIndex}-${Date.now().toString().slice(-4)}`;
-
-            // 6. Create refund record in PENDING status
-            const refund = queryRunner.manager.create(PaymentRefunds, {
-                paymentId: lockedPayment.id,
-                refundId,
-                amount: requestedRefundAmount.toFixed(2),
-                status: RefundStatus.PENDING,
-                reason,
-                initiatedBy: 'ADMIN',
-                initiatedByUserId: adminUserId,
-                idempotencyKey: deterministicKey
-            });
+            // 6. Create (or adopt) the refund record in PENDING status
+            let refund: PaymentRefunds;
+            if (adoptableSystemRefund) {
+                refund = adoptableSystemRefund;
+                refund.amount = requestedRefundAmount.toFixed(2);
+                refund.reason = `${refund.reason} | ${reason}`.slice(0, 255);
+                refund.initiatedByUserId = adminUserId;
+            } else {
+                const refundIndex = existingRefunds.length + 1;
+                refund = queryRunner.manager.create(PaymentRefunds, {
+                    paymentId: lockedPayment.id,
+                    refundId: `REF-${lockedPayment.order?.orderId || lockedPayment.tranId}-R${refundIndex}-${randomUUID().slice(0, 8)}`,
+                    amount: requestedRefundAmount.toFixed(2),
+                    status: RefundStatus.PENDING,
+                    reason,
+                    initiatedBy: 'ADMIN',
+                    initiatedByUserId: adminUserId,
+                    idempotencyKey: deterministicKey
+                });
+            }
             await queryRunner.manager.save(refund);
+            const refundId = refund.refundId;
 
             // 7. Insert immutable audit log
             const auditLog = queryRunner.manager.create(PaymentAuditLogs, {
@@ -1397,6 +1255,8 @@ export class PaymentsService {
                 }
 
                 await this.dataSource.getRepository(PaymentRefunds).save(refund);
+            } else if (lockedPayment.gateway === PaymentGateway.STRIPE) {
+                await this.sendStripeRefund(lockedPayment, refund, requestedRefundAmount, adminUserId);
             }
 
             return {
@@ -1409,6 +1269,55 @@ export class PaymentsService {
             throw err;
         } finally {
             await queryRunner.release();
+        }
+    }
+
+    /**
+     * Sends a refund to Stripe for a card payment. Called after the refund row is committed, so
+     * no DB lock is held during the network call. The refund id doubles as Stripe's idempotency
+     * key, so a retried request can never refund twice. A network error leaves the refund
+     * UNKNOWN for reconciliation rather than guessing an outcome.
+     */
+    private async sendStripeRefund(payment: Payments, refund: PaymentRefunds, amount: number, adminUserId: string): Promise<void> {
+        const paymentIntentId = [payment.gatewayTransactionId, payment.tranId].find((id) => typeof id === 'string' && id.startsWith('pi_'));
+        if (!this.stripe || !paymentIntentId) {
+            refund.status = RefundStatus.FAILED;
+            refund.failureReason = !this.stripe ? 'Stripe is not configured on this server.' : 'No Stripe PaymentIntent recorded for this payment.';
+            await this.dataSource.getRepository(PaymentRefunds).save(refund);
+            return;
+        }
+
+        try {
+            const currency = (payment.currency || getStoreCurrency()).toUpperCase();
+            const stripeRefund = await this.stripe.refunds.create(
+                {
+                    payment_intent: paymentIntentId,
+                    amount: CurrencyUtils.toMinorUnitsSafeNumber(amount.toFixed(2), currency),
+                    metadata: { refundId: refund.refundId, paymentId: payment.id },
+                },
+                { idempotencyKey: `refund_${refund.refundId}` }
+            );
+            refund.gatewayRefundId = stripeRefund.id;
+            if (stripeRefund.status === 'failed' || stripeRefund.status === 'canceled') {
+                refund.status = RefundStatus.FAILED;
+                refund.failureReason = stripeRefund.failure_reason || `Stripe refund ${stripeRefund.status}`;
+            } else {
+                refund.status = RefundStatus.PROCESSING;
+            }
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.logger.error(`[Stripe Refund Error] ${refund.refundId}: ${message}`);
+            refund.status = RefundStatus.UNKNOWN;
+            refund.failureReason = `Stripe request failed: ${message}. Awaiting reconciliation.`;
+        }
+        await this.dataSource.getRepository(PaymentRefunds).save(refund);
+
+        // Stripe settled it immediately: run the same bookkeeping an admin confirmation does
+        if (refund.status === RefundStatus.PROCESSING && refund.gatewayRefundId) {
+            const settled = await this.stripe.refunds.retrieve(refund.gatewayRefundId).catch(() => null);
+            if (settled?.status === 'succeeded') {
+                await this.adminRefundAction(refund.id, 'MARK_SUCCEEDED', 'Confirmed by Stripe', adminUserId);
+            }
         }
     }
 
@@ -1454,15 +1363,25 @@ export class PaymentsService {
                     throw new NotFoundException(`Associated payment record not found: ${refund.paymentId}`);
                 }
 
-                refund.status = RefundStatus.SUCCEEDED;
-                refund.completedAt = new Date();
-                refund.failureReason = null;
-                await queryRunner.manager.save(refund);
-
                 // Fetch all refunds on this payment to determine full vs partial
                 const allRefunds = await queryRunner.manager.find(PaymentRefunds, {
                     where: { paymentId: lockedPayment.id }
                 });
+
+                // Invariant: the money given back can never exceed the money captured
+                const alreadySucceeded = allRefunds
+                    .filter((r) => r.status === RefundStatus.SUCCEEDED && r.id !== refund.id)
+                    .reduce((sum, r) => sum + Number(r.amount || 0), 0);
+                if (alreadySucceeded + Number(refund.amount || 0) > Number(lockedPayment.amount || 0) + 0.001) {
+                    throw new BadRequestException(
+                        `Cannot mark refund ${refund.refundId} as succeeded: total refunded would exceed the captured amount ${lockedPayment.amount}.`
+                    );
+                }
+
+                refund.status = RefundStatus.SUCCEEDED;
+                refund.completedAt = new Date();
+                refund.failureReason = null;
+                await queryRunner.manager.save(refund);
 
                 const totalSucceededRefundAmount = allRefunds
                     .filter((r) => r.status === RefundStatus.SUCCEEDED || r.id === refund.id)
@@ -1641,36 +1560,28 @@ export class PaymentsService {
                     lock: { mode: 'pessimistic_write' }
                 });
 
-                if (lockedOrder && lockedOrder.status !== OrderStatus.CANCELLED) {
-                    // Restock inventory atomically
-                    const summaries = lockedOrder.orderSummaries || [];
-                    for (const item of summaries) {
-                        if (!item.productId) continue;
-                        const product = await queryRunner.manager.findOne(Product, {
-                            where: { id: item.productId },
-                            lock: { mode: 'pessimistic_write' }
-                        });
-                        if (product) {
-                            const curQty = Number(product.quantity) || 0;
-                            const restockQty = Number(item.quantity) || 1;
-                            let updatedSizeStock = product.sizeStock;
-                            const size = item.selectedSize || (item as any).size || '';
-                            if (updatedSizeStock && typeof updatedSizeStock === 'object' && size && updatedSizeStock[size] !== undefined) {
-                                const curSizeQty = Number(updatedSizeStock[size]) || 0;
-                                updatedSizeStock = {
-                                    ...updatedSizeStock,
-                                    [size]: curSizeQty + restockQty
-                                };
-                            }
-                            await queryRunner.manager.update(Product, product.id, {
-                                quantity: curQty + restockQty,
-                                sizeStock: updatedSizeStock
-                            });
-                        }
-                    }
+                // Only an order that is still waiting for this payment is cancelled. One that is paid by
+                // another attempt, already dispatched, or already closed keeps its status and stock.
+                const awaitingPayment =
+                    lockedOrder &&
+                    lockedOrder.paymentStatus !== PaymentStatus.PAID &&
+                    (lockedOrder.status === OrderStatus.PENDING || lockedOrder.status === OrderStatus.ORDER_PLACED);
+
+                if (lockedOrder && awaitingPayment) {
+                    await releaseOrderStock(queryRunner.manager, lockedOrder.orderSummaries || []);
+                    await releaseCouponUsage(queryRunner.manager, lockedOrder.orderId);
 
                     lockedOrder.status = OrderStatus.CANCELLED;
                     lockedOrder.paymentStatus = PaymentStatus.FAILED;
+                    lockedOrder.statusHistory = [
+                        ...(lockedOrder.statusHistory || []),
+                        {
+                            status: OrderStatus.CANCELLED,
+                            timestamp: new Date().toISOString(),
+                            updatedBy: 'admin',
+                            note: `Payment rejected by admin: ${reason}`,
+                        },
+                    ];
                     await queryRunner.manager.save(lockedOrder);
                 }
 
@@ -1711,9 +1622,7 @@ export class PaymentsService {
         page?: number;
         limit?: number;
     }) {
-        const page = Math.max(1, Number(params.page) || 1);
-        const limit = Math.min(100, Math.max(1, Number(params.limit) || 20));
-        const skip = (page - 1) * limit;
+        const { page, limit, skip } = resolvePagination(params.page, params.limit, 20);
 
         const qb = this.dataSource.getRepository(PaymentAuditLogs).createQueryBuilder('log');
         if (params.paymentId) {
@@ -1941,38 +1850,17 @@ export class PaymentsService {
 
             lockedPayment.status = PaymentAttemptStatus.PAID;
             lockedPayment.paidAt = new Date();
-            lockedPayment.needsAdminReview = false;
-            lockedPayment.adminReviewReason = null;
-            await queryRunner.manager.save(lockedPayment);
 
-            lockedOrder.status = OrderStatus.ORDER_PLACED;
-            lockedOrder.paymentStatus = PaymentStatus.PAID;
-            lockedOrder.statusHistory = [
-                ...(lockedOrder.statusHistory || []),
-                {
-                    status: OrderStatus.ORDER_PLACED,
-                    timestamp: new Date().toISOString(),
-                    updatedBy: adminUserId,
-                    note: `Payment verified and reconciled by admin via ${payment.gateway}`
-                }
-            ];
-            await queryRunner.manager.save(lockedOrder);
-
-            // Enqueue Transactional Outbox Event
-            await PaymentOutboxService.enqueueEvent(
+            // Same order rules as the live gateway callbacks (never moves an order backwards)
+            const { outcome } = await this.paidOrderApplier.apply({
                 queryRunner,
-                'PAYMENT',
-                lockedPayment.id,
-                'PAYMENT_CONFIRMED',
-                {
-                    paymentId: lockedPayment.id,
-                    orderId: lockedOrder.orderId,
-                    tranId: lockedPayment.tranId,
-                    amount: lockedPayment.amount,
-                    currency: lockedPayment.currency,
-                    reconciledBy: adminUserId
-                }
-            );
+                order: lockedOrder,
+                payment: lockedPayment,
+                gatewayLabel: payment.gateway,
+                actor: adminUserId,
+                note: `Payment verified and reconciled by admin via ${payment.gateway}`,
+                eventDetails: { tranId: lockedPayment.tranId, reconciledBy: adminUserId },
+            });
 
             // Audit Log with Gateway-Specific Allowlisted Metadata
             const safeGatewayMetadata = payment.gateway === PaymentGateway.STRIPE
@@ -1990,17 +1878,21 @@ export class PaymentsService {
                 metadata: {
                     tranId: lockedPayment.tranId,
                     gateway: payment.gateway,
-                    gatewayMetadata: safeGatewayMetadata
+                    gatewayMetadata: safeGatewayMetadata,
+                    orderOutcome: outcome
                 }
             });
             await queryRunner.manager.save(auditLog);
 
             await queryRunner.commitTransaction();
-            this.logger.log(`[Admin Reconcile] Successfully reconciled payment ${payment.id} for order ${order.orderId}`);
+            this.logger.log(`[Admin Reconcile] Reconciled payment ${payment.id} for order ${order.orderId}: ${outcome}`);
 
             return {
                 success: true,
-                message: `Payment successfully reconciled and confirmed via ${payment.gateway}.`,
+                message:
+                    outcome === PaymentStatus.PAID
+                        ? `Payment successfully reconciled and confirmed via ${payment.gateway}.`
+                        : `Payment captured via ${payment.gateway}, but the order cannot accept it (${lockedOrder.status}). It is flagged for review and a refund is queued.`,
                 payment: lockedPayment
             };
         } catch (txErr: any) {
@@ -2015,9 +1907,7 @@ export class PaymentsService {
      * Retrieves paginated list of failed/dead-letter outbox events.
      */
     async getOutboxDeadLetterEvents(query: any) {
-        const page = Math.max(1, Number(query?.page) || 1);
-        const limit = Math.min(100, Math.max(1, Number(query?.limit) || 20));
-        const skip = (page - 1) * limit;
+        const { page, limit, skip } = resolvePagination(query?.page, query?.limit, 20);
 
         const outboxRepo = this.dataSource.getRepository(PaymentOutboxEvents);
         const qb = outboxRepo.createQueryBuilder('event')

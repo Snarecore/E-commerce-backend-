@@ -8,7 +8,7 @@ import { ProductInterface } from './type/product.type';
 import { Product } from './entities/product.entity';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ProductImageGalleryRepository } from '../product-image-gallery/product-image-gallery.repository';
-import { Between, FindOptionsOrder, ILike, In, LessThanOrEqual, MoreThan, MoreThanOrEqual } from 'typeorm';
+import { Between, DataSource, EntityTarget, FindOptionsOrder, ILike, In, LessThanOrEqual, MoreThan, MoreThanOrEqual } from 'typeorm';
 import { ProductFilter } from './type/product-filter.type';
 import { ProductFilterDto } from './dto/product-filter.dto';
 import { UpdateProductStatusDto } from './dto/update-product-status.dto';
@@ -17,6 +17,12 @@ import { AuditLogService } from '../../audit-log/audit-log.service';
 import { AuditAction } from '../../audit-log/constants/audit-action.enum';
 import { AuditModule } from '../../audit-log/constants/audit-module.enum';
 import { AuditTargetType } from '../../audit-log/constants/audit-target-type.enum';
+import { sanitizeRichText } from '../../../utils/html-sanitizer.util';
+import { UniqueCodeGeneratorService } from '../../unique-code-generator/unique-code-generator.service';
+import { MainCategory } from '../main-category/entities/main-category.entity';
+import { FirstCategory } from '../first-category/entities/first-category.entity';
+import { SecondCategory } from '../second-category/entities/second-category.entity';
+import { resolvePagination } from '../../../utils/pagination.util';
 
 @Injectable()
 export class ProductService {
@@ -53,8 +59,51 @@ export class ProductService {
         private readonly spaceService: SpaceService,
         private readonly repository: ProductRepository,
         private readonly productImageGalleryRepository: ProductImageGalleryRepository,
+        private readonly dataSource: DataSource,
+        private readonly uniqueCodeGeneratorService: UniqueCodeGeneratorService,
         @Optional() private readonly auditLogService?: AuditLogService
     ) {}
+
+    /**
+     * Server-owned catalogue fields, applied on create and update alike:
+     * - description/summary are sanitised (they are rendered as HTML on the storefront and admin);
+     * - category names come from the category tables, never from the request;
+     * - the SKU is generated when missing and must be unique.
+     */
+    private async prepareCatalogFields(dto: CreateProductDto | UpdateProductDto, productId?: string): Promise<void> {
+        if (dto.description !== undefined) dto.description = sanitizeRichText(dto.description) ?? undefined;
+        if (dto.summary !== undefined) dto.summary = sanitizeRichText(dto.summary) ?? undefined;
+
+        const categories: Array<[keyof CreateProductDto, keyof CreateProductDto, EntityTarget<{ id: string; name: string }>, string]> = [
+            ['mainCategoryId', 'mainCategoryName', MainCategory, 'Main category'],
+            ['firstCategoryId', 'firstCategoryName', FirstCategory, 'First category'],
+            ['secondCategoryId', 'secondCategoryName', SecondCategory, 'Second category'],
+        ];
+        for (const [idField, nameField, entity, label] of categories) {
+            const id = dto[idField] as string | undefined;
+            if (!id) continue;
+            const category = await this.dataSource.getRepository(entity).findOne({ where: { id } as never, select: ['id', 'name'] as never });
+            if (!category) throw new HttpException(`${label} "${id}" does not exist.`, HttpStatus.BAD_REQUEST);
+            (dto as Record<string, unknown>)[nameField] = category.name;
+        }
+
+        const requestedSku = dto.sku?.trim();
+        if (!requestedSku) {
+            if (!productId) dto.sku = await this.uniqueCodeGeneratorService.getUniqueProductCode();
+            else delete dto.sku;
+            return;
+        }
+        dto.sku = requestedSku;
+        const clash = await this.dataSource
+            .getRepository(Product)
+            .createQueryBuilder('product')
+            .where('product.sku = :sku', { sku: requestedSku })
+            .andWhere(productId ? 'product.id <> :productId' : '1 = 1', { productId })
+            // Deleted products still hold their SKU (the DB index is unique across all rows)
+            .withDeleted()
+            .getOne();
+        if (clash) throw new HttpException(`SKU "${requestedSku}" is already used by "${clash.name}".`, HttpStatus.CONFLICT);
+    }
 
     async create(
         dto: CreateProductDto,
@@ -66,6 +115,7 @@ export class ProductService {
         userData: any
     ): Promise<ApiResponse<ProductInterface>> {
         try {
+            await this.prepareCatalogFields(dto);
             const slug = await this.generateUniqueSlug(dto.name);
             dto.slug = slug;
 
@@ -148,8 +198,8 @@ export class ProductService {
 
             return ResponseUtils.successResponseHandler(201, 'Data saved successfully.', 'data', output);
         } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -157,9 +207,7 @@ export class ProductService {
         dto: ProductFilterDto
     ): Promise<ApiResponse<{ data: ProductInterface[]; total: number; page: number; limit: number; pageCount: number; }>> {
         try {
-            const page = dto.page ? Number(dto.page) : 1;
-            const limit = dto.limit ? Number(dto.limit) : 10;
-            const skip = (page - 1) * limit;
+            const { page, limit, skip } = resolvePagination(dto.page, dto.limit);
 
             const qb = this.repository.createQueryBuilder('product')
                 .where('product.isDeleted = false')
@@ -274,8 +322,8 @@ export class ProductService {
                 payload
             );
         } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -371,8 +419,8 @@ export class ProductService {
 
             return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', payload);
         } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -402,8 +450,8 @@ export class ProductService {
                 payload
             );
         } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -432,8 +480,8 @@ export class ProductService {
                 payload
             );
         } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -451,6 +499,8 @@ export class ProductService {
             if (!output) {
                 throw new HttpException('Data does not exist!', HttpStatus.BAD_REQUEST);
             }
+
+            await this.prepareCatalogFields(dto, id);
 
             if (dto.name) {
                 const slug = await this.generateUniqueSlug(dto.name, id);
@@ -547,8 +597,8 @@ export class ProductService {
 
             return ResponseUtils.successResponseHandler(200, 'Data updated successfully.', 'data', response);
         } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -580,8 +630,8 @@ export class ProductService {
             const result = response !== null;
             return ResponseUtils.deleteResponseHandler(200, 'Data deleted successfully.', result);
         } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 

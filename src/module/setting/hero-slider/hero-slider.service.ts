@@ -37,8 +37,8 @@ export class HeroSliderService {
 			}
 			return ResponseUtils.successResponseHandler(201, 'Data saved successfully.', 'data', output);
 		} catch (error: unknown) {
-			const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-			throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+			// HttpExceptions keep their status; anything else is logged and masked by the global filter
+			throw error;
 		}
 	}
 
@@ -67,8 +67,8 @@ export class HeroSliderService {
 	
 				return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', payload);
 			} catch (error: unknown) {
-				const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-				throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+				// HttpExceptions keep their status; anything else is logged and masked by the global filter
+				throw error;
 			}
 		}
 
@@ -80,8 +80,8 @@ export class HeroSliderService {
 			}
         	return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', data);
 		} catch (error: unknown) {
-			const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-			throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+			// HttpExceptions keep their status; anything else is logged and masked by the global filter
+			throw error;
 		}
 	}
 
@@ -113,8 +113,8 @@ export class HeroSliderService {
 			}
 			return ResponseUtils.successResponseHandler(200, 'Data updated successfully.', 'data', response);
 		} catch (error: unknown) {
-			const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-			throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+			// HttpExceptions keep their status; anything else is logged and masked by the global filter
+			throw error;
 		}
 	}
 
@@ -128,8 +128,8 @@ export class HeroSliderService {
 			const result = response !== null;
         	return ResponseUtils.deleteResponseHandler(200, 'Data deleted successfully.', result);
 		} catch (error: unknown) {
-			const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-			throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+			// HttpExceptions keep their status; anything else is logged and masked by the global filter
+			throw error;
 		}
 	}
 }

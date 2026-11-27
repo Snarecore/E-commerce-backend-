@@ -1,3 +1,4 @@
+import { UploadPolicy, uploadOptions } from '../../../common/upload/upload.policy';
 import { Controller, Get, Post, Body, Patch, Param, Delete, UseInterceptors, UploadedFiles, Query, UseGuards } from '@nestjs/common';
 import { FileFieldsInterceptor } from "@nestjs/platform-express";
 import { CONFIG } from '../../../utils/config';
@@ -21,11 +22,9 @@ export class SecondCategoryController {
 	@UseGuards(JwtAuthGuard, RolesGuard)
 	@Roles(Role.ADMIN)
 	@Post()
-	@UseInterceptors(FileFieldsInterceptor(
-        [
+	@UseInterceptors(FileFieldsInterceptor([
             { name: "bannerImage", maxCount: 1 }
-        ]
-    ))
+        ], uploadOptions(UploadPolicy.ADMIN_MEDIA)))
 	async create(
 		@Body() dto: CreateSecondCategoryDto,
 		@UploadedFiles() files: {
@@ -54,11 +53,9 @@ export class SecondCategoryController {
 	@UseGuards(JwtAuthGuard, RolesGuard)
 	@Roles(Role.ADMIN)
 	@Patch(':id')
-	@UseInterceptors(FileFieldsInterceptor(
-        [
+	@UseInterceptors(FileFieldsInterceptor([
             { name: "bannerImage", maxCount: 1 }
-        ]
-    ))
+        ], uploadOptions(UploadPolicy.ADMIN_MEDIA)))
 	async update(
 		@Param('id') id: string, 
 		@Body() dto: UpdateSecondCategoryDto,

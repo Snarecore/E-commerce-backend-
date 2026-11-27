@@ -1,3 +1,4 @@
+import { getClientIp } from '../../../utils/request-ip.util';
 import {
     CallHandler,
     ExecutionContext,
@@ -87,12 +88,7 @@ export class AuditLogInterceptor implements NestInterceptor {
             const durationMs = Date.now() - startTime;
             const statusCode = error ? (error.status || error.statusCode || 500) : (res.statusCode || 200);
 
-            const ipAddress =
-                (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
-                req.headers['x-real-ip'] ||
-                req.ip ||
-                req.socket?.remoteAddress ||
-                '127.0.0.1';
+            const ipAddress = getClientIp(req) ?? 'unknown';
 
             const userAgent = String(req.headers['user-agent'] || 'Unknown Client');
 

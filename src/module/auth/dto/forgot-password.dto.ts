@@ -1,6 +1,6 @@
-import { IsNotEmpty } from 'class-validator';
+import { NormalizedEmail } from '../../../decorators/auth-fields.decorator';
 
 export class ForgotPasswordDto {
-	@IsNotEmpty()
+	@NormalizedEmail()
 	email: string;
 }

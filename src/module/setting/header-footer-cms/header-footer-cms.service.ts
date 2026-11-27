@@ -52,8 +52,8 @@ export class HeaderFooterCmsService {
                 return ResponseUtils.successResponseHandler(200, 'Data updated successfully.', 'data', updated);
             }
         } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -62,8 +62,8 @@ export class HeaderFooterCmsService {
             const data = await this.repository.findAll({});
             return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', data);
         } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -98,8 +98,8 @@ export class HeaderFooterCmsService {
                 return ResponseUtils.successResponseHandler(200, 'Theme updated successfully.', 'data', updated);
             }
         } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 }

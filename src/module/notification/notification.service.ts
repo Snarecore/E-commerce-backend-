@@ -2,10 +2,11 @@ import { HttpException, HttpStatus, Injectable, Optional } from '@nestjs/common'
 import { NotificationRepository } from './notification.repository';
 import { Notifications, NotificationType } from './entity/notification.entity';
 import { ApiResponse, ResponseUtils } from '../../utils/response.utils';
-import { EntityManager, In } from 'typeorm';
+import { EntityManager } from 'typeorm';
 import { Role } from '../../enums/role.enum';
 import { SocketService } from '../socket/socket.service';
 import { SocketEvent, SOCKET_ROOMS } from '../socket/socket.constants';
+import { isDuplicateKeyError } from '../../utils/db-errors.util';
 
 @Injectable()
 export class NotificationService {
@@ -44,8 +45,8 @@ export class NotificationService {
         { notifications: mapped, unreadCount }
       );
     } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : 'Internal Server Error';
-      throw new HttpException(msg, HttpStatus.INTERNAL_SERVER_ERROR);
+      // HttpExceptions keep their status; anything else is logged and masked by the global filter
+      throw error;
     }
   }
 
@@ -57,20 +58,34 @@ export class NotificationService {
       let afterCursor = typeof after === 'string' ? after : undefined;
       const take = Math.max(1, Math.min(Number(limitNum) || 20, 100));
 
-      const list = await this.repository.findAllWithOrder(
-        { role: In([Role.ADMIN, 'admin', 'ADMIN']), isDeleted: false },
-        { createdAt: 'DESC' }
-      );
-
-      let filtered = list;
+      // Keyset pagination in SQL (newest first): the table only grows, so it is never loaded whole
+      const adminRoles = [Role.ADMIN, 'admin', 'ADMIN'];
+      const qb = this.repository
+        .createQueryBuilder('n')
+        .where('n.role IN (:...adminRoles)', { adminRoles })
+        .andWhere('n.isDeleted = false')
+        .orderBy('n.createdAt', 'DESC')
+        .addOrderBy('n.id', 'DESC')
+        .take(take);
       if (afterCursor) {
-        const afterIdx = list.findIndex((item) => item.id === afterCursor);
-        if (afterIdx !== -1) {
-          filtered = list.slice(afterIdx + 1);
+        const cursor = await this.repository.findOne(afterCursor);
+        if (cursor?.createdAt) {
+          qb.andWhere('(n.createdAt < :cursorAt OR (n.createdAt = :cursorAt AND n.id < :cursorId))', {
+            cursorAt: cursor.createdAt,
+            cursorId: cursor.id,
+          });
         }
       }
+      const [paginated, unreadCount] = await Promise.all([
+        qb.getMany(),
+        this.repository
+          .createQueryBuilder('n')
+          .where('n.role IN (:...adminRoles)', { adminRoles })
+          .andWhere('n.isDeleted = false')
+          .andWhere('n.isRead = false')
+          .getCount(),
+      ]);
 
-      const paginated = filtered.slice(0, take);
       const mapped = paginated.map((item) => {
         let parsedMetadata = item.metadata;
         if (typeof parsedMetadata === 'string') {
@@ -95,7 +110,6 @@ export class NotificationService {
         };
       });
 
-      const unreadCount = list.filter((n) => !n.isRead).length;
       const nextCursor = paginated.length === take ? paginated[paginated.length - 1].id : null;
 
       return ResponseUtils.successResponseHandler(
@@ -105,8 +119,8 @@ export class NotificationService {
         { items: mapped, unreadCount, nextCursor }
       );
     } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : 'Internal Server Error';
-      throw new HttpException(msg, HttpStatus.INTERNAL_SERVER_ERROR);
+      // HttpExceptions keep their status; anything else is logged and masked by the global filter
+      throw error;
     }
   }
 
@@ -116,8 +130,9 @@ export class NotificationService {
       if (!notif) {
         throw new HttpException('Notification not found', HttpStatus.NOT_FOUND);
       }
-      if (notif.userId && notif.userId !== userId) {
-        throw new HttpException('Forbidden access', HttpStatus.FORBIDDEN);
+      // Customers may only touch their own notifications; admin notifications have no userId
+      if (!notif.userId || notif.userId !== userId) {
+        throw new HttpException('Notification not found', HttpStatus.NOT_FOUND);
       }
 
       notif.isRead = true;
@@ -131,8 +146,8 @@ export class NotificationService {
       );
     } catch (error: unknown) {
       if (error instanceof HttpException) throw error;
-      const msg = error instanceof Error ? error.message : 'Internal Server Error';
-      throw new HttpException(msg, HttpStatus.INTERNAL_SERVER_ERROR);
+      // HttpExceptions keep their status; anything else is logged and masked by the global filter
+      throw error;
     }
   }
 
@@ -145,8 +160,8 @@ export class NotificationService {
       }
       return ResponseUtils.successResponseHandler(200, 'Admin notification marked as read.', 'data', true);
     } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : 'Internal Server Error';
-      throw new HttpException(msg, HttpStatus.INTERNAL_SERVER_ERROR);
+      // HttpExceptions keep their status; anything else is logged and masked by the global filter
+      throw error;
     }
   }
 
@@ -156,23 +171,17 @@ export class NotificationService {
 
   async markAllAdminNotificationsRead(): Promise<ApiResponse<boolean>> {
     try {
-      const unread = await this.repository.findAll({
-        role: In([Role.ADMIN, 'admin', 'ADMIN']),
-        isRead: false,
-        isDeleted: false,
-      });
-      if (unread.length > 0) {
-        const updated = unread.map((item) => {
-          item.isRead = true;
-          return item;
-        });
-        await this.repository.save(updated);
-      }
+      await this.repository
+        .createQueryBuilder()
+        .update()
+        .set({ isRead: true })
+        .where('role IN (:...adminRoles) AND isRead = false AND isDeleted = false', { adminRoles: [Role.ADMIN, 'admin', 'ADMIN'] })
+        .execute();
 
       return ResponseUtils.successResponseHandler(200, 'All admin notifications marked as read.', 'data', true);
     } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : 'Internal Server Error';
-      throw new HttpException(msg, HttpStatus.INTERNAL_SERVER_ERROR);
+      // HttpExceptions keep their status; anything else is logged and masked by the global filter
+      throw error;
     }
   }
 
@@ -198,8 +207,8 @@ export class NotificationService {
         true
       );
     } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : 'Internal Server Error';
-      throw new HttpException(msg, HttpStatus.INTERNAL_SERVER_ERROR);
+      // HttpExceptions keep their status; anything else is logged and masked by the global filter
+      throw error;
     }
   }
 
@@ -282,6 +291,19 @@ export class NotificationService {
     }
   }
 
+  /** Inserts a stage notification, or refreshes the existing one for the same order stage. */
+  private async upsertStageNotification(data: Partial<Notifications> & { type: string; orderId: string }): Promise<Notifications> {
+    try {
+      return await this.repository.create(data);
+    } catch (error) {
+      if (!isDuplicateKeyError(error)) throw error;
+      const existing = await this.repository.findOneByQuery({ type: data.type, orderId: data.orderId } as never);
+      if (!existing) throw error;
+      Object.assign(existing, data, { isRead: false, createdAt: new Date() });
+      return (await this.repository.save(existing)) as Notifications;
+    }
+  }
+
   async createOrderNotification(
     userId: string,
     orderId: string,
@@ -316,7 +338,9 @@ export class NotificationService {
       const message =
         note || `Your order ${displayId} status has been updated to "${cleanStatus}".`;
 
-      const notification = await this.repository.create({
+      // One notification per order stage (unique type+orderId). Several statuses share a stage
+      // (Shipped → Out for Delivery), so a later status refreshes that row instead of failing.
+      const notification = await this.upsertStageNotification({
         userId,
         role: Role.CUSTOMER,
         orderId,

@@ -16,6 +16,7 @@ import { PaymentWebhookInbox } from './entities/payment-webhook-inbox.entity';
 import { PaymentOutboxEvents } from './entities/payment-outbox-event.entity';
 import { PaymentOutboxDeliveryAttempt } from './entities/payment-outbox-delivery-attempt.entity';
 import { PaymentWebhookInboxService } from './services/payment-webhook-inbox.service';
+import { PaidOrderApplier } from './services/paid-order-applier.service';
 import { PaymentOutboxService } from './services/payment-outbox.service';
 import { EmailServiceModule } from '../email-service/email-sender.module';
 
@@ -42,7 +43,8 @@ import { EmailServiceModule } from '../email-service/email-sender.module';
         PaymentConfirmationService,
         ReconciliationService,
         PaymentWebhookInboxService,
-        PaymentOutboxService
+        PaymentOutboxService,
+        PaidOrderApplier
     ],
     exports: [
         PaymentsService,

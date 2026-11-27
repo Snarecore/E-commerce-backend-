@@ -10,17 +10,20 @@ import { UserProfileRepository } from '../user-profile/user-profile.repository';
 import { UpdateUserProfileDto } from './dto/update-user-profile.dto';
 import { SpaceService } from '../space-module/space-service/space.service';
 import { UploadMulterFile } from '../space-module/space-service';
-import * as bcrypt from 'bcryptjs';
+import { hashPassword, verifyPassword } from '../../utils/bcrypt.utils';
 import { UpdatePasswordDto } from './dto/update-password.dto';
 
 import { toSafeUser } from '../../utils/safe-user.utils';
+import { UploadPolicy } from '../../common/upload/upload.policy';
+import { AuthSessionService } from '../auth/session/auth-session.service';
 
 @Injectable()
 export class UserService {
     constructor(
         private readonly userRepository: UserRepository,
         private readonly userProfileRepository: UserProfileRepository,
-        private readonly spaceService: SpaceService
+        private readonly spaceService: SpaceService,
+        private readonly authSessionService: AuthSessionService
     ) {}
 
     async findAll(
@@ -57,8 +60,8 @@ export class UserService {
 
             return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', payload);
         } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -82,8 +85,8 @@ export class UserService {
 
             return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', payload);
         } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -117,7 +120,8 @@ export class UserService {
             if (files?.profileImage?.[0]) {
                 const imageUrl = await this.spaceService.uploadFile(
                     files.profileImage[0],
-                    'users'
+                    'users',
+                    UploadPolicy.CUSTOMER_IMAGE.allowed
                 );
                 dto.profileImage = imageUrl;
             }
@@ -139,8 +143,8 @@ export class UserService {
 
             return ResponseUtils.successResponseHandler(200, 'Profile updated successfully.', 'data', {});
         } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -155,7 +159,7 @@ export class UserService {
                 throw new HttpException('User not found!', HttpStatus.BAD_REQUEST);
             }
 
-            const isPasswordMatch = await bcrypt.compare(dto.currentPassword, user.password);
+            const isPasswordMatch = await verifyPassword(dto.currentPassword, user.password);
             if (!isPasswordMatch) {
                 throw new HttpException('Current password is incorrect.', HttpStatus.UNAUTHORIZED);
             }
@@ -168,16 +172,19 @@ export class UserService {
                 throw new HttpException('New password must be different from the current password.', HttpStatus.BAD_REQUEST);
             }
 
-            const hashedNewPassword = await bcrypt.hash(dto.newPassword, 10);
+            const hashedNewPassword = await hashPassword(dto.newPassword);
 
             await this.userRepository.update(user.id, {
                 password: hashedNewPassword
             });
 
+            // A changed password must lock out anyone holding an old session; this device stays signed in
+            await this.authSessionService.revokeOtherSessions(user.id, userData?.sessionId, 'password_changed');
+
             return ResponseUtils.successResponseHandler(200, 'Password updated successfully.', 'data', {});
         } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -188,11 +195,13 @@ export class UserService {
 				throw new HttpException('Data not found!', HttpStatus.BAD_REQUEST);
 			}
 			const response = await this.userRepository.softDelete(id);
+			// A deleted account keeps no access: end its sessions and drop its live sockets
+			await this.authSessionService.revokeAllForUser(id, 'account_deleted');
 			const result = response !== null;
         	return ResponseUtils.deleteResponseHandler(200, 'Data deleted successfully.', result);
 		} catch (error: unknown) {
-			const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-			throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+			// HttpExceptions keep their status; anything else is logged and masked by the global filter
+			throw error;
 		}
 	}
 }

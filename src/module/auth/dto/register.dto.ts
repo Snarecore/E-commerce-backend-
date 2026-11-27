@@ -1,13 +1,5 @@
-import {
-    ArrayNotEmpty,
-    IsArray,
-    IsEmail,
-    IsEnum,
-    IsNotEmpty,
-    IsOptional,
-    IsString,
-    MinLength
-} from 'class-validator';
+import { IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { NewPassword, NormalizedEmail } from '../../../decorators/auth-fields.decorator';
 import { Match } from '../../../decorators/match.decorator';
 import { Role } from '../../../enums/role.enum';
 
@@ -15,19 +7,17 @@ export class RegisterDto {
     @IsNotEmpty()
     name: string;
 
-    @IsNotEmpty()
+    @NormalizedEmail()
     email: string;
 
     @IsNotEmpty()
     phone: string;
 
-    @IsString()
-    @MinLength(6, { message: 'Password must be at least 6 characters' })
+    @NewPassword()
     password: string;
 
     @IsString()
-    @MinLength(6, { message: 'Confirm password must be at least 6 characters' })
-    @Match('password')
+    @Match('password', { message: 'Passwords do not match.' })
     confirmPassword: string;
 
     @IsEnum(Role, { message: 'Invalid role value' })

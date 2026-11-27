@@ -106,8 +106,8 @@ export class MessageService {
 
             return ResponseUtils.successResponseHandler(201, 'Message sent successfully.', 'data', savedMessage);
         } catch (error: unknown) {
-            const message = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(message, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -168,8 +168,8 @@ export class MessageService {
             return ResponseUtils.successResponseHandler(201, 'Reply sent successfully.', 'data', savedMessage);
         } catch (error: unknown) {
             if (error instanceof HttpException) throw error;
-            const message = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(message, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -206,8 +206,8 @@ export class MessageService {
                 pageCount: result.pageCount
             });
         } catch (error: unknown) {
-            const message = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(message, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -235,8 +235,8 @@ export class MessageService {
                 messages
             });
         } catch (error: unknown) {
-            const message = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(message, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 
@@ -276,8 +276,8 @@ export class MessageService {
             return ResponseUtils.successResponseHandler(200, 'Messages fetched successfully.', 'data', messages);
         } catch (error: unknown) {
             if (error instanceof HttpException) throw error;
-            const message = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(message, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 }

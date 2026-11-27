@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AuthModule } from '../auth/auth.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from './entities/user.entity';
 import { UserController } from './user.controller';
@@ -8,11 +9,11 @@ import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { UserProfileRepository } from '../user-profile/user-profile.repository';
 import { SpaceService } from '../space-module/space-service/space.service';
-import { R2ServiceProvider } from '../space-module/space-service';
 
 @Module({
 	imports: [
 		TypeOrmModule.forFeature([User]),
+		AuthModule,
 		JwtModule.registerAsync({
 			imports: [ConfigModule],
 			inject: [ConfigService],
@@ -23,7 +24,7 @@ import { R2ServiceProvider } from '../space-module/space-service';
 		})
 	],
 	controllers: [UserController],
-	providers: [UserService, UserRepository, UserProfileRepository, SpaceService, R2ServiceProvider],
+	providers: [UserService, UserRepository, UserProfileRepository, SpaceService],
 	exports: [UserService, UserRepository]
 })
 export class UserModule { }

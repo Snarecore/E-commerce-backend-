@@ -146,7 +146,6 @@ export class EmailService {
 		try {
 			await this.dispatchMail({
 				to: Array.isArray(to) ? to[0] : to,
-				bcc: ['sabbir.qligence@gmail.com'],
 				from: from,
 				subject: subject,
 				template: 'forgot_password_email',

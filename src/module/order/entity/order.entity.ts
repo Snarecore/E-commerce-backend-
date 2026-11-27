@@ -6,7 +6,7 @@ import { User } from '../../user/entities/user.entity';
 import { Payments } from '../../payments/entities/payment.entity';
 
 @Entity('orders')
-@Index('IDX_orders_orderId', ['orderId'])
+@Index('UQ_orders_orderId', ['orderId'], { unique: true })
 @Index('IDX_orders_user_created', ['userId', 'createdAt'])
 @Index('IDX_orders_status_created', ['status', 'createdAt'])
 @Index('IDX_orders_payment_status', ['paymentStatus', 'createdAt'])

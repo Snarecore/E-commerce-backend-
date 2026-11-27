@@ -1,3 +1,4 @@
+import { UploadPolicy, uploadOptions } from '../../../common/upload/upload.policy';
 import { Controller, Get, Post, Body, Patch, Param, Delete, UseInterceptors, UploadedFiles, Query, UseGuards, Req } from '@nestjs/common';
 import { FileFieldsInterceptor } from "@nestjs/platform-express";
 import { CONFIG } from '../../../utils/config';
@@ -24,14 +25,11 @@ export class ProductController {
 	@UseGuards(JwtAuthGuard, RolesGuard)
 	@Roles(Role.ADMIN)
 	@Post()
-	@UseInterceptors(FileFieldsInterceptor(
-        [
+	@UseInterceptors(FileFieldsInterceptor([
             { name: "featuredImage", maxCount: 1 },
 			{ name: 'productImages', maxCount: 5 },
 			{ name: 'fileUrl', maxCount: 1 }
-        ],
-        { limits: { fileSize: 25 * 1024 * 1024 } }
-    ))
+        ], uploadOptions(UploadPolicy.ADMIN_MEDIA)))
 	async create(
 		@Body() dto: CreateProductDto,
 		@UploadedFiles() files: {
@@ -77,14 +75,11 @@ export class ProductController {
 	@UseGuards(JwtAuthGuard, RolesGuard)
 	@Roles(Role.ADMIN)
 	@Patch(':id')
-	@UseInterceptors(FileFieldsInterceptor(
-        [
+	@UseInterceptors(FileFieldsInterceptor([
             { name: "featuredImage", maxCount: 1 },
 			{ name: 'productImages', maxCount: 5 },
 			{ name: 'fileUrl', maxCount: 1 }
-        ],
-        { limits: { fileSize: 25 * 1024 * 1024 } }
-    ))
+        ], uploadOptions(UploadPolicy.ADMIN_MEDIA)))
 	async update(
 		@Param('id') id: string, 
 		@Body() dto: UpdateProductDto,

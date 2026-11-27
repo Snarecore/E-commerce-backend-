@@ -2,35 +2,6 @@ import { Injectable, BadRequestException } from '@nestjs/common';
 
 @Injectable()
 export class IpSecurityService {
-  extractClientIp(headers: Record<string, string | string[] | undefined>, remoteAddress?: string): string {
-    const cfIp = headers['cf-connecting-ip'];
-    if (cfIp && typeof cfIp === 'string' && this.isValidIp(cfIp.trim())) {
-      return cfIp.trim();
-    }
-
-    const xRealIp = headers['x-real-ip'];
-    if (xRealIp && typeof xRealIp === 'string' && this.isValidIp(xRealIp.trim())) {
-      return xRealIp.trim();
-    }
-
-    const xForwardedFor = headers['x-forwarded-for'];
-    if (xForwardedFor) {
-      const raw = Array.isArray(xForwardedFor) ? xForwardedFor[0] : xForwardedFor;
-      const ips = raw.split(',').map((ip) => ip.trim());
-      for (let i = ips.length - 1; i >= 0; i--) {
-        if (this.isValidIp(ips[i])) {
-          return ips[i];
-        }
-      }
-    }
-
-    if (remoteAddress && this.isValidIp(remoteAddress)) {
-      return remoteAddress;
-    }
-
-    return '127.0.0.1';
-  }
-
   isValidIp(ip: string): boolean {
     if (!ip) return false;
     const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;

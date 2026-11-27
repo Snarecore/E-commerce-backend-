@@ -1,3 +1,4 @@
+import { Throttle } from '@nestjs/throttler';
 import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query } from '@nestjs/common';
 import { CONFIG } from '../../../../utils/config';
 import { ApiResponse } from '../../../../utils/response.utils';
@@ -17,6 +18,8 @@ import { ContactUsMessageFilterDto } from './dto/contact-us-message-filter.dto';
 export class ContactUsMessageController {
 	constructor(private readonly service: ContactUsMessageService) { }
 
+	// Public form: a tight per-IP limit keeps it from being used to flood the inbox
+	@Throttle({ default: { limit: 5, ttl: 60000 } })
 	@Public()
 	@Post()
 	async create(@Body() dto: CreateContactUsMessageDto): Promise<ApiResponse<ContactUsMessageInterface>> {

@@ -1,3 +1,4 @@
+import { PaidOrderApplier } from './paid-order-applier.service';
 import { Test, TestingModule } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
 import { ReconciliationService } from './reconciliation.service';
@@ -38,6 +39,7 @@ describe('ReconciliationService', () => {
 
         const module: TestingModule = await Test.createTestingModule({
             providers: [
+                PaidOrderApplier,
                 ReconciliationService,
                 { provide: DataSource, useValue: mockDataSource },
                 { provide: SslcommerzService, useValue: mockSslcommerzService },

@@ -24,24 +24,24 @@ export class RolesService {
       }
       return newRole;
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-      throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+      // HttpExceptions keep their status; anything else is logged and masked by the global filter
+      throw error;
     }
   }
   async findAll(): Promise<Roles[]> {
     try {
       return await this.rolesRepository.findAll({});
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-      throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+      // HttpExceptions keep their status; anything else is logged and masked by the global filter
+      throw error;
     }
   }
   async findOne(id: string): Promise<Roles | null> {
     try {
       return await this.rolesRepository.findOne(id);
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-      throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+      // HttpExceptions keep their status; anything else is logged and masked by the global filter
+      throw error;
     }
   }
   async update(id: string, data: UpdateRoleDto): Promise<Roles | null> {
@@ -59,8 +59,8 @@ export class RolesService {
       }
       return updateRole;
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-      throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+      // HttpExceptions keep their status; anything else is logged and masked by the global filter
+      throw error;
     }
   }
 
@@ -74,8 +74,8 @@ export class RolesService {
       const result = res.affected === 1 ? { deleted: true } : { deleted: false };
       return result;
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-      throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+      // HttpExceptions keep their status; anything else is logged and masked by the global filter
+      throw error;
     }
   }
 }

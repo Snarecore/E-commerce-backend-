@@ -20,6 +20,8 @@ import { AuditLogService } from '../../audit-log/audit-log.service';
 import { AuditAction } from '../../audit-log/constants/audit-action.enum';
 import { AuditModule } from '../../audit-log/constants/audit-module.enum';
 import { AuditTargetType } from '../../audit-log/constants/audit-target-type.enum';
+import { resolvePagination } from '../../../utils/pagination.util';
+import { BlacklistService } from '../../risk/services/blacklist.service';
 
 /** Order states from which a shipment may be booked (pending, placed or processing). */
 const DISPATCHABLE_ORDER_STATUSES: string[] = [OrderStatus.PENDING, OrderStatus.ORDER_PLACED, OrderStatus.PROCESSING];
@@ -59,7 +61,8 @@ export class ShipmentService {
         private readonly dataSource: DataSource,
         private readonly steadfast: SteadfastClient,
         private readonly ordersService: OrdersService,
-        private readonly auditLogService: AuditLogService
+        private readonly auditLogService: AuditLogService,
+        private readonly blacklistService: BlacklistService
     ) {}
 
     private get shipments(): Repository<Shipment> {
@@ -99,6 +102,7 @@ export class ShipmentService {
             if (!order) throw new HttpException('Order not found.', HttpStatus.NOT_FOUND);
 
             this.assertDispatchable(order);
+            await this.assertNoRiskHold(order);
 
             const live = await queryRunner.manager.findOne(Shipment, {
                 where: { activeOrderKey: order.id }
@@ -162,6 +166,30 @@ export class ShipmentService {
         }
         if (!isCod && order.paymentStatus !== PaymentStatus.PAID) {
             throw new HttpException('Online-payment order is not paid yet; it cannot be shipped.', HttpStatus.BAD_REQUEST);
+        }
+    }
+
+    /**
+     * A parcel handed to the courier cannot be recalled, so the risk policy is enforced here, not
+     * only displayed: a blacklisted or flagged customer's order stays put until an admin clears the
+     * blacklist entry. If the risk store cannot be read, booking fails rather than guessing.
+     */
+    private async assertNoRiskHold(order: Orders): Promise<void> {
+        const shipping = (typeof order.shippingAddress === 'string' ? JSON.parse(order.shippingAddress) : order.shippingAddress) || {};
+        let risk: Awaited<ReturnType<BlacklistService['evaluateRiskForCustomer']>>;
+        try {
+            risk = await this.blacklistService.evaluateRiskForCustomer(
+                { phone: shipping.phone || '', email: shipping.email || '', ipAddress: (order as { ipAddress?: string }).ipAddress || '' },
+                { failClosed: true }
+            );
+        } catch {
+            throw new HttpException('Customer risk check is unavailable right now. Try booking again shortly.', HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        if (risk.fulfillmentHold) {
+            throw new HttpException(
+                `Order ${order.orderId} is on risk hold (${risk.policyDecision}: ${risk.reason ?? 'flagged customer'}). Review the customer in the blacklist before shipping.`,
+                HttpStatus.CONFLICT
+            );
         }
     }
 
@@ -762,8 +790,7 @@ export class ShipmentService {
         page?: number;
         limit?: number;
     }) {
-        const page = Math.max(1, Number(filter.page) || 1);
-        const limit = Math.min(100, Math.max(1, Number(filter.limit) || 20));
+        const { page, limit } = resolvePagination(filter.page, filter.limit, 20);
 
         const qb = this.shipments.createQueryBuilder('s');
         if (filter.status) qb.andWhere('s.status = :status', { status: filter.status });
@@ -818,8 +845,7 @@ export class ShipmentService {
      * Payment eligibility mirrors assertDispatchable so the list never offers an order that would be refused.
      */
     async listReadyToBook(filter: { q?: string; page?: number; limit?: number }) {
-        const page = Math.max(1, Number(filter.page) || 1);
-        const limit = Math.min(100, Math.max(1, Number(filter.limit) || 20));
+        const { page, limit } = resolvePagination(filter.page, filter.limit, 20);
 
         const qb = this.dataSource
             .getRepository(Orders)

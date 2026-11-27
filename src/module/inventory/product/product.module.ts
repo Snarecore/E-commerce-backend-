@@ -1,7 +1,7 @@
+import { UniqueCodeGeneratorModule } from '../../unique-code-generator/unique-code-generator.module';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { SpaceService } from '../../space-module/space-service/space.service';
-import { R2ServiceProvider } from '../../space-module/space-service';
 import { ProductController } from './product.controller';
 import { ProductRepository } from './product.repository';
 import { ProductService } from './product.service';
@@ -11,10 +11,11 @@ import { ProductImageGalleryRepository } from '../product-image-gallery/product-
 
 @Module({
 	imports: [
-		TypeOrmModule.forFeature([Product, ProductImageGallery])
+		TypeOrmModule.forFeature([Product, ProductImageGallery]),
+		UniqueCodeGeneratorModule
 	],
 	controllers: [ProductController],
-	providers: [ProductService, ProductRepository, SpaceService, R2ServiceProvider, ProductImageGalleryRepository],
+	providers: [ProductService, ProductRepository, SpaceService, ProductImageGalleryRepository],
 	exports: [ProductService, ProductRepository]
 })
 

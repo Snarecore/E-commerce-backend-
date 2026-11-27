@@ -1,3 +1,4 @@
+import { getClientIp } from '../../utils/request-ip.util';
 import { Body, Controller, Get, Post, Req, Res } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { AuthSessionService } from '../auth/session/auth-session.service';
@@ -33,7 +34,7 @@ export class CheckoutVerificationController {
         @Body() body: { phone: string },
         @Req() req: Request
     ): Promise<ApiResponse<any>> {
-        const clientIp = (req.ip || req.socket.remoteAddress || '').replace('::ffff:', '');
+        const clientIp = getClientIp(req) ?? '';
         const result = await this.challengeService.initiateChallenge(body.phone, clientIp);
         return ResponseUtils.successResponseHandler(200, 'Verification challenge initiated.', 'data', result);
     }
@@ -44,7 +45,7 @@ export class CheckoutVerificationController {
         @Body() dto: ConfirmVerificationDto,
         @Req() req: Request
     ): Promise<ApiResponse<any>> {
-        const clientIp = (req.ip || req.socket.remoteAddress || '').replace('::ffff:', '');
+        const clientIp = getClientIp(req) ?? '';
         dto.clientIp = clientIp;
         const result = await this.orchestratorService.confirmVerification(dto);
         return ResponseUtils.successResponseHandler(200, 'Phone number successfully verified.', 'data', result);
@@ -63,7 +64,7 @@ export class CheckoutVerificationController {
         const user = result.user as SessionUser;
         const tokens = await this.authSessionService.createSession(
             { id: user.id, email: user.email, role: user.role, name: user.name },
-            { ipAddress: req.ip ?? null, userAgent: req.headers['user-agent'] ?? null }
+            { ipAddress: getClientIp(req), userAgent: req.headers['user-agent'] ?? null }
         );
         setSessionCookies(res, user.role, tokens);
 

@@ -1,19 +1,15 @@
-import { Injectable, Logger, BadRequestException, NotFoundException, Optional } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import { DataSource, QueryRunner } from 'typeorm';
 import { Orders } from '../../order/entity/order.entity';
-import { Shipment } from '../../courier/entities/shipment.entity';
 import { Payments } from '../entities/payment.entity';
 import { PaymentEvents } from '../entities/payment-event.entity';
-import { PaymentRefunds } from '../entities/payment-refund.entity';
-import { PaymentAttemptStatus, PaymentEventSource, PaymentMethodType, RefundStatus } from '../enums/payment.enum';
-import { OrderStatus, PaymentStatus } from '../../../enums/order-status.enum';
+import { PaymentAttemptStatus, PaymentEventSource, PaymentMethodType } from '../enums/payment.enum';
+import { PaymentStatus } from '../../../enums/order-status.enum';
 import { SslcommerzService } from './sslcommerz.service';
 import { CurrencyUtils } from '../../../utils/currency.utils';
 import { EventFingerprintBuilder } from '../utils/event-fingerprint.builder';
 import { PaymentStateMachine } from '../utils/payment-state-machine';
-import { PaymentOutboxService } from './payment-outbox.service';
-import { Product } from '../../inventory/product/entities/product.entity';
-import { OrderSummary } from '../../order-summary/entity/order-summary.entity';
+import { PaidOrderApplier } from './paid-order-applier.service';
 import { EmailService } from '../../email-service/email-sender.service';
 
 @Injectable()
@@ -23,6 +19,7 @@ export class PaymentConfirmationService {
     constructor(
         private readonly dataSource: DataSource,
         private readonly sslcommerzService: SslcommerzService,
+        private readonly paidOrderApplier: PaidOrderApplier,
         @Optional() private readonly emailService?: EmailService
     ) {}
 
@@ -340,118 +337,16 @@ export class PaymentConfirmationService {
                     }
                 }
 
-                // Branch 2: Late Payment for EXPIRED, CANCELLED, or FAILED attempt, or CANCELLED order
+                // Branch 2: Late payment for an attempt that had already expired, failed or been cancelled.
+                // The shared policy decides what it means for the order (confirm, revive, or refund).
                 if (
                     freshPayment.status === PaymentAttemptStatus.EXPIRED ||
                     freshPayment.status === PaymentAttemptStatus.CANCELLED ||
-                    freshPayment.status === PaymentAttemptStatus.FAILED ||
-                    lockedOrder.status === OrderStatus.CANCELLED
+                    freshPayment.status === PaymentAttemptStatus.FAILED
                 ) {
-                    this.logger.warn(
-                        `[Late Payment Detected] Payment ${freshPayment.id} (status: ${freshPayment.status}) or Order ${lockedOrder.orderId} (status: ${lockedOrder.status}) was cancelled/expired. Initiating Atomic Recovery.`
-                    );
-
-                    const isStockReReserved = await this.tryReReserveStock(queryRunner, lockedOrder);
-
-                    if (isStockReReserved) {
-                        await queryRunner.manager.update(Payments, freshPayment.id, {
-                            status: PaymentAttemptStatus.PAID,
-                            valId: valId,
-                            bankTranId: validationData.bank_tran_id || null,
-                            cardType: validationData.card_type || null,
-                            cardIssuer: validationData.card_issuer || null,
-                            cardBrand: validationData.card_brand || null,
-                            maskedAccountNo: validationData.card_no || null,
-                            paymentMethod: this.mapCardTypeToMethod(validationData.card_type),
-                            paidAt: new Date(),
-                            needsAdminReview: false,
-                            adminReviewReason: null
-                        });
-
-                        if (lockedOrder.status === OrderStatus.PENDING || lockedOrder.status === OrderStatus.CANCELLED) {
-                            lockedOrder.status = OrderStatus.ORDER_PLACED;
-                        }
-                        lockedOrder.paymentStatus = PaymentStatus.PAID;
-                        lockedOrder.paymentMethod = 'SSLCOMMERZ';
-                        await queryRunner.manager.save(lockedOrder);
-
-                        // If a courier shipment was already booked for this order, adjust COD amount to 0
-                        await queryRunner.manager
-                            .createQueryBuilder()
-                            .update(Shipment)
-                            .set({ codAmount: 0 })
-                            .where('orderId = :orderId OR orderCode = :orderCode', {
-                                orderId: lockedOrder.id,
-                                orderCode: lockedOrder.orderId
-                            })
-                            .execute();
-
-                        await this.recordPaymentEvent(queryRunner, freshPayment, 'LATE_PAYMENT_RE_RESERVED', source, status, validationData);
-                        await PaymentOutboxService.enqueueEvent(queryRunner, 'PAYMENT', freshPayment.id, 'PAYMENT_CONFIRMED', {
-                            paymentId: freshPayment.id,
-                            orderId: lockedOrder.orderId,
-                            tranId: freshPayment.tranId,
-                            valId,
-                            amount: freshPayment.amount,
-                            latePayment: true
-                        });
-                        await queryRunner.commitTransaction();
-
-                        this.logger.log(`[Late Payment Recovery Succeeded] Stock secured and Order ${lockedOrder.orderId} revived.`);
-                        return {
-                            success: true,
-                            message: 'Late payment recovered successfully and stock re-reserved',
-                            orderId: lockedOrder.id,
-                            humanOrderId: lockedOrder.orderId,
-                            paymentStatus: 'PAID'
-                        };
-                    } else {
-                        await queryRunner.manager.update(Payments, freshPayment.id, {
-                            status: PaymentAttemptStatus.PAID,
-                            valId: valId,
-                            bankTranId: validationData.bank_tran_id || null,
-                            cardType: validationData.card_type || null,
-                            cardIssuer: validationData.card_issuer || null,
-                            cardBrand: validationData.card_brand || null,
-                            maskedAccountNo: validationData.card_no || null,
-                            paymentMethod: this.mapCardTypeToMethod(validationData.card_type),
-                            paidAt: new Date(),
-                            needsAdminReview: true,
-                            adminReviewReason: 'LATE_PAYMENT_STOCK_EXHAUSTED'
-                        });
-
-                        lockedOrder.paymentStatus = PaymentStatus.REVIEW_REQUIRED;
-                        await queryRunner.manager.save(lockedOrder);
-
-                        const refundRecord = queryRunner.manager.create(PaymentRefunds, {
-                            paymentId: freshPayment.id,
-                            refundId: `REF-${lockedOrder.orderId}-${Date.now().toString().slice(-4)}`,
-                            amount: freshPayment.amount,
-                            status: RefundStatus.PENDING,
-                            reason: 'LATE_PAYMENT_STOCK_EXHAUSTED',
-                            initiatedBy: 'SYSTEM',
-                            idempotencyKey: `auto_refund_late_pay_${freshPayment.id}`
-                        });
-                        await queryRunner.manager.save(refundRecord);
-
-                        await this.recordPaymentEvent(queryRunner, freshPayment, 'LATE_PAYMENT_REFUND_INITIATED', source, status, validationData);
-                        await PaymentOutboxService.enqueueEvent(queryRunner, 'REFUND', refundRecord.id || freshPayment.id, 'REFUND_PENDING', {
-                            paymentId: freshPayment.id,
-                            orderId: lockedOrder.orderId,
-                            amount: freshPayment.amount,
-                            reason: 'LATE_PAYMENT_STOCK_EXHAUSTED'
-                        });
-                        await queryRunner.commitTransaction();
-
-                        this.logger.warn(`[Late Payment Stock Exhausted] Order ${lockedOrder.orderId} kept cancelled. Refund record created.`);
-                        return {
-                            success: true,
-                            message: 'Late payment received but stock is exhausted. Refund initiated.',
-                            orderId: lockedOrder.id,
-                            humanOrderId: lockedOrder.orderId,
-                            paymentStatus: 'REVIEW_REQUIRED'
-                        };
-                    }
+                    this.logger.warn(`[Late Payment Detected] Payment ${freshPayment.id} (${freshPayment.status}) on order ${lockedOrder.orderId} (${lockedOrder.status}).`);
+                    Object.assign(freshPayment, this.capturedPaymentFields(validationData, valId));
+                    return await this.applyCapturedPayment(queryRunner, lockedOrder, freshPayment, { source, status, validationData, valId, late: true });
                 }
 
                 // Branch 3: Collision with other unexpected states
@@ -466,118 +361,9 @@ export class PaymentConfirmationService {
                 };
             }
 
-            // affected === 1: Successfully transitioned from [PENDING, PROCESSING, UNKNOWN] to PAID
-            lockedPayment.status = PaymentAttemptStatus.PAID;
-            lockedPayment.valId = valId;
-            lockedPayment.bankTranId = validationData.bank_tran_id || null;
-            lockedPayment.cardType = validationData.card_type || null;
-            lockedPayment.cardIssuer = validationData.card_issuer || null;
-            lockedPayment.cardBrand = validationData.card_brand || null;
-            lockedPayment.maskedAccountNo = validationData.card_no || null;
-            lockedPayment.paymentMethod = this.mapCardTypeToMethod(validationData.card_type);
-            lockedPayment.paidAt = new Date();
-
-            // Check if Order was previously CANCELLED while Payment was still pending
-            if (lockedOrder.status === OrderStatus.CANCELLED) {
-                this.logger.warn(`[Late Payment Detected] Order ${lockedOrder.orderId} was CANCELLED. Initiating Atomic Recovery.`);
-                const isStockReReserved = await this.tryReReserveStock(queryRunner, lockedOrder);
-
-                if (isStockReReserved) {
-                    lockedOrder.status = OrderStatus.ORDER_PLACED;
-                    lockedOrder.paymentStatus = PaymentStatus.PAID;
-                    await queryRunner.manager.save(lockedOrder);
-                    await this.recordPaymentEvent(queryRunner, lockedPayment, 'LATE_PAYMENT_RE_RESERVED', source, status, validationData);
-                    await PaymentOutboxService.enqueueEvent(queryRunner, 'PAYMENT', lockedPayment.id, 'PAYMENT_CONFIRMED', {
-                        paymentId: lockedPayment.id,
-                        orderId: lockedOrder.orderId,
-                        tranId: lockedPayment.tranId,
-                        valId,
-                        amount: lockedPayment.amount,
-                        latePayment: true
-                    });
-                } else {
-                    this.logger.error(`[Late Payment Recovery Failed] Insufficient stock to re-reserve for order ${lockedOrder.orderId}. Initiating Refund Record.`);
-                    lockedOrder.paymentStatus = PaymentStatus.REVIEW_REQUIRED;
-                    await queryRunner.manager.save(lockedOrder);
-
-                    lockedPayment.needsAdminReview = true;
-                    lockedPayment.adminReviewReason = 'LATE_PAYMENT_STOCK_EXHAUSTED';
-                    await queryRunner.manager.save(lockedPayment);
-
-                    const refundRecord = queryRunner.manager.create(PaymentRefunds, {
-                        paymentId: lockedPayment.id,
-                        refundId: `REF-${lockedOrder.orderId}-${Date.now().toString().slice(-4)}`,
-                        amount: lockedPayment.amount,
-                        status: RefundStatus.PENDING,
-                        reason: 'LATE_PAYMENT_STOCK_EXHAUSTED',
-                        initiatedBy: 'SYSTEM',
-                        idempotencyKey: `auto_refund_late_pay_${lockedPayment.id}`
-                    });
-                    await queryRunner.manager.save(refundRecord);
-
-                    await this.recordPaymentEvent(queryRunner, lockedPayment, 'LATE_PAYMENT_REFUND_INITIATED', source, status, validationData);
-                    await PaymentOutboxService.enqueueEvent(queryRunner, 'REFUND', refundRecord.id || lockedPayment.id, 'REFUND_PENDING', {
-                        paymentId: lockedPayment.id,
-                        orderId: lockedOrder.orderId,
-                        amount: lockedPayment.amount,
-                        reason: 'LATE_PAYMENT_STOCK_EXHAUSTED'
-                    });
-                }
-            } else {
-                // Standard Normal Order Confirmation
-                if (lockedOrder.status === OrderStatus.PENDING) {
-                    lockedOrder.status = OrderStatus.ORDER_PLACED;
-                    const nowIso = new Date().toISOString();
-                    lockedOrder.statusHistory = [
-                        ...(lockedOrder.statusHistory || []),
-                        {
-                            status: OrderStatus.ORDER_PLACED,
-                            timestamp: nowIso,
-                            updatedBy: 'sslcommerz_confirmation',
-                            note: 'Order confirmed and paid online.'
-                        }
-                    ];
-                }
-                lockedOrder.paymentStatus = PaymentStatus.PAID;
-                lockedOrder.paymentMethod = 'SSLCOMMERZ';
-                await queryRunner.manager.save(lockedOrder);
-
-                // If a courier shipment was already booked for this order, adjust COD amount to 0
-                await queryRunner.manager
-                    .createQueryBuilder()
-                    .update(Shipment)
-                    .set({ codAmount: 0 })
-                    .where('orderId = :orderId OR orderCode = :orderCode', {
-                        orderId: lockedOrder.id,
-                        orderCode: lockedOrder.orderId
-                    })
-                    .execute();
-
-                await this.recordPaymentEvent(queryRunner, lockedPayment, 'PAYMENT_CONFIRMED', source, status, validationData);
-                await PaymentOutboxService.enqueueEvent(queryRunner, 'PAYMENT', lockedPayment.id, 'PAYMENT_CONFIRMED', {
-                    paymentId: lockedPayment.id,
-                    orderId: lockedOrder.orderId,
-                    tranId: lockedPayment.tranId,
-                    valId,
-                    amount: lockedPayment.amount
-                });
-            }
-
-            await queryRunner.commitTransaction();
-            this.logger.log(`[Payment Confirmation] Successfully confirmed payment for tranId: ${tranId}, Order: ${lockedOrder.orderId}`);
-
-            // 📧 Standard E-Commerce Lifecycle:
-            // The customer already received the authoritative "Order Confirmed" email upon order creation.
-            // We suppress sending a duplicate "Order Update: is now Order Placed" email here to prevent inbox spam.
-            // Downstream status update emails will fire cleanly when order progresses to Processing, Shipped, Delivered, etc.
-
-            return {
-                success: true,
-                message: 'Payment confirmed successfully',
-                orderId: lockedOrder.id,
-                humanOrderId: lockedOrder.orderId,
-                paymentStatus: 'PAID'
-            };
+            // affected === 1: the attempt moved from [PENDING, PROCESSING, UNKNOWN] to PAID
+            Object.assign(lockedPayment, this.capturedPaymentFields(validationData, valId));
+            return await this.applyCapturedPayment(queryRunner, lockedOrder, lockedPayment, { source, status, validationData, valId, late: false });
         } catch (err: any) {
             await queryRunner.rollbackTransaction();
             this.logger.error(`[Payment Confirmation Transaction Error] ${err?.message}`, err?.stack);
@@ -587,91 +373,54 @@ export class PaymentConfirmationService {
         }
     }
 
+    /** Gateway details recorded on an attempt once SSLCommerz validation confirms the capture. */
+    private capturedPaymentFields(validationData: any, valId: string): Partial<Payments> {
+        return {
+            status: PaymentAttemptStatus.PAID,
+            valId,
+            bankTranId: validationData.bank_tran_id || null,
+            cardType: validationData.card_type || null,
+            cardIssuer: validationData.card_issuer || null,
+            cardBrand: validationData.card_brand || null,
+            maskedAccountNo: validationData.card_no || null,
+            paymentMethod: this.mapCardTypeToMethod(validationData.card_type),
+            paidAt: new Date(),
+        };
+    }
+
     /**
-     * Atomically attempts to re-reserve stock if an order was cancelled before late payment arrived.
-     * Enforces the exact same ASC Clustered-PK row locking order as Checkout.
+     * Applies a validated capture to its order through the shared PaidOrderApplier (the same
+     * rules Stripe uses), records the payment event and commits.
      */
-    private async tryReReserveStock(queryRunner: any, order: Orders): Promise<boolean> {
-        try {
-            const summaries = await queryRunner.manager.find(OrderSummary, {
-                where: { orderId: order.orderId }
-            });
+    private async applyCapturedPayment(
+        queryRunner: QueryRunner,
+        order: Orders,
+        payment: Payments,
+        ctx: { source: PaymentEventSource; status: string; validationData: any; valId: string; late: boolean }
+    ): Promise<{ success: boolean; message: string; orderId: string; humanOrderId: string; paymentStatus: string }> {
+        const { outcome, decision } = await this.paidOrderApplier.apply({
+            queryRunner,
+            order,
+            payment,
+            gatewayLabel: 'SSLCOMMERZ',
+            actor: 'sslcommerz_confirmation',
+            note: ctx.late ? 'Late online payment confirmed; order revived.' : 'Order confirmed and paid online.',
+            eventDetails: { tranId: payment.tranId, valId: ctx.valId, ...(ctx.late ? { latePayment: true } : {}) },
+        });
 
-            if (!summaries || summaries.length === 0) return false;
+        const paid = outcome === PaymentStatus.PAID;
+        const eventType = paid ? (ctx.late ? 'LATE_PAYMENT_CONFIRMED' : 'PAYMENT_CONFIRMED') : `PAYMENT_REVIEW_${decision.reason}`;
+        await this.recordPaymentEvent(queryRunner, payment, eventType, ctx.source, ctx.status, ctx.validationData);
+        await queryRunner.commitTransaction();
 
-            // 1. Aggregate required stock by Product ID and Size
-            const aggregatedMap = new Map<string, { totalQty: number; sizeMap: Map<string, number> }>();
-            for (const item of summaries) {
-                if (!item.productId) continue;
-                if (!aggregatedMap.has(item.productId)) {
-                    aggregatedMap.set(item.productId, { totalQty: 0, sizeMap: new Map() });
-                }
-                const entry = aggregatedMap.get(item.productId)!;
-                const qty = Number(item.quantity) || 1;
-                entry.totalQty += qty;
-                if (item.selectedSize) {
-                    entry.sizeMap.set(item.selectedSize, (entry.sizeMap.get(item.selectedSize) || 0) + qty);
-                }
-            }
-
-            const sortedProductIds = Array.from(aggregatedMap.keys()).sort(); // 🔒 Deterministic ASC Clustered-PK Order
-            const lockedProductMap = new Map<string, Product>();
-
-            // 2. Sequential Clustered-PK Row Locks in strict ASC order
-            for (const productId of sortedProductIds) {
-                const lockedProduct = await queryRunner.manager.findOne(Product, {
-                    where: { id: productId, isDeleted: false },
-                    lock: { mode: 'pessimistic_write' }
-                });
-
-                if (!lockedProduct) return false;
-                lockedProductMap.set(productId, lockedProduct);
-            }
-
-            // 3. Verify availability for all items
-            for (const productId of sortedProductIds) {
-                const product = lockedProductMap.get(productId)!;
-                const req = aggregatedMap.get(productId)!;
-
-                if (product.quantity !== null && product.quantity !== undefined && Number(product.quantity || 0) < req.totalQty) {
-                    return false;
-                }
-                if (product.sizeStock && typeof product.sizeStock === 'object') {
-                    for (const [sizeName, neededQty] of req.sizeMap.entries()) {
-                        const currentSizeStock = Number(product.sizeStock[sizeName]) || 0;
-                        if (currentSizeStock < neededQty) {
-                            return false;
-                        }
-                    }
-                }
-            }
-
-            // 4. Deduct stock atomically in same sorted order
-            for (const productId of sortedProductIds) {
-                const product = lockedProductMap.get(productId)!;
-                const req = aggregatedMap.get(productId)!;
-
-                let updatedSizeStock = product.sizeStock;
-                if (updatedSizeStock && typeof updatedSizeStock === 'object') {
-                    updatedSizeStock = { ...updatedSizeStock };
-                    for (const [sizeName, neededQty] of req.sizeMap.entries()) {
-                        const currentSizeQty = Number(updatedSizeStock[sizeName]) || 0;
-                        updatedSizeStock[sizeName] = Math.max(0, currentSizeQty - neededQty);
-                    }
-                }
-                const newTotalQty = (product.quantity !== null && product.quantity !== undefined)
-                    ? Math.max(0, Number(product.quantity || 0) - req.totalQty)
-                    : 0;
-
-                await queryRunner.manager.update(Product, product.id, {
-                    quantity: newTotalQty,
-                    sizeStock: updatedSizeStock
-                });
-            }
-            return true;
-        } catch {
-            return false;
-        }
+        this.logger.log(`[Payment Confirmation] tranId ${payment.tranId} on order ${order.orderId}: ${outcome} (${decision.reason ?? decision.action})`);
+        return {
+            success: true,
+            message: paid ? 'Payment confirmed successfully' : `Payment received but needs review (${decision.reason}). A refund has been queued.`,
+            orderId: order.id,
+            humanOrderId: order.orderId,
+            paymentStatus: paid ? 'PAID' : 'REVIEW_REQUIRED',
+        };
     }
 
     /**
@@ -721,6 +470,27 @@ export class PaymentConfirmationService {
     }
 
     /**
+     * Fail/cancel callbacks arrive from the customer's browser with nothing but a `tran_id`, so
+     * anyone can send them. Before an attempt is closed, SSLCommerz is asked directly: if the
+     * gateway reports a capture (or cannot be reached) the attempt stays open, and the IPN or
+     * the reconciliation job settles it from the gateway's authoritative answer instead.
+     */
+    private async gatewayConfirmsNoCapture(tranId: string): Promise<boolean> {
+        try {
+            const result = await this.sslcommerzService.queryTransaction(tranId);
+            const captured = (result?.element ?? []).some((entry) => ['VALID', 'VALIDATED'].includes(String(entry?.status).toUpperCase()));
+            if (captured) {
+                this.logger.warn(`[Gateway Check] tranId ${tranId} is captured at SSLCommerz; ignoring fail/cancel callback.`);
+                return false;
+            }
+            return true;
+        } catch (err: unknown) {
+            this.logger.warn(`[Gateway Check] Could not verify tranId ${tranId} (${err instanceof Error ? err.message : String(err)}); leaving attempt open for reconciliation.`);
+            return false;
+        }
+    }
+
+    /**
      * Handles failed or cancelled attempt.
      */
     async handleFailedAttempt(
@@ -754,6 +524,10 @@ export class PaymentConfirmationService {
                     `[Handle Failed Attempt] Transition from ${paymentRecord.status} to FAILED not allowed for tranId: ${paymentRecord.tranId}`
                 );
                 return;
+            }
+
+            if (!(await this.gatewayConfirmsNoCapture(paymentRecord.tranId))) {
+                return { orderId: paymentRecord.orderId, humanOrderId: paymentRecord.order?.orderId };
             }
 
             paymentRecord.status = PaymentAttemptStatus.FAILED;
@@ -811,6 +585,10 @@ export class PaymentConfirmationService {
                     `[Handle Cancelled Attempt] Transition from ${payment.status} to CANCELLED not allowed for tranId: ${payment.tranId}`
                 );
                 return;
+            }
+
+            if (!(await this.gatewayConfirmsNoCapture(payment.tranId))) {
+                return { orderId: payment.orderId, humanOrderId: payment.order?.orderId };
             }
 
             payment.status = PaymentAttemptStatus.CANCELLED;

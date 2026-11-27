@@ -50,6 +50,11 @@ export class TrackCheckoutItemDto {
     @IsString()
     sku?: string;
 
+    @IsOptional()
+    @IsString()
+    @MaxLength(50)
+    size?: string;
+
     @IsNotEmpty()
     @IsInt()
     @Min(1)

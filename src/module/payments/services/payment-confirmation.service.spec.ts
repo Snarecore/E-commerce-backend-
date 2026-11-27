@@ -1,3 +1,4 @@
+import { PaidOrderApplier } from './paid-order-applier.service';
 import { Test, TestingModule } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
 import { PaymentConfirmationService } from './payment-confirmation.service';
@@ -49,10 +50,12 @@ describe('PaymentConfirmationService', () => {
 
         mockSslcommerzService = {
             validateTransaction: jest.fn(),
+            queryTransaction: jest.fn().mockResolvedValue({ element: [{ status: 'FAILED' }] }),
         };
 
         const module: TestingModule = await Test.createTestingModule({
             providers: [
+                PaidOrderApplier,
                 PaymentConfirmationService,
                 { provide: DataSource, useValue: mockDataSource },
                 { provide: SslcommerzService, useValue: mockSslcommerzService },
@@ -331,6 +334,7 @@ describe('PaymentConfirmationService', () => {
                 id: 'ord-1',
                 orderId: 'ORD-1001',
                 status: OrderStatus.CANCELLED, // Order was cancelled earlier!
+                statusHistory: [{ status: OrderStatus.CANCELLED, timestamp: '2026-01-01T00:00:00.000Z', updatedBy: 'system', note: 'Payment window expired' }],
                 paymentStatus: PaymentStatus.PENDING,
             };
 
@@ -398,6 +402,7 @@ describe('PaymentConfirmationService', () => {
                 id: 'ord-1',
                 orderId: 'ORD-1001',
                 status: OrderStatus.CANCELLED,
+                statusHistory: [{ status: OrderStatus.CANCELLED, timestamp: '2026-01-01T00:00:00.000Z', updatedBy: 'system', note: 'Payment window expired' }],
                 paymentStatus: PaymentStatus.PENDING,
             };
 
@@ -585,6 +590,7 @@ describe('PaymentConfirmationService', () => {
                     id: 'ord-1',
                     orderId: 'ORD-1001',
                     status: OrderStatus.CANCELLED,
+                    statusHistory: [{ status: OrderStatus.CANCELLED, timestamp: '2026-01-01T00:00:00.000Z', updatedBy: 'system', note: 'Payment window expired' }],
                     paymentStatus: PaymentStatus.UNPAID,
                 };
 
@@ -622,6 +628,36 @@ describe('PaymentConfirmationService', () => {
         });
 
         describe('State Machine Invariants in Failed & Cancelled Handlers', () => {
+            describe('unverified browser fail/cancel callbacks', () => {
+                const pendingPayment = () => ({ id: 'pay-1', tranId: 'SSLCZ-001', status: PaymentAttemptStatus.PENDING, orderId: 'ord-1' });
+                const repoFor = (payment: any) => {
+                    const repo = { findOne: jest.fn().mockResolvedValue(payment), save: jest.fn().mockResolvedValue(payment) };
+                    mockDataSource.getRepository.mockReturnValue(repo);
+                    return repo;
+                };
+
+                it('closes the attempt when SSLCommerz confirms there was no capture', async () => {
+                    const repo = repoFor(pendingPayment());
+                    await service.handleFailedAttempt({ tranId: 'SSLCZ-001' }, { status: 'FAILED' }, PaymentEventSource.BROWSER_CALLBACK);
+                    expect(repo.save).toHaveBeenCalledWith(expect.objectContaining({ status: PaymentAttemptStatus.FAILED }));
+                });
+
+                it('keeps the attempt open when SSLCommerz reports the payment as captured', async () => {
+                    mockSslcommerzService.queryTransaction.mockResolvedValue({ element: [{ status: 'VALID' }] });
+                    const repo = repoFor(pendingPayment());
+                    await service.handleFailedAttempt({ tranId: 'SSLCZ-001' }, { status: 'FAILED' }, PaymentEventSource.BROWSER_CALLBACK);
+                    await service.handleCancelledAttempt('SSLCZ-001', PaymentEventSource.BROWSER_CALLBACK, {});
+                    expect(repo.save).not.toHaveBeenCalled();
+                });
+
+                it('keeps the attempt open when SSLCommerz cannot be reached', async () => {
+                    mockSslcommerzService.queryTransaction.mockRejectedValue(new Error('timeout'));
+                    const repo = repoFor(pendingPayment());
+                    await service.handleCancelledAttempt('SSLCZ-001', PaymentEventSource.BROWSER_CALLBACK, {});
+                    expect(repo.save).not.toHaveBeenCalled();
+                });
+            });
+
             it('handleFailedAttempt should NOT transition payment to FAILED if already PAID', async () => {
                 const mockPayment = {
                     id: 'pay-1',

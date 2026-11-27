@@ -36,6 +36,7 @@ import { PageMetaRepository } from "../seo/page-meta/page-meta.repository";
 import { toSafeProduct } from "../../utils/safe-product.util";
 import { ProductSeoRepository } from "../seo/product-meta/product-seo.repository";
 import { omit, omitMany } from "../../utils/helper.utils";
+import { resolvePagination } from '../../utils/pagination.util';
 
 @Injectable()
 export class SiteFrontendService {
@@ -291,9 +292,7 @@ export class SiteFrontendService {
     async findProductList(dto: ProductFilterDto) {
         try {
             const megaDiscount = await this.megaDiscountRepository.getSingleton();
-            const page = dto.page ? Number(dto.page) : 1;
-            const limit = dto.limit ? Number(dto.limit) : 10;
-            const skip = (page - 1) * limit;
+            const { page, limit, skip } = resolvePagination(dto.page, dto.limit);
 
             const qb = this.productRepository.createQueryBuilder('product')
                 .where('product.isDeleted = false')
@@ -885,8 +884,8 @@ export class SiteFrontendService {
 
             return ResponseUtils.successResponseHandler(200, 'Data retrieved successfully.', 'data', safeCustomerList ?? []);
         } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-            throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+            // HttpExceptions keep their status; anything else is logged and masked by the global filter
+            throw error;
         }
     }
 }

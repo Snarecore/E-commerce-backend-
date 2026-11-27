@@ -37,7 +37,7 @@ export const getTypeOrmConfig = (): TypeOrmModuleOptions => {
 
 	const mysqlMaxConnections = getValidatedInt(configService, 'MYSQL_MAX_CONNECTIONS', 150, 1);
 	const budgetPercent = getValidatedInt(configService, 'DB_CONNECTION_BUDGET_PERCENT', 70, 1);
-	const pm2Instances = getValidatedInt(configService, 'PM2_INSTANCES', isVercel ? 1 : 2, 1);
+	const pm2Instances = getValidatedInt(configService, 'PM2_INSTANCES', 1, 1);
 
 	const effectiveBudget = pm2Instances * connectionLimit;
 	const maxAllowedBudget = Math.floor(mysqlMaxConnections * (budgetPercent / 100));
@@ -85,7 +85,7 @@ export async function validateServerMaxConnections(ds: DataSource): Promise<void
 				const configService = new ConfigService();
 				const connectionLimit = getValidatedInt(configService, 'DB_CONNECTION_LIMIT', 20, 1);
 				const budgetPercent = getValidatedInt(configService, 'DB_CONNECTION_BUDGET_PERCENT', 70, 1);
-				const pm2Instances = getValidatedInt(configService, 'PM2_INSTANCES', 2, 1);
+				const pm2Instances = getValidatedInt(configService, 'PM2_INSTANCES', 1, 1);
 
 				const effectiveBudget = pm2Instances * connectionLimit;
 				const maxAllowedBudget = Math.floor(serverMaxConn * (budgetPercent / 100));

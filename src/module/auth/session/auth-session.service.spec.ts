@@ -4,6 +4,7 @@ import { JwtService } from '@nestjs/jwt';
 import { AuthSessionService } from './auth-session.service';
 import { AuthSession } from './auth-session.entity';
 import { AuthTokenType } from './auth-token.types';
+import { SessionStatusCache } from './session-status.cache';
 import { JwtStrategy } from '../../../strategies/jwt.strategy';
 import { JwtRefreshStrategy } from '../../../strategies/jwt-refresh.strategy';
 
@@ -39,11 +40,13 @@ describe('AuthSessionService', () => {
 	const jwt = new JwtService({});
 	let store: ReturnType<typeof createStore>;
 	let service: AuthSessionService;
+	let events: { emit: jest.Mock };
 	const loadUser = async () => user;
 
 	beforeEach(() => {
 		store = createStore();
-		service = new AuthSessionService(store.repo as any, store.dataSource as any, jwt, config);
+		events = { emit: jest.fn() };
+		service = new AuthSessionService(store.repo as any, store.dataSource as any, jwt, config, events as any);
 	});
 
 	it('issues typed tokens signed with separate secrets and stores only a hash', async () => {
@@ -102,18 +105,75 @@ describe('AuthSessionService', () => {
 		await service.revokeByRefreshToken(refreshToken);
 		await expect(service.rotateSession(refreshToken, loadUser)).rejects.toThrow(UnauthorizedException);
 	});
+
+	describe('isSessionActive', () => {
+		const sidOf = (accessToken: string) => (jwt.verify(accessToken, { secret: ACCESS_SECRET }) as any).sid as string;
+
+		it('is true for a live session and false for another user', async () => {
+			const { accessToken } = await service.createSession(user);
+			await expect(service.isSessionActive(sidOf(accessToken), user.id)).resolves.toBe(true);
+			await expect(service.isSessionActive(sidOf(accessToken), 'someone-else')).resolves.toBe(false);
+			await expect(service.isSessionActive('missing', user.id)).resolves.toBe(false);
+		});
+
+		it('follows rotation to the live head, and fails once the head is logged out', async () => {
+			const { accessToken, refreshToken } = await service.createSession(user);
+			const oldSid = sidOf(accessToken);
+			const rotated = await service.rotateSession(refreshToken, loadUser);
+			if (rotated.kind !== 'rotated') throw new Error('expected rotation');
+
+			await expect(service.isSessionActive(oldSid, user.id)).resolves.toBe(true);
+
+			await service.revokeByRefreshToken(rotated.tokens.refreshToken);
+			await expect(service.isSessionActive(oldSid, user.id)).resolves.toBe(false);
+		});
+
+		it('is false after all sessions are revoked', async () => {
+			const { accessToken } = await service.createSession(user);
+			await service.revokeAllForUser(user.id, 'password_reset');
+			await expect(service.isSessionActive(sidOf(accessToken), user.id)).resolves.toBe(false);
+		});
+	});
+
+	it('publishes a revoked event on logout and on revoke-all', async () => {
+		const { refreshToken } = await service.createSession(user);
+		await service.revokeByRefreshToken(refreshToken);
+		await service.revokeAllForUser(user.id, 'password_reset');
+		expect(events.emit).toHaveBeenCalledWith('auth.session.revoked', expect.objectContaining({ userId: user.id, reason: 'logout' }));
+		expect(events.emit).toHaveBeenCalledWith('auth.session.revoked', expect.objectContaining({ userId: user.id, reason: 'password_reset' }));
+	});
+
+	it('binds socket tokens to the login session', async () => {
+		const token = service.signSocketToken(user, 'session-1');
+		expect(jwt.verify(token, { secret: ACCESS_SECRET })).toMatchObject({ sub: user.id, sid: 'session-1', type: AuthTokenType.SOCKET });
+	});
 });
 
 describe('JWT strategies accept exactly one token type', () => {
 	const config = { get: () => ACCESS_SECRET } as unknown as ConfigService;
 	const payload = { sub: 'user-1', email: 'a@b.com', role: 'customer', name: 'A' };
 
+	const liveSessions = { isActive: jest.fn().mockResolvedValue(true) } as unknown as SessionStatusCache;
+
 	it('access strategy rejects refresh, socket and untyped tokens', async () => {
-		const strategy = new JwtStrategy(config);
+		const strategy = new JwtStrategy(config, liveSessions);
 		for (const type of [AuthTokenType.REFRESH, AuthTokenType.SOCKET, undefined]) {
-			await expect(strategy.validate({ ...payload, type })).rejects.toThrow(UnauthorizedException);
+			await expect(strategy.validate({ ...payload, sid: 's1', type })).rejects.toThrow(UnauthorizedException);
 		}
-		await expect(strategy.validate({ ...payload, type: AuthTokenType.ACCESS })).resolves.toMatchObject({ id: 'user-1' });
+		await expect(strategy.validate({ ...payload, sid: 's1', type: AuthTokenType.ACCESS })).resolves.toMatchObject({
+			id: 'user-1',
+			sessionId: 's1',
+		});
+	});
+
+	it('access strategy rejects tokens without a session and tokens of an ended session', async () => {
+		const ended = { isActive: jest.fn().mockResolvedValue(false) } as unknown as SessionStatusCache;
+		await expect(new JwtStrategy(config, liveSessions).validate({ ...payload, type: AuthTokenType.ACCESS })).rejects.toThrow(
+			UnauthorizedException,
+		);
+		await expect(new JwtStrategy(config, ended).validate({ ...payload, sid: 's1', type: AuthTokenType.ACCESS })).rejects.toThrow(
+			UnauthorizedException,
+		);
 	});
 
 	it('refresh strategy rejects access and socket tokens', () => {
@@ -122,5 +182,30 @@ describe('JWT strategies accept exactly one token type', () => {
 			expect(() => strategy.validate({ ...payload, jti: 's1', type })).toThrow(UnauthorizedException);
 		}
 		expect(strategy.validate({ ...payload, jti: 's1', type: AuthTokenType.REFRESH })).toEqual({ id: 'user-1', sessionId: 's1' });
+	});
+});
+
+describe('SessionStatusCache', () => {
+	it('caches lookups and forgets a user as soon as their session is revoked', async () => {
+		const sessions = { isSessionActive: jest.fn().mockResolvedValue(true) };
+		const cache = new SessionStatusCache(sessions as unknown as AuthSessionService);
+
+		await expect(cache.isActive('s1', 'user-1')).resolves.toBe(true);
+		await expect(cache.isActive('s1', 'user-1')).resolves.toBe(true);
+		expect(sessions.isSessionActive).toHaveBeenCalledTimes(1);
+
+		sessions.isSessionActive.mockResolvedValue(false);
+		cache.handleSessionRevoked({ userId: 'user-1', reason: 'logout' });
+		await expect(cache.isActive('s1', 'user-1')).resolves.toBe(false);
+		expect(sessions.isSessionActive).toHaveBeenCalledTimes(2);
+	});
+
+	it('does not drop other users on revoke', async () => {
+		const sessions = { isSessionActive: jest.fn().mockResolvedValue(true) };
+		const cache = new SessionStatusCache(sessions as unknown as AuthSessionService);
+		await cache.isActive('s2', 'user-2');
+		cache.handleSessionRevoked({ userId: 'user-1', reason: 'logout' });
+		await cache.isActive('s2', 'user-2');
+		expect(sessions.isSessionActive).toHaveBeenCalledTimes(1);
 	});
 });

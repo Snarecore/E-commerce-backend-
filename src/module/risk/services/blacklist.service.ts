@@ -255,11 +255,16 @@ export class BlacklistService {
     }
   }
 
+  /**
+   * @param options.failClosed when true a lookup error is rethrown instead of being treated as
+   *        low risk. Display paths (order details) keep failing open; actions that cannot be
+   *        undone (booking a courier) must fail closed.
+   */
   async evaluateRiskForCustomer(params: {
     phone?: string;
     email?: string;
     ipAddress?: string;
-  }): Promise<{
+  }, options: { failClosed?: boolean } = {}): Promise<{
     riskScore: number;
     riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
     policyDecision: 'ALLOW' | 'MANUAL_REVIEW' | 'HARD_BLOCK';
@@ -346,6 +351,7 @@ export class BlacklistService {
 
       return defaultLowRisk;
     } catch (error) {
+      if (options.failClosed) throw error;
       console.warn('[BlacklistService] evaluateRiskForCustomer failed gracefully:', error instanceof Error ? error.message : error);
       return defaultLowRisk;
     }

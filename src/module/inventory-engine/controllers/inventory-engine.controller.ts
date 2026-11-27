@@ -2,7 +2,8 @@ import { Controller, Get, Post, Body, Param, Query, UseGuards, Req } from '@nest
 import { CONFIG } from '../../../utils/config';
 import { ResponseUtils, ApiResponse } from '../../../utils/response.utils';
 import { InventoryEngineService } from '../services/inventory-engine.service';
-import { QueryStockMovementsDto, AdjustStockParams, QueryLowStockAlertsDto } from '../dto/stock-movement.dto';
+import { AdjustSingleStockDto, QueryStockMovementsDto, QueryLowStockAlertsDto } from '../dto/stock-movement.dto';
+import { StockMovementType, StockReferenceType } from '../../../enums/stock-movement.enum';
 import { CreateAdjustmentDto, QueryAdjustmentsDto } from '../dto/stock-adjustment.dto';
 import { ProcessReturnDto } from '../dto/stock-return.dto';
 import { ExecuteExchangeDto } from '../dto/stock-exchange.dto';
@@ -49,17 +50,24 @@ export class InventoryEngineController {
     @Roles(Role.ADMIN)
     @Post('adjust-single')
     async adjustSingleStock(
-        @Body() body: AdjustStockParams,
+        @Body() body: AdjustSingleStockDto,
         @Req() req: Request
     ): Promise<ApiResponse<any>> {
         const user = (req as any).user;
-        const performedBy = user?.id || user?.userId || 'ADMIN';
-        const performedByName = user?.name || user?.email || 'Admin User';
 
+        // Only validated fields are forwarded; the server decides reference type, actor and that
+        // stock may never go negative.
         const result = await this.inventoryService.adjustStock({
-            ...body,
-            performedBy,
-            performedByName
+            productId: body.productId,
+            size: body.size?.trim() || null,
+            quantityChange: body.quantityChange,
+            movementType: body.movementType ?? StockMovementType.MANUAL_CORRECTION,
+            referenceType: StockReferenceType.MANUAL,
+            reason: body.reason ?? null,
+            note: body.note ?? null,
+            idempotencyKey: body.idempotencyKey ?? null,
+            performedBy: user?.id || user?.userId || 'ADMIN',
+            performedByName: user?.name || user?.email || 'Admin User'
         });
 
         return ResponseUtils.successResponseHandler(

@@ -1,3 +1,4 @@
+import { UploadPolicy, uploadOptions } from '../../../common/upload/upload.policy';
 import {
     Controller,
     Get,
@@ -135,7 +136,7 @@ export class MessageController {
     @UseGuards(JwtAuthGuard)
     @Roles(Role.CUSTOMER)
     @Post('upload')
-    @UseInterceptors(FileInterceptor('file'))
+    @UseInterceptors(FileInterceptor('file', uploadOptions(UploadPolicy.CHAT_ATTACHMENT)))
     async uploadChatFile(
         @UploadedFile() file: any
     ): Promise<ApiResponse<{ url: string }>> {

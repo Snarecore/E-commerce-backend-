@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import crypto from 'crypto';
 
 export interface IPhoneHashTuple {
@@ -11,9 +11,16 @@ export class PhoneHashService {
   private readonly secretV1: string;
   private readonly secretV2: string;
 
+  private readonly logger = new Logger(PhoneHashService.name);
+
   constructor() {
     this.secretV1 = process.env.PHONE_HMAC_SECRET_V1 || 'default_secret_v1_change_in_prod';
     this.secretV2 = process.env.PHONE_HMAC_SECRET_V2 || 'default_secret_v2_change_in_prod';
+    if (process.env.NODE_ENV === 'production' && (!process.env.PHONE_HMAC_SECRET_V1 || !process.env.PHONE_HMAC_SECRET_V2)) {
+      // Not fatal: existing hashes were made with the default key and would stop matching. With a
+      // public key, phone hashes can be reversed by brute force; set real secrets and re-hash.
+      this.logger.error('PHONE_HMAC_SECRET_V1/V2 are not set: phone hashes use a public default key and are reversible.');
+    }
   }
 
   normalizeE164(rawPhone: string): string {

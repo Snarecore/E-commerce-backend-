@@ -1,3 +1,4 @@
+import { PaidOrderApplier } from './services/paid-order-applier.service';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { getRepositoryToken } from '@nestjs/typeorm';
@@ -122,6 +123,12 @@ describe('PaymentsService - Payment Retry & Expiry', () => {
                 save: jest.fn().mockImplementation((e) => Promise.resolve(e)),
                 update: jest.fn().mockResolvedValue({ affected: 1 }),
                 create: jest.fn().mockImplementation((cls: any, data: any) => ({ ...data, id: 'created-id-1' })),
+                createQueryBuilder: jest.fn().mockReturnValue({
+                    update: jest.fn().mockReturnThis(),
+                    set: jest.fn().mockReturnThis(),
+                    where: jest.fn().mockReturnThis(),
+                    execute: jest.fn().mockResolvedValue({ affected: 0 }),
+                }),
             },
         };
 
@@ -164,6 +171,7 @@ describe('PaymentsService - Payment Retry & Expiry', () => {
 
         const module: TestingModule = await Test.createTestingModule({
             providers: [
+                PaidOrderApplier,
                 PaymentsService,
                 { provide: ConfigService, useValue: mockConfigService },
                 { provide: getRepositoryToken(Orders), useValue: mockOrderRepo },
@@ -268,6 +276,7 @@ describe('PaymentsService - Payment Retry & Expiry', () => {
                 userId: 'user-1',
                 paymentStatus: PaymentStatus.UNPAID,
                 status: OrderStatus.CANCELLED,
+                statusHistory: [{ status: OrderStatus.CANCELLED, timestamp: '2026-01-01T00:00:00.000Z', updatedBy: 'system', note: 'Payment window expired' }],
                 totalAmount: '1200.00',
                 payments: [
                     {
@@ -322,6 +331,7 @@ describe('PaymentsService - Payment Retry & Expiry', () => {
                 userId: 'user-1',
                 paymentStatus: PaymentStatus.UNPAID,
                 status: OrderStatus.CANCELLED,
+                statusHistory: [{ status: OrderStatus.CANCELLED, timestamp: '2026-01-01T00:00:00.000Z', updatedBy: 'system', note: 'Payment window expired' }],
                 totalAmount: '1200.00',
                 payments: [],
                 orderSummaries: [
@@ -592,6 +602,23 @@ describe('PaymentsService - Payment Retry & Expiry', () => {
             expect(mockQueryRunner.commitTransaction).toHaveBeenCalled();
         });
 
+        it('refuses to mark a refund succeeded when the total would exceed the captured amount', async () => {
+            const mockPayment = { id: 'pay-1', amount: '500.00', order: { id: 'ord-1', paymentStatus: PaymentStatus.PAID } };
+            const failedThenRetried = { id: 'ref-a', refundId: 'REF-A', paymentId: 'pay-1', status: RefundStatus.FAILED, amount: '500.00' };
+            const alreadySucceeded = { id: 'ref-b', refundId: 'REF-B', paymentId: 'pay-1', status: RefundStatus.SUCCEEDED, amount: '500.00' };
+
+            mockQueryRunner.manager.findOne.mockImplementation((entityClass: any) => {
+                if (entityClass === PaymentRefunds) return Promise.resolve(failedThenRetried);
+                if (entityClass === Payments) return Promise.resolve(mockPayment);
+                return Promise.resolve(null);
+            });
+            mockQueryRunner.manager.find.mockResolvedValue([failedThenRetried, alreadySucceeded]);
+
+            await expect(service.adminRefundAction('ref-a', 'MARK_SUCCEEDED', 'oops', 'admin-1')).rejects.toThrow(BadRequestException);
+            expect(failedThenRetried.status).toBe(RefundStatus.FAILED);
+            expect(mockQueryRunner.commitTransaction).not.toHaveBeenCalled();
+        });
+
         it('should mark order as PARTIALLY_REFUNDED if total succeeded refunds are less than paid amount', async () => {
             const mockOrder = {
                 id: 'ord-1',
@@ -752,6 +779,7 @@ describe('PaymentsService - Payment Retry & Expiry', () => {
                     orderId: 'ORD-1',
                     paymentStatus: PaymentStatus.UNPAID,
                     status: OrderStatus.PENDING,
+                    totalAmount: '1000.00',
                     payments: [
                         {
                             gateway: PaymentGateway.STRIPE,

@@ -13,6 +13,7 @@ import { CommentNode } from './types/comment-node.type';
 import { IsNull } from 'typeorm';
 import { Product } from '../product/entities/product.entity';
 import { CommentFilterDto } from './dto/comment-filter.dto';
+import { toPlainText } from '../../../utils/html-sanitizer.util';
 
 type ProductLite = {
     id: string;
@@ -44,7 +45,7 @@ export class ProductCommentService {
             productId: dto.productId,
             parentId: dto.parentId ?? null,
             userId: user.id,
-            body: dto.body,
+            body: toPlainText(dto.body) ?? '',
             isApproved: false
         }) as ProductComment;
 
@@ -255,7 +256,11 @@ export class ProductCommentService {
         if (!c || c.isDeleted) throw new HttpException('Comment not found', HttpStatus.NOT_FOUND);
         if (c.userId !== user.id) throw new HttpException('Forbidden', HttpStatus.FORBIDDEN);
 
-        const updated = await this.repo.update(c.id, { body: dto.body }) as ProductComment;
+        // Edited text has not been reviewed: it goes back to moderation, so an approved comment
+        // cannot be swapped for spam or phishing afterwards
+        const body = toPlainText(dto.body) ?? '';
+        const changed = body !== c.body;
+        const updated = await this.repo.update(c.id, { body, ...(changed ? { isApproved: false } : {}) }) as ProductComment;
         return ResponseUtils.successResponseHandler(200, 'Comment updated.', 'data', {
             id: updated.id,
             body: updated.body,

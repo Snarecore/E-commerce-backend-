@@ -241,7 +241,7 @@ describe('InventoryEngineService', () => {
                 mode: AdjustmentMode.SUBTRACTION,
                 notes: 'Damaged item batch',
                 items: [
-                    { productId: 'prod-uuid-1', size: 'M', quantity: 2, unitCost: 100 }
+                    { productId: 'prod-uuid-1', size: 'M', quantity: 2 }
                 ]
             }, { id: 'admin-1', name: 'Admin' });
 
@@ -250,6 +250,54 @@ describe('InventoryEngineService', () => {
             expect(queryRunner.commitTransaction).toHaveBeenCalled();
             expect(adj.status).toBe(AdjustmentStatus.PENDING_APPROVAL);
             expect(adj.totalItemsAdjusted).toBe(2);
+        });
+    });
+
+    describe('adjustStock idempotency', () => {
+        it('returns the earlier movement without touching stock when the key was already used', async () => {
+            const queryRunner = dataSource.createQueryRunner();
+            const earlier = { id: 'mv-earlier', idempotencyKey: 'key-1' };
+            (queryRunner.manager.findOne as jest.Mock)
+                .mockResolvedValueOnce({ ...mockProduct })
+                .mockResolvedValueOnce(earlier);
+
+            const result = await service.adjustStock({
+                productId: 'prod-uuid-1',
+                quantityChange: -2,
+                movementType: StockMovementType.MANUAL_CORRECTION,
+                referenceType: StockReferenceType.MANUAL,
+                idempotencyKey: 'key-1',
+            });
+
+            expect(result.movement).toBe(earlier);
+            expect(queryRunner.manager.update).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('processOrderReturn guards', () => {
+        const returnDto = (qty = 1) => ({
+            orderId: 'ORD-1001',
+            reason: 'Customer return',
+            items: [{ productId: 'prod-uuid-1', size: 'M', returnedQuantity: qty, condition: 'GOOD' as const }],
+        });
+
+        const withOrder = (status: string, orderedQty = 1) => {
+            const queryRunner = dataSource.createQueryRunner();
+            (queryRunner.manager.findOne as jest.Mock).mockResolvedValueOnce({ id: 'o1', orderId: 'ORD-1001', status, statusHistory: [] });
+            (queryRunner.manager as any).find = jest.fn().mockResolvedValue([{ productId: 'prod-uuid-1', size: 'M', quantity: orderedQty }]);
+            return queryRunner;
+        };
+
+        it('refuses an order that was already returned, cancelled or never dispatched', async () => {
+            for (const status of ['Returned', 'Cancelled', 'Pending']) {
+                withOrder(status);
+                await expect(service.processOrderReturn(returnDto(), { id: 'admin' })).rejects.toThrow(HttpException);
+            }
+        });
+
+        it('refuses to return more than was ordered', async () => {
+            withOrder('Delivered', 1);
+            await expect(service.processOrderReturn(returnDto(2), { id: 'admin' })).rejects.toThrow(/contains 1/);
         });
     });
 

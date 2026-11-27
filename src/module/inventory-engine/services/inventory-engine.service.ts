@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto';
 import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource, EntityManager } from 'typeorm';
@@ -5,6 +6,8 @@ import { StockMovement } from '../entities/stock-movement.entity';
 import { StockAdjustment } from '../entities/stock-adjustment.entity';
 import { StockAdjustmentItem } from '../entities/stock-adjustment-item.entity';
 import { Product } from '../../inventory/product/entities/product.entity';
+import { adjustmentMovementType, applyStockDelta } from '../utils/stock-delta';
+import { findOrderLines } from '../../order/stock/order-stock';
 import { Orders } from '../../order/entity/order.entity';
 import { OrderSummary } from '../../order-summary/entity/order-summary.entity';
 import { RecordMovementDto, AdjustStockParams, QueryStockMovementsDto, QueryLowStockAlertsDto } from '../dto/stock-movement.dto';
@@ -15,6 +18,19 @@ import { InventoryOutboxService } from './inventory-outbox.service';
 import { StockMovementType, StockReferenceType } from '../../../enums/stock-movement.enum';
 import { AdjustmentStatus, AdjustmentReason, AdjustmentMode } from '../../../enums/stock-adjustment.enum';
 import { OrderStatus } from '../../../enums/order-status.enum';
+import { resolvePagination } from '../../../utils/pagination.util';
+
+/** Statuses from which a parcel can come back: delivered, or returned by the courier undelivered. */
+const RETURNABLE_ORDER_STATUSES = new Set<string>([
+    OrderStatus.SHIPPED,
+    OrderStatus.LOADED_FOR_DELIVERY,
+    OrderStatus.HANDED_OVER_TO_COURIER,
+    OrderStatus.OUT_FOR_DELIVERY,
+    OrderStatus.DELIVERED,
+    OrderStatus.COMPLETED,
+]);
+
+const returnLineKey = (productId: string, size?: string | null): string => `${productId}${size ? ` / ${size.trim()}` : ''}`;
 
 @Injectable()
 export class InventoryEngineService {
@@ -92,41 +108,23 @@ export class InventoryEngineService {
                 throw new HttpException(`Product with ID "${params.productId}" not found.`, HttpStatus.NOT_FOUND);
             }
 
-            const currentOnHand = Number(product.quantity) || 0;
-            let currentSizeStock = product.sizeStock && typeof product.sizeStock === 'object' ? { ...product.sizeStock } : null;
-
-            const newOnHand = currentOnHand + params.quantityChange;
-
-            if (newOnHand < 0 && !params.allowNegativeStock) {
-                throw new HttpException(
-                    `Stock adjustment would result in negative stock. Current: ${currentOnHand}, Requested change: ${params.quantityChange}.`,
-                    HttpStatus.BAD_REQUEST
-                );
+            // Idempotency is checked under the product lock and BEFORE stock changes, so a retried
+            // request returns the original result instead of moving stock a second time.
+            if (params.idempotencyKey) {
+                const previous = await manager.findOne(StockMovement, { where: { idempotencyKey: params.idempotencyKey } });
+                if (previous) {
+                    this.logger.warn(`[StockLedger Idempotency Hit] Returning existing movement for key: ${params.idempotencyKey}`);
+                    return { product, movement: previous };
+                }
             }
 
-            if (params.size) {
-                if (!currentSizeStock) {
-                    currentSizeStock = {};
-                }
-                const curVariantQty = Number(currentSizeStock[params.size]) || 0;
-                const newVariantQty = curVariantQty + params.quantityChange;
-                if (newVariantQty < 0 && !params.allowNegativeStock) {
-                    throw new HttpException(
-                        `Stock adjustment for size "${params.size}" would result in negative stock. Current: ${curVariantQty}, Change: ${params.quantityChange}.`,
-                        HttpStatus.BAD_REQUEST
-                    );
-                }
-                currentSizeStock[params.size] = newVariantQty;
-            }
+            const change = applyStockDelta(product, params.size, params.quantityChange);
+            const currentOnHand = change.totalBefore;
+            const newOnHand = change.totalAfter;
 
-            // Update product stock
-            await manager.update(Product, product.id, {
-                quantity: newOnHand,
-                sizeStock: currentSizeStock
-            });
-
+            await manager.update(Product, product.id, { quantity: newOnHand, sizeStock: change.sizeStock });
             product.quantity = newOnHand;
-            product.sizeStock = currentSizeStock;
+            product.sizeStock = change.sizeStock;
 
             // Record to immutable ledger
             const movement = await this.recordMovement({
@@ -205,8 +203,8 @@ export class InventoryEngineService {
         try {
             const now = new Date();
             const yearMonth = now.toISOString().slice(0, 7).replace('-', '');
-            const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-            const adjustmentNumber = `ADJ-${yearMonth}-${randomSuffix}`;
+            // 8 hex chars (4 billion values) under a unique index: collisions are practically impossible
+            const adjustmentNumber = `ADJ-${yearMonth}-${randomBytes(4).toString('hex').toUpperCase()}`;
 
             const shouldComplete = dto.instantExecution === true;
             const initialStatus = shouldComplete ? AdjustmentStatus.COMPLETED : AdjustmentStatus.PENDING_APPROVAL;
@@ -247,39 +245,24 @@ export class InventoryEngineService {
                     throw new HttpException(`Product with ID "${itemDto.productId}" not found.`, HttpStatus.NOT_FOUND);
                 }
 
-                const currentOnHand = Number(product.quantity) || 0;
-                let currentSizeStock = product.sizeStock && typeof product.sizeStock === 'object' ? { ...product.sizeStock } : null;
+                const size = itemDto.size?.trim() || null;
+                const knownSizeStock = product.sizeStock && typeof product.sizeStock === 'object' ? product.sizeStock : null;
+                // A size the product does not list yet starts at 0, never at the product total
+                const prevVariantStock = size ? Number(knownSizeStock?.[size]) || 0 : Number(product.quantity) || 0;
 
-                let prevVariantStock = currentOnHand;
-                if (itemDto.size && currentSizeStock && itemDto.size in currentSizeStock) {
-                    prevVariantStock = Number(currentSizeStock[itemDto.size]) || 0;
-                }
-
-                // Compute adjusted quantity based on item direction or mode
+                const quantity = Math.abs(Number(itemDto.quantity) || 0);
                 let delta = 0;
-                if (itemDto.type === 'IN') {
-                    delta = Math.abs(Number(itemDto.quantity) || 0);
-                } else if (itemDto.type === 'OUT') {
-                    delta = -Math.abs(Number(itemDto.quantity) || 0);
-                } else if (dto.mode === AdjustmentMode.ADDITION) {
-                    delta = Math.abs(Number(itemDto.quantity) || 0);
-                } else if (dto.mode === AdjustmentMode.SUBTRACTION) {
-                    delta = -Math.abs(Number(itemDto.quantity) || 0);
-                } else if (dto.mode === AdjustmentMode.EXACT_COUNT) {
-                    // Difference between physical count and system stock
-                    const targetCount = Math.max(0, Number(itemDto.quantity) || 0);
-                    delta = targetCount - prevVariantStock;
-                }
+                if (itemDto.type === 'IN') delta = quantity;
+                else if (itemDto.type === 'OUT') delta = -quantity;
+                else if (dto.mode === AdjustmentMode.ADDITION) delta = quantity;
+                else if (dto.mode === AdjustmentMode.SUBTRACTION) delta = -quantity;
+                else if (dto.mode === AdjustmentMode.EXACT_COUNT) delta = quantity - prevVariantStock; // physical count − system stock
 
-                const newVariantStock = prevVariantStock + delta;
-                if (newVariantStock < 0) {
-                    throw new HttpException(
-                        `Adjustment for "${product.name}" (${itemDto.size || 'default'}) would result in negative stock. Current: ${prevVariantStock}, Delta: ${delta}.`,
-                        HttpStatus.BAD_REQUEST
-                    );
-                }
+                // Validates the result without writing it (throws 400 if stock would go negative)
+                const preview = applyStockDelta(product, size, delta);
 
-                const unitCost = itemDto.unitCost !== undefined ? Number(itemDto.unitCost) : (Number(product.cost) || Number(product.price) || 0);
+                // Valuation always uses the server's cost price; a client-supplied cost is never trusted
+                const unitCost = Number(product.cost) || Number(product.price) || 0;
                 const subtotalImpact = Number((delta * unitCost).toFixed(2));
 
                 totalUnitsAdjusted += Math.abs(delta);
@@ -288,12 +271,13 @@ export class InventoryEngineService {
                 const adjustmentItem = queryRunner.manager.create(StockAdjustmentItem, {
                     adjustmentId: adjustment.id,
                     productId: product.id,
-                    productName: itemDto.productName || product.name,
-                    sku: itemDto.sku || product.sku || null,
-                    size: itemDto.size || null,
+                    productName: product.name,
+                    sku: product.sku || null,
+                    size,
                     previousStock: prevVariantStock,
                     adjustedQuantity: delta,
-                    newStock: newVariantStock,
+                    // For EXACT_COUNT this is the counted target; approval re-derives the delta from it
+                    newStock: preview.variantAfter,
                     unitCost,
                     subtotalImpact
                 });
@@ -301,43 +285,20 @@ export class InventoryEngineService {
                 await queryRunner.manager.save(adjustmentItem);
                 adjustmentItems.push(adjustmentItem);
 
-                // If instant execution, execute stock change and ledger entry
                 if (shouldComplete && delta !== 0) {
-                    const newTotalOnHand = currentOnHand + delta;
-                    if (itemDto.size) {
-                        if (!currentSizeStock) currentSizeStock = {};
-                        currentSizeStock[itemDto.size] = newVariantStock;
-                    }
-
-                    await queryRunner.manager.update(Product, product.id, {
-                        quantity: newTotalOnHand,
-                        sizeStock: currentSizeStock
-                    });
-
-                    // Map reason to movement type
-                    let movementType = StockMovementType.ADJUSTMENT_ADDITION;
-                    if (delta < 0) {
-                        if (dto.reason === AdjustmentReason.DAMAGED) movementType = StockMovementType.ADJUSTMENT_DAMAGE;
-                        else if (dto.reason === AdjustmentReason.LOST) movementType = StockMovementType.ADJUSTMENT_LOST;
-                        else if (dto.reason === AdjustmentReason.THEFT) movementType = StockMovementType.ADJUSTMENT_THEFT;
-                        else if (dto.reason === AdjustmentReason.SAMPLE_GIFT) movementType = StockMovementType.ADJUSTMENT_SAMPLE;
-                        else movementType = StockMovementType.ADJUSTMENT_DEFICIT;
-                    } else {
-                        movementType = StockMovementType.ADJUSTMENT_SURPLUS;
-                    }
-
+                    await queryRunner.manager.update(Product, product.id, { quantity: preview.totalAfter, sizeStock: preview.sizeStock });
                     await this.recordMovement({
                         productId: product.id,
-                        sku: itemDto.sku || product.sku || null,
-                        size: itemDto.size || null,
-                        movementType,
+                        sku: product.sku || null,
+                        size,
+                        movementType: adjustmentMovementType(dto.reason, delta),
                         quantityChange: delta,
-                        onHandBefore: currentOnHand,
-                        onHandAfter: newTotalOnHand,
+                        onHandBefore: preview.totalBefore,
+                        onHandAfter: preview.totalAfter,
                         reservedBefore: 0,
                         reservedAfter: 0,
-                        availableBefore: currentOnHand,
-                        availableAfter: newTotalOnHand,
+                        availableBefore: preview.totalBefore,
+                        availableAfter: preview.totalAfter,
                         referenceType: StockReferenceType.STOCK_ADJUSTMENT,
                         referenceId: adjustment.adjustmentNumber,
                         reason: dto.reason,
@@ -397,54 +358,36 @@ export class InventoryEngineService {
 
                 if (!product) continue;
 
-                const currentOnHand = Number(product.quantity) || 0;
-                let currentSizeStock = product.sizeStock && typeof product.sizeStock === 'object' ? { ...product.sizeStock } : null;
+                // Stock may have changed since the adjustment was drafted. An exact count states the
+                // target quantity, so its delta is re-derived from the stock as it is now.
+                const knownSizeStock = product.sizeStock && typeof product.sizeStock === 'object' ? product.sizeStock : null;
+                const currentVariant = item.size ? Number(knownSizeStock?.[item.size]) || 0 : Number(product.quantity) || 0;
+                const delta =
+                    adjustment.mode === AdjustmentMode.EXACT_COUNT ? Number(item.newStock) - currentVariant : Number(item.adjustedQuantity) || 0;
 
-                const delta = Number(item.adjustedQuantity) || 0;
-                const newTotalOnHand = currentOnHand + delta;
+                const change = applyStockDelta(product, item.size, delta);
 
-                if (newTotalOnHand < 0) {
-                    throw new HttpException(
-                        `Cannot approve adjustment: Product "${product.name}" stock would become negative (${newTotalOnHand}).`,
-                        HttpStatus.BAD_REQUEST
-                    );
-                }
+                item.previousStock = change.variantBefore;
+                item.adjustedQuantity = delta;
+                item.newStock = change.variantAfter;
+                item.subtotalImpact = Number((delta * (Number(item.unitCost) || 0)).toFixed(2));
+                await queryRunner.manager.save(item);
 
-                if (item.size) {
-                    if (!currentSizeStock) currentSizeStock = {};
-                    const curVariant = Number(currentSizeStock[item.size]) || 0;
-                    currentSizeStock[item.size] = Math.max(0, curVariant + delta);
-                }
-
-                await queryRunner.manager.update(Product, product.id, {
-                    quantity: newTotalOnHand,
-                    sizeStock: currentSizeStock
-                });
-
-                // Record movement in ledger
-                let movementType = StockMovementType.ADJUSTMENT_ADDITION;
-                if (delta < 0) {
-                    if (adjustment.reason === AdjustmentReason.DAMAGED) movementType = StockMovementType.ADJUSTMENT_DAMAGE;
-                    else if (adjustment.reason === AdjustmentReason.LOST) movementType = StockMovementType.ADJUSTMENT_LOST;
-                    else if (adjustment.reason === AdjustmentReason.THEFT) movementType = StockMovementType.ADJUSTMENT_THEFT;
-                    else if (adjustment.reason === AdjustmentReason.SAMPLE_GIFT) movementType = StockMovementType.ADJUSTMENT_SAMPLE;
-                    else movementType = StockMovementType.ADJUSTMENT_DEFICIT;
-                } else {
-                    movementType = StockMovementType.ADJUSTMENT_SURPLUS;
-                }
+                if (delta === 0) continue;
+                await queryRunner.manager.update(Product, product.id, { quantity: change.totalAfter, sizeStock: change.sizeStock });
 
                 await this.recordMovement({
                     productId: product.id,
                     sku: product.sku || null,
                     size: item.size || null,
-                    movementType,
+                    movementType: adjustmentMovementType(adjustment.reason, delta),
                     quantityChange: delta,
-                    onHandBefore: currentOnHand,
-                    onHandAfter: newTotalOnHand,
+                    onHandBefore: change.totalBefore,
+                    onHandAfter: change.totalAfter,
                     reservedBefore: 0,
                     reservedAfter: 0,
-                    availableBefore: currentOnHand,
-                    availableAfter: newTotalOnHand,
+                    availableBefore: change.totalBefore,
+                    availableAfter: change.totalAfter,
                     referenceType: StockReferenceType.STOCK_ADJUSTMENT,
                     referenceId: adjustment.adjustmentNumber,
                     reason: adjustment.reason,
@@ -453,6 +396,9 @@ export class InventoryEngineService {
                     performedByName: user?.name || user?.email || 'Admin'
                 }, queryRunner.manager);
             }
+
+            adjustment.totalItemsAdjusted = sortedItems.reduce((sum, item) => sum + Math.abs(Number(item.adjustedQuantity) || 0), 0);
+            adjustment.totalValueImpact = Number(sortedItems.reduce((sum, item) => sum + (Number(item.subtotalImpact) || 0), 0).toFixed(2));
 
             adjustment.status = AdjustmentStatus.COMPLETED;
             adjustment.approvedByUserId = user?.id || user?.userId || null;
@@ -500,9 +446,7 @@ export class InventoryEngineService {
      * Query adjustments list with pagination and filters
      */
     async getAdjustments(query: QueryAdjustmentsDto): Promise<{ data: StockAdjustment[]; total: number; page: number; limit: number }> {
-        const page = Math.max(1, Number(query.page) || 1);
-        const limit = Math.max(1, Math.min(100, Number(query.limit) || 20));
-        const skip = (page - 1) * limit;
+        const { page, limit, skip } = resolvePagination(query.page, query.limit, 20);
 
         const qb = this.stockAdjustmentRepo.createQueryBuilder('adj')
             .leftJoinAndSelect('adj.items', 'items')
@@ -583,9 +527,7 @@ export class InventoryEngineService {
      * Query the immutable stock ledger
      */
     async getMovements(query: QueryStockMovementsDto): Promise<{ data: StockMovement[]; total: number; page: number; limit: number }> {
-        const page = Math.max(1, Number(query.page) || 1);
-        const limit = Math.max(1, Math.min(100, Number(query.limit) || 20));
-        const skip = (page - 1) * limit;
+        const { page, limit, skip } = resolvePagination(query.page, query.limit, 20);
 
         const qb = this.stockMovementRepo.createQueryBuilder('movement')
             .where('movement.isDeleted = :isDeleted', { isDeleted: false });
@@ -636,6 +578,39 @@ export class InventoryEngineService {
 
             if (!order) {
                 throw new HttpException(`Order "${dto.orderId}" not found.`, HttpStatus.NOT_FOUND);
+            }
+
+            // A return can only be processed once, for a parcel that actually left the warehouse.
+            // Cancelled/rejected orders were already restocked automatically.
+            if (!RETURNABLE_ORDER_STATUSES.has(order.status)) {
+                throw new HttpException(
+                    order.status === OrderStatus.RETURNED
+                        ? `Order ${order.orderId} has already been processed as returned.`
+                        : `Order ${order.orderId} cannot be returned from status "${order.status}".`,
+                    HttpStatus.CONFLICT
+                );
+            }
+
+            // Every returned line must exist on the order, and never exceed what was ordered
+            const lines = await findOrderLines(queryRunner.manager, order);
+            const ordered = new Map<string, number>();
+            for (const line of lines) {
+                const key = returnLineKey(line.productId, line.size || line.selectedSize);
+                ordered.set(key, (ordered.get(key) ?? 0) + (Number(line.quantity) || 0));
+            }
+            const requested = new Map<string, number>();
+            for (const item of dto.items) {
+                const key = returnLineKey(item.productId, item.size);
+                requested.set(key, (requested.get(key) ?? 0) + Math.max(1, Number(item.returnedQuantity) || 1));
+            }
+            for (const [key, qty] of requested) {
+                const orderedQty = ordered.get(key) ?? 0;
+                if (qty > orderedQty) {
+                    throw new HttpException(
+                        `Cannot return ${qty} of "${key}": order ${order.orderId} contains ${orderedQty}.`,
+                        HttpStatus.BAD_REQUEST
+                    );
+                }
             }
 
             const restoredItems: any[] = [];
@@ -693,8 +668,7 @@ export class InventoryEngineService {
 
                     const now = new Date();
                     const yearMonth = now.toISOString().slice(0, 7).replace('-', '');
-                    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-                    const adjNumber = `ADJ-RMA-${yearMonth}-${randomSuffix}`;
+                    const adjNumber = `ADJ-RMA-${yearMonth}-${randomBytes(4).toString('hex').toUpperCase()}`;
 
                     const adjustment = queryRunner.manager.create(StockAdjustment, {
                         adjustmentNumber: adjNumber,
@@ -1051,9 +1025,7 @@ export class InventoryEngineService {
         limit: number;
         pageCount: number;
     }> {
-        const page = Math.max(1, Number(query.page) || 1);
-        const limit = Math.max(1, Math.min(100, Number(query.limit) || 20));
-        const skip = (page - 1) * limit;
+        const { page, limit, skip } = resolvePagination(query.page, query.limit, 20);
 
         const qb = this.productRepo
             .createQueryBuilder('p')

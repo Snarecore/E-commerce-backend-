@@ -1,11 +1,11 @@
-import { BadRequestException, ConflictException, HttpException, HttpStatus, Injectable, NotFoundException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, HttpException, HttpStatus, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { UserRepository } from '../user/user.repository';
 import { RegisterDto } from './dto/register.dto';
 import { ApiResponse, ResponseUtils } from '../../utils/response.utils';
 import { User } from '../user/entities/user.entity';
 import { DataSource } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
-import * as bcrypt from 'bcryptjs';
+import { hashPassword, verifyPassword } from '../../utils/bcrypt.utils';
 import * as crypto from 'crypto';
 import { LoginDto } from './dto/login.dto';
 import { Response } from 'express';
@@ -33,11 +33,20 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { AuditAction } from '../audit-log/constants/audit-action.enum';
 import { AuditModule } from '../audit-log/constants/audit-module.enum';
 import { AuditTargetType } from '../audit-log/constants/audit-target-type.enum';
+import { getClientIp } from '../../utils/request-ip.util';
+
+const INVALID_CREDENTIALS_MESSAGE = 'Invalid email or password.';
+/** bcrypt hash of a random string; compared against when the email is unknown to equalise timing. */
+const DUMMY_PASSWORD_HASH = '$2b$12$1aWOiYchhOYJb.u9jLLwsOnQnk23QDZli47phe9lfgDYm6POgONtu';
 
 @Injectable()
 export class AuthService {
 	/** Wrong guesses allowed per reset code before it is invalidated (1 in 180,000 odds). */
 	static readonly MAX_RESET_ATTEMPTS = 5;
+	/** A reset code (and the guess budget of its window) lives this long after it is issued. */
+	static readonly RESET_CODE_TTL_MS = 10 * 60 * 1000;
+	/** Minimum gap between two reset emails to the same account. */
+	static readonly RESET_RESEND_COOLDOWN_MS = 60 * 1000;
 
 	constructor(
 		private readonly userRepository: UserRepository,
@@ -53,22 +62,7 @@ export class AuthService {
 
 	private extractClientInfo(req?: Request) {
 		if (!req) return { ipAddress: null, userAgent: null };
-		const xForwardedFor = req.headers?.['x-forwarded-for'];
-		let ipAddress: string | null = null;
-		if (typeof xForwardedFor === 'string') {
-			ipAddress = xForwardedFor.split(',')[0].trim();
-		} else if (Array.isArray(xForwardedFor) && xForwardedFor.length > 0) {
-			ipAddress = xForwardedFor[0];
-		} else if (req.headers?.['x-real-ip']) {
-			ipAddress = req.headers['x-real-ip'] as string;
-		} else {
-			ipAddress = req.ip || req.socket?.remoteAddress || null;
-		}
-
-		if (ipAddress === '::1' || ipAddress === '::ffff:127.0.0.1') {
-			ipAddress = '127.0.0.1';
-		}
-
+		const ipAddress = getClientIp(req);
 		const userAgent = (req.headers?.['user-agent'] as string) || null;
 		return { ipAddress, userAgent };
 	}
@@ -101,9 +95,11 @@ export class AuthService {
 					after: { attemptedEmail: dto.email, reason: 'User not found' }
 				}
 			});
-			throw new NotFoundException('User not found.');
+			// Same work and same answer as a wrong password, so login cannot reveal which emails exist
+			await verifyPassword(dto.password, DUMMY_PASSWORD_HASH);
+			throw new UnauthorizedException(INVALID_CREDENTIALS_MESSAGE);
 		}
-		const isPasswordValid = await bcrypt.compare(dto.password, user.password);
+		const isPasswordValid = await verifyPassword(dto.password, user.password);
 		if (!isPasswordValid) {
 			this.auditLogService.createAsyncLog({
 				actorId: user.id,
@@ -125,7 +121,7 @@ export class AuthService {
 					after: { attemptedEmail: dto.email, reason: 'Incorrect password' }
 				}
 			});
-			throw new UnauthorizedException('Incorrect password.');
+			throw new UnauthorizedException(INVALID_CREDENTIALS_MESSAGE);
 		}
 
 		this.auditLogService.createAsyncLog({
@@ -189,8 +185,12 @@ export class AuthService {
 		const email = decoded.email.trim().toLowerCase();
 		const name = decoded.name || dto.name || email.split('@')[0] || 'User';
 
-		let user = await this.userRepository.findOneByQueryRelation({ email });
+		let user = await this.userRepository.findOneByQueryRelation(
+			{ email },
+			{ select: ['id', 'name', 'email', 'role', 'emailVerifiedAt'] }
+		);
 		let isNewUser = false;
+		let securedUnverifiedAccount = false;
 		if (!user) {
 			// A deactivated account still owns its email; signing in must not mint a second account.
 			const existing = await this.userRepository.findOneByQueryIncludingDeleted({ email });
@@ -201,9 +201,10 @@ export class AuthService {
 				user = await this.userRepository.create({
 					email,
 					name,
-					password: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10),
+					password: await hashPassword(crypto.randomBytes(32).toString('hex')),
 					phone: 'N/A',
-					role: Role.CUSTOMER
+					role: Role.CUSTOMER,
+					emailVerifiedAt: new Date()
 				});
 				isNewUser = true;
 			} catch (error) {
@@ -212,6 +213,18 @@ export class AuthService {
 				user = await this.userRepository.findOneByQueryRelation({ email });
 				if (!user) throw error;
 			}
+		}
+
+		if (!isNewUser && !user.emailVerifiedAt) {
+			// First proof that this person owns the email. The account was created without that
+			// proof, possibly by someone else (pre-account takeover): their password and sessions
+			// must stop working. The owner can set a password later via "forgot password".
+			await this.userRepository.update(user.id, {
+				password: await hashPassword(crypto.randomBytes(32).toString('hex')),
+				emailVerifiedAt: new Date()
+			});
+			await this.authSessionService.revokeAllForUser(user.id, 'email_ownership_verified');
+			securedUnverifiedAccount = true;
 		}
 
 		const tokens = await this.startSession(user, res, req);
@@ -234,7 +247,7 @@ export class AuthService {
 			changes: {
 				type: 'SNAPSHOT',
 				before: null,
-				after: { authProvider: 'Google/Firebase', email: user.email, isNewUser }
+				after: { authProvider: 'Google/Firebase', email: user.email, isNewUser, securedUnverifiedAccount }
 			}
 		});
 
@@ -242,6 +255,8 @@ export class AuthService {
 			user: this.toSessionUser(user),
 			accessToken: tokens.accessToken,
 			refreshToken: tokens.refreshToken,
+			// Tells the client to explain that the old password no longer works
+			passwordReset: securedUnverifiedAccount,
 		});
 	}
 
@@ -284,10 +299,10 @@ export class AuthService {
 	}
 
 	issueSocketToken(currentUser: any) {
-		if (!currentUser?.id) {
+		if (!currentUser?.id || !currentUser?.sessionId) {
 			throw new UnauthorizedException('Not authenticated.');
 		}
-		const token = this.authSessionService.signSocketToken(this.toSessionUser(currentUser));
+		const token = this.authSessionService.signSocketToken(this.toSessionUser(currentUser), currentUser.sessionId);
 		return ResponseUtils.successResponseHandler(HttpStatus.OK, 'Socket token issued.', 'data', { token });
 	}
 
@@ -307,7 +322,7 @@ export class AuthService {
 			if (password !== confirmPassword) {
 				throw new BadRequestException('Password and confirm password do not match.');
 			}
-			const hashedPassword = await bcrypt.hash(password, 10);
+			const hashedPassword = await hashPassword(password);
 
 			const userEntity = queryRunner.manager.create(User, {
 				...userData,
@@ -357,8 +372,8 @@ export class AuthService {
 			if (isDuplicateKeyError(error)) {
 				throw new ConflictException('Email already exists.');
 			}
-			const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
-			throw new HttpException(errorMessage, HttpStatus.INTERNAL_SERVER_ERROR);
+			// HttpExceptions keep their status; anything else is logged and masked by the global filter
+			throw error;
 		} finally {
 			await queryRunner.release();
 		}
@@ -408,7 +423,11 @@ export class AuthService {
 	async forgotPassword(email: string) {
 		try {
 			const cleanEmail = (email || '').trim().toLowerCase();
-			const user = await this.userRepository.findOneByQuery({ email: cleanEmail });
+			// resetTokenExpiry is select:false on the entity, so it must be requested explicitly
+			const user = await this.userRepository.findOneByQueryRelation(
+				{ email: cleanEmail },
+				{ select: ['id', 'name', 'email', 'resetTokenExpiry'] }
+			);
 
 			if (!user) {
 				return ResponseUtils.successResponseHandler(
@@ -419,15 +438,30 @@ export class AuthService {
 				);
 			}
 
+			// One reset window lasts RESET_CODE_TTL_MS from the latest code. Requesting a new code
+			// inside a live window does not refill the guess budget (otherwise "request, guess 5×,
+			// repeat" would be unlimited), and a code requested within a minute of the previous one
+			// is not sent at all, so nobody can flood the owner's inbox.
+			const now = Date.now();
+			const windowExpiry = user.resetTokenExpiry ? new Date(user.resetTokenExpiry).getTime() : 0;
+			const windowOpen = windowExpiry > now;
+			if (windowOpen && now - (windowExpiry - AuthService.RESET_CODE_TTL_MS) < AuthService.RESET_RESEND_COOLDOWN_MS) {
+				return ResponseUtils.successResponseHandler(
+					HttpStatus.OK,
+					'If your email is registered, a password reset code has been sent to your email.',
+					'data',
+					{ sent: true }
+				);
+			}
+
 			// CSPRNG, not Math.random: the code is the only secret guarding the account.
 			const resetToken = crypto.randomInt(100000, 1000000).toString();
 			const hashedResetToken = crypto.createHash('sha256').update(resetToken).digest('hex');
-			const resetTokenExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
 			await this.userRepository.update(user.id, {
 				resetToken: hashedResetToken,
-				resetTokenExpiry: resetTokenExpiresAt,
-				resetAttempts: 0
+				resetTokenExpiry: new Date(now + AuthService.RESET_CODE_TTL_MS),
+				...(windowOpen ? {} : { resetAttempts: 0 })
 			});
 
 			await this.emailService.sendResetPasswordEmail({
@@ -488,7 +522,9 @@ export class AuthService {
 			.where('id = :id AND `resetAttempts` < :max', { id: user.id, max: AuthService.MAX_RESET_ATTEMPTS })
 			.execute();
 		if (!consumed.affected) {
-			await this.userRepository.update(user.id, { resetToken: null as any, resetTokenExpiry: null as any });
+			// Burn the code but keep the window's expiry, so requesting a new code right away does
+			// not grant a fresh set of guesses (see forgotPassword)
+			await this.userRepository.update(user.id, { resetToken: null as any });
 			throw new BadRequestException('Too many incorrect attempts. Please request a new reset code.');
 		}
 
@@ -500,12 +536,14 @@ export class AuthService {
 			throw invalidCode;
 		}
 
-		const hashedPassword = await bcrypt.hash(newPassword, 10);
+		const hashedPassword = await hashPassword(newPassword);
 		await this.userRepository.update(user.id, {
 			resetToken: null as any,
 			resetTokenExpiry: null as any,
 			resetAttempts: 0,
-			password: hashedPassword
+			password: hashedPassword,
+			// The reset code reached this inbox, which proves the person controls the email
+			emailVerifiedAt: new Date()
 		});
 		// A password reset signs the user out everywhere
 		await this.authSessionService.revokeAllForUser(user.id, 'password_reset');

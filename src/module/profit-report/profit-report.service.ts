@@ -3,6 +3,20 @@ import { DataSource } from 'typeorm';
 import { ProfitReportFilterDto } from './dto/profit-report-filter.dto';
 import { ProfitReportStatusScope, CostSource } from '../../enums/profit-report.enum';
 import { ResponseUtils } from '../../utils/response.utils';
+import { sqlInStoreTime, storeDayBoundaryUtc, storeLocalDate } from '../../utils/store-time.util';
+
+/** Hard cap on exported rows so one export cannot exhaust memory; narrow the date range for more. */
+const MAX_CSV_ROWS = 50_000;
+
+/**
+ * Quotes a CSV cell and neutralises spreadsheet formulas. Customer-controlled text such as a
+ * name starting with "=", "+", "-" or "@" would otherwise execute when the admin opens the file.
+ */
+export function toCsvCell(value: unknown): string {
+    let text = value === null || value === undefined ? '' : String(value);
+    if (/^[=+\-@\t\r]/.test(text) && !/^-?\d+(\.\d+)?%?$/.test(text)) text = `'${text}`;
+    return `"${text.replace(/"/g, '""')}"`;
+}
 
 @Injectable()
 export class ProfitReportService {
@@ -11,7 +25,8 @@ export class ProfitReportService {
     private buildStatusCondition(scope?: ProfitReportStatusScope, customStatus?: string): { sql: string; params: any[] } {
         if (scope === ProfitReportStatusScope.ACTIVE_ALL) {
             return {
-                sql: `o.status NOT IN ('Cancelled', 'Rejected', 'Failed') AND (o.isDeleted = 0 OR o.isDeleted IS NULL)`,
+                // Returned orders earned nothing; they are excluded like cancellations
+                sql: `o.status NOT IN ('Cancelled', 'Rejected', 'Failed', 'Returned') AND (o.isDeleted = 0 OR o.isDeleted IS NULL)`,
                 params: []
             };
         } else if (scope === ProfitReportStatusScope.CUSTOM && customStatus) {
@@ -32,13 +47,14 @@ export class ProfitReportService {
         const clauses: string[] = [];
         const params: any[] = [];
 
+        // Day boundaries are the shop's business day, converted to the UTC that createdAt is stored in
         if (startDate) {
             clauses.push(`o.createdAt >= ?`);
-            params.push(startDate.includes('T') ? startDate : `${startDate} 00:00:00`);
+            params.push(storeDayBoundaryUtc(startDate, 'start'));
         }
         if (endDate) {
             clauses.push(`o.createdAt <= ?`);
-            params.push(endDate.includes('T') ? endDate : `${endDate} 23:59:59`);
+            params.push(storeDayBoundaryUtc(endDate, 'end'));
         }
 
         return {
@@ -61,16 +77,18 @@ export class ProfitReportService {
                 ? [...statusCond.params, ...dateCond.params, dto.mainCategoryId]
                 : [...statusCond.params, ...dateCond.params];
 
+            // With a category filter, revenue is that category's share of each order: its own line
+            // totals, with the order's coupon discount allocated pro rata. Delivery is not category
+            // revenue. (Summing whole-order subtotals would credit other categories' sales to it.)
             const orderStatsQuery = dto.mainCategoryId ? `
-                SELECT 
-                    COUNT(o.id) as totalOrders,
-                    COALESCE(SUM(o.subtotal), 0) as subtotalRevenue,
-                    COALESCE(SUM(o.discountAmount), 0) as couponDiscount,
-                    COALESCE(SUM(o.deliveryCharge), 0) as deliveryCollected
+                SELECT
+                    COUNT(DISTINCT o.id) as totalOrders,
+                    COALESCE(SUM(os.price * os.quantity), 0) as subtotalRevenue,
+                    COALESCE(SUM(CASE WHEN o.subtotal > 0 THEN o.discountAmount * (os.price * os.quantity) / o.subtotal ELSE 0 END), 0) as couponDiscount,
+                    0 as deliveryCollected
                 FROM orders o
-                WHERE o.id IN (
-                    SELECT DISTINCT os.orderId FROM \`order-summary\` os WHERE os.snapshotMainCategoryId = ?
-                ) AND ${statusCond.sql} AND ${dateCond.sql}
+                JOIN \`order-summary\` os ON os.orderId = o.id
+                WHERE os.snapshotMainCategoryId = ? AND ${statusCond.sql} AND ${dateCond.sql}
             ` : `
                 SELECT 
                     COUNT(o.id) as totalOrders,
@@ -156,6 +174,7 @@ export class ProfitReportService {
             const statusCond = this.buildStatusCondition(dto.statusScope, dto.customStatus);
             const dateCond = this.buildDateCondition(dto.startDate, dto.endDate);
 
+            const localCreatedAt = sqlInStoreTime('o.createdAt');
             let dateFormat = '%Y-%m-%d';
             if (dto.period === 'weekly') dateFormat = '%Y-%u';
             else if (dto.period === 'monthly') dateFormat = '%Y-%m';
@@ -163,8 +182,8 @@ export class ProfitReportService {
 
             const orderTrendQuery = `
                 SELECT 
-                    DATE_FORMAT(o.createdAt, '${dateFormat}') as dateGroup,
-                    MIN(DATE(o.createdAt)) as displayDate,
+                    DATE_FORMAT(${localCreatedAt}, '${dateFormat}') as dateGroup,
+                    DATE_FORMAT(MIN(${localCreatedAt}), '%Y-%m-%d') as displayDate,
                     COUNT(o.id) as ordersCount,
                     COALESCE(SUM(o.subtotal - o.discountAmount), 0) as netRevenue,
                     COALESCE(SUM(o.deliveryCharge), 0) as deliveryCollected
@@ -176,7 +195,7 @@ export class ProfitReportService {
 
             const cogsTrendQuery = `
                 SELECT 
-                    DATE_FORMAT(o.createdAt, '${dateFormat}') as dateGroup,
+                    DATE_FORMAT(${localCreatedAt}, '${dateFormat}') as dateGroup,
                     COALESCE(SUM(os.totalCost), 0) as cogs
                 FROM orders o
                 JOIN \`order-summary\` os ON os.orderId = o.id
@@ -203,7 +222,7 @@ export class ProfitReportService {
                 const netProfit = grossProfit + deliveryCollected;
 
                 return {
-                    date: r.displayDate ? new Date(r.displayDate).toISOString().split('T')[0] : r.dateGroup,
+                    date: r.displayDate || r.dateGroup,
                     ordersCount: Number(r.ordersCount || 0),
                     netRevenue: Number(netRevenue.toFixed(2)),
                     cogs: Number(cogs.toFixed(2)),
@@ -455,12 +474,14 @@ export class ProfitReportService {
             WHERE ${statusCond.sql} AND ${dateCond.sql}
             GROUP BY o.id, o.orderId, o.createdAt, o.status, u.name, o.subtotal, o.discountAmount, o.deliveryCharge
             ORDER BY o.createdAt DESC
+            LIMIT ${MAX_CSV_ROWS}
         `;
 
         const rows = await this.dataSource.query(query, [...statusCond.params, ...dateCond.params]);
 
-        let csv = 'Order ID,Date,Status,Customer,Subtotal (BDT),Coupon Discount (BDT),Net Revenue (BDT),COGS (BDT),Gross Profit (BDT),Delivery Charge (BDT),Net Profit (BDT),Net Margin %\n';
-
+        const lines = [
+            ['Order ID', 'Date', 'Status', 'Customer', 'Subtotal (BDT)', 'Coupon Discount (BDT)', 'Net Revenue (BDT)', 'COGS (BDT)', 'Gross Profit (BDT)', 'Delivery Charge (BDT)', 'Net Profit (BDT)', 'Net Margin %'],
+        ];
         for (const r of rows) {
             const subtotal = Number(r.subtotal || 0);
             const couponDiscount = Number(r.couponDiscount || 0);
@@ -470,10 +491,13 @@ export class ProfitReportService {
             const deliveryCharge = Number(r.deliveryCharge || 0);
             const netProfit = grossProfit + deliveryCharge;
             const netMargin = netRevenue > 0 ? ((netProfit / netRevenue) * 100).toFixed(2) : '0.00';
-            const dateStr = new Date(r.createdAt).toISOString().split('T')[0];
-
-            csv += `"${r.orderId}","${dateStr}","${r.status}","${r.customerName}",${subtotal.toFixed(2)},${couponDiscount.toFixed(2)},${netRevenue.toFixed(2)},${cogs.toFixed(2)},${grossProfit.toFixed(2)},${deliveryCharge.toFixed(2)},${netProfit.toFixed(2)},${netMargin}%\n`;
+            lines.push([
+                r.orderId, storeLocalDate(r.createdAt), r.status, r.customerName,
+                subtotal.toFixed(2), couponDiscount.toFixed(2), netRevenue.toFixed(2), cogs.toFixed(2),
+                grossProfit.toFixed(2), deliveryCharge.toFixed(2), netProfit.toFixed(2), `${netMargin}%`,
+            ]);
         }
+        const csv = lines.map((cells) => cells.map(toCsvCell).join(',')).join('\n') + '\n';
 
         return csv;
     }

@@ -36,6 +36,10 @@ export const EnvSchema = z
 		MYSQL_MAX_CONNECTIONS: z.coerce.number().int().min(1).default(150),
 		DB_CONNECTION_BUDGET_PERCENT: z.coerce.number().int().min(1).max(100).default(70),
 		PM2_INSTANCES: z.coerce.number().int().min(1).default(1),
+		// Reverse proxies in front of Node; drives req.ip (see bootstrap/configure-app.ts)
+		TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(1),
+		// Shop time zone for report day boundaries (Bangladesh: +06:00)
+		STORE_UTC_OFFSET: z.string().regex(/^[+-](0\d|1[0-4]):[0-5]\d$/, 'STORE_UTC_OFFSET must look like +06:00').default('+06:00'),
 
 		// Authentication & Security (Entropy & Non-Trivial Guarantee)
 		JWT_SECRET: z.string().min(32, 'JWT_SECRET must have at least 32 characters'),

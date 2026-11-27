@@ -105,8 +105,10 @@ export class OrdersController {
 		return await this.service.findOne(id, req.user, guestToken);
 	}
 
+	// Same access rule as GET :id — admin, owner, or a guest with the order's signed token;
+	// enforced in the service by resolveOrderAccess, so guests must not be stopped by the JWT guard.
+	@Public()
 	@UseGuards(OptionalJwtAuthGuard)
-	@Roles(Role.CUSTOMER)
 	@Post(':id/restore-cart')
 	async restoreCart(
 		@Param('id') id: string,

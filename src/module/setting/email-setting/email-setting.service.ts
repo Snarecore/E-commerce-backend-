@@ -271,16 +271,24 @@ export class EmailSettingService {
         let plainPass = (dto.emailPass || '').trim();
 
         if (!plainPass || plainPass === '••••••••') {
+            // A stored password is only ever sent to the server it was saved for. Testing against a
+            // different host or account requires typing the password, so the test endpoint cannot be
+            // used to deliver the saved credential to an attacker-controlled SMTP server.
+            const sameAccount = (host?: string | null, user?: string | null) =>
+                !!host && !!user &&
+                host.trim().toLowerCase() === dto.host.trim().toLowerCase() &&
+                user.trim().toLowerCase() === (dto.emailUser || '').trim().toLowerCase();
+
             const existing = await this.repository.findOneByQuery({ isDeleted: false });
-            if (existing?.emailPass) {
+            if (existing?.emailPass && sameAccount(existing.host, existing.emailUser)) {
                 plainPass = decryptSmtpPassword(existing.emailPass, secret);
-            } else {
-                plainPass = (this.configService.get<string>('EMAIL_PASS') || process.env.EMAIL_PASS || '').trim();
+            } else if (!existing?.emailPass && sameAccount(this.configService.get<string>('EMAIL_HOST'), this.configService.get<string>('EMAIL_USER'))) {
+                plainPass = (this.configService.get<string>('EMAIL_PASS') || '').trim();
             }
         }
 
         if (!plainPass) {
-            throw new BadRequestException('Password or App Password is required to test SMTP connection.');
+            throw new BadRequestException('Enter the password (or App Password) to test this SMTP host and account.');
         }
 
         const port = Number(dto.port) || 465;

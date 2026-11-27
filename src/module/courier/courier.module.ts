@@ -1,3 +1,4 @@
+import { RiskModule } from '../risk/risk.module';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Shipment } from './entities/shipment.entity';
@@ -14,7 +15,7 @@ import { OrdersModule } from '../order/order.module';
  * milestone goes through OrdersService.updateOrderStatus.
  */
 @Module({
-    imports: [TypeOrmModule.forFeature([Shipment, ShipmentEvent]), OrdersModule],
+    imports: [TypeOrmModule.forFeature([Shipment, ShipmentEvent]), OrdersModule, RiskModule],
     controllers: [CourierController, SteadfastWebhookController],
     providers: [SteadfastClient, ShipmentService, ShipmentDispatchWorker],
     exports: [ShipmentService]

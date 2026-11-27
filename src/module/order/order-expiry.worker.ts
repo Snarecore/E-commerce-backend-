@@ -8,10 +8,13 @@ import { OrderStatus, PaymentStatus } from '../../enums/order-status.enum';
 import { Payments } from '../payments/entities/payment.entity';
 import { PaymentAttemptStatus, PaymentGateway } from '../payments/enums/payment.enum';
 import { SslcommerzService } from '../payments/services/sslcommerz.service';
-import { Product } from '../inventory/product/entities/product.entity';
-import { OrderSummary } from '../order-summary/entity/order-summary.entity';
+import { PaymentsService } from '../payments/payments.service';
+import { findOrderLines, releaseOrderStock, toReleaseMovements } from './stock/order-stock';
+import { releaseCouponUsage } from '../coupon/coupon-usage.ledger';
 import { InventoryEngineService } from '../inventory-engine/services/inventory-engine.service';
-import { StockMovementType, StockReferenceType } from '../../enums/stock-movement.enum';
+
+/** How long a postponed expiry waits before it is checked again. */
+const ORDER_EXPIRY_RECHECK_MS = 15 * 60 * 1000;
 
 @Injectable()
 export class OrderExpiryWorker {
@@ -22,7 +25,8 @@ export class OrderExpiryWorker {
         private readonly dataSource: DataSource,
         private readonly sslcommerzService: SslcommerzService,
         @Optional() private readonly configService?: ConfigService,
-        @Optional() private readonly inventoryEngineService?: InventoryEngineService
+        @Optional() private readonly inventoryEngineService?: InventoryEngineService,
+        @Optional() private readonly paymentsService?: PaymentsService
     ) {}
 
     private getStripeClient(): Stripe | null {
@@ -77,6 +81,9 @@ export class OrderExpiryWorker {
                     isDeleted: false
                 },
                 relations: ['payments', 'orderSummaries'],
+                // Oldest first; postponed orders move their next check forward (see postpone), so a
+                // handful of stuck orders can never occupy every slot of every run
+                order: { orderPaymentExpiresAt: 'ASC' },
                 take: 20
             });
 
@@ -101,6 +108,17 @@ export class OrderExpiryWorker {
                 await queryRunner.release().catch(() => null);
             }
         }
+    }
+
+    /**
+     * Leaves the order pending and moves its next expiry check forward, so it drops to the back of
+     * the queue instead of blocking every run until someone resolves it.
+     */
+    private async postpone(order: Orders, reason: string): Promise<void> {
+        this.logger.warn(`[Order Expiry] Postponing cancellation of ${order.orderId}: ${reason}`);
+        await this.dataSource
+            .getRepository(Orders)
+            .update(order.id, { orderPaymentExpiresAt: new Date(Date.now() + ORDER_EXPIRY_RECHECK_MS) });
     }
 
     /**
@@ -143,13 +161,11 @@ export class OrderExpiryWorker {
                     const queryRes = await this.sslcommerzService.queryTransaction(payment.tranId);
                     const element = queryRes?.element?.[0];
                     if (element && (element.status === 'VALID' || element.status === 'VALIDATED')) {
-                        this.logger.warn(`[Order Expiry] Order ${order.orderId} payment is VALID on SSLCommerz! Postponing cancellation.`);
-                        return; // Postpone cancellation for reconciliation
+                        return this.postpone(order, `[Order Expiry] Order ${order.orderId} payment is VALID on SSLCommerz!`);
                     }
                 } catch {
                     // Gateway query failed/timed out: Keep order pending for safety
-                    this.logger.warn(`[Order Expiry] SSLCommerz query failed/timed out for order ${order.orderId}. Postponing cancellation.`);
-                    return;
+                    return this.postpone(order, `[Order Expiry] SSLCommerz query failed/timed out for order ${order.orderId}`);
                 }
             }
         }
@@ -163,9 +179,14 @@ export class OrderExpiryWorker {
             if (isStripe && intentId && intentId.startsWith('pi_') && stripe) {
                 try {
                     const intent = await stripe.paymentIntents.retrieve(intentId);
-                    if (intent.status === 'succeeded' || intent.status === 'processing') {
-                        this.logger.warn(`[Order Expiry] Order ${order.orderId} Stripe intent is ${intent.status}! Postponing cancellation.`);
+                    if (intent.status === 'succeeded' && this.paymentsService) {
+                        // The customer paid but the webhook never arrived: apply it now (same rules as the webhook)
+                        this.logger.warn(`[Order Expiry] Order ${order.orderId} Stripe intent succeeded without a webhook; recovering.`);
+                        await this.paymentsService.recoverStripeIntent(intent);
                         return;
+                    }
+                    if (intent.status === 'succeeded' || intent.status === 'processing') {
+                        return this.postpone(order, `Stripe intent is ${intent.status}`);
                     }
 
                     const cancellableStatuses = [
@@ -178,18 +199,12 @@ export class OrderExpiryWorker {
                     if (cancellableStatuses.includes(intent.status)) {
                         const canceledIntent = await stripe.paymentIntents.cancel(intentId);
                         if (canceledIntent.status !== 'canceled') {
-                            this.logger.warn(
-                                `[Order Expiry] Stripe cancel returned status "${canceledIntent.status}". Expected "canceled". Postponing cancellation.`
-                            );
-                            return;
+                            return this.postpone(order, `[Order Expiry] Stripe cancel returned status "${canceledIntent.status}". Expected "canceled"`);
                         }
                         this.logger.log(`[Order Expiry] Successfully cancelled Stripe PaymentIntent ${intentId} on gateway.`);
                     }
                 } catch (stripeErr: any) {
-                    this.logger.warn(
-                        `[Order Expiry] Stripe query/cancel error for order ${order.orderId}: ${stripeErr?.message}. Postponing cancellation.`
-                    );
-                    return;
+                    return this.postpone(order, `[Order Expiry] Stripe query/cancel error for order ${order.orderId}: ${stripeErr?.message}`);
                 }
             }
         }
@@ -210,73 +225,20 @@ export class OrderExpiryWorker {
                 return;
             }
 
-            // Atomic Stock Restock in Strict ASC Primary Key Order
-            const summaries = await queryRunner.manager.find(OrderSummary, {
-                where: { orderId: lockedOrder.orderId }
-            });
-
-            // Aggregate restock requirements by Product ID and Size
-            const aggregatedRestock = new Map<string, { totalQty: number; sizeMap: Map<string, number> }>();
-            for (const item of summaries) {
-                if (!item.productId) continue;
-                if (!aggregatedRestock.has(item.productId)) {
-                    aggregatedRestock.set(item.productId, { totalQty: 0, sizeMap: new Map() });
-                }
-                const entry = aggregatedRestock.get(item.productId)!;
-                const qty = Number(item.quantity) || 1;
-                entry.totalQty += qty;
-                const selectedSize = (item as any).size || (item as any).selectedSize || '';
-                if (selectedSize) {
-                    entry.sizeMap.set(selectedSize, (entry.sizeMap.get(selectedSize) || 0) + qty);
-                }
-            }
-
-            const sortedProductIds = Array.from(aggregatedRestock.keys()).sort(); // 🔒 Deterministic ASC Clustered-PK Order
-
-            // Sequential Clustered-PK Row Locks in ASC Order and atomic restock
-            for (const productId of sortedProductIds) {
-                const req = aggregatedRestock.get(productId)!;
-                const product = await queryRunner.manager.findOne(Product, {
-                    where: { id: productId },
-                    lock: { mode: 'pessimistic_write' }
+            // Put the order's stock and coupon usage back (shared order-lifecycle helpers)
+            const summaries = await findOrderLines(queryRunner.manager, lockedOrder);
+            const stockChanges = await releaseOrderStock(queryRunner.manager, summaries);
+            if (this.inventoryEngineService) {
+                const movements = toReleaseMovements(stockChanges, {
+                    orderId: lockedOrder.orderId,
+                    reason: 'EXPIRED_PAYMENT_TIMEOUT',
+                    note: `Order ${lockedOrder.orderId} expired payment timeout restock`,
                 });
-
-                if (product) {
-                    const currentQty = Number(product.quantity) || 0;
-                    let updatedSizeStock = product.sizeStock;
-
-                    if (updatedSizeStock && typeof updatedSizeStock === 'object') {
-                        updatedSizeStock = { ...updatedSizeStock };
-                        for (const [sizeName, restockQty] of req.sizeMap.entries()) {
-                            const currentSizeQty = Number(updatedSizeStock[sizeName]) || 0;
-                            updatedSizeStock[sizeName] = currentSizeQty + restockQty;
-                        }
-                    }
-
-                    await queryRunner.manager.update(Product, product.id, {
-                        quantity: currentQty + req.totalQty,
-                        sizeStock: updatedSizeStock
-                    });
-
-                    if (this.inventoryEngineService) {
-                        for (const [sizeName, restockQty] of req.sizeMap.entries()) {
-                            await this.inventoryEngineService.recordMovement({
-                                productId: product.id,
-                                sku: product.sku || null,
-                                size: sizeName || null,
-                                movementType: StockMovementType.SALE_CANCEL_RELEASE,
-                                quantityChange: restockQty,
-                                onHandBefore: currentQty,
-                                onHandAfter: currentQty + req.totalQty,
-                                referenceType: StockReferenceType.ORDER,
-                                referenceId: lockedOrder.orderId,
-                                reason: 'EXPIRED_PAYMENT_TIMEOUT',
-                                note: `Order ${lockedOrder.orderId} expired payment timeout restock`
-                            }, queryRunner.manager);
-                        }
-                    }
+                for (const movement of movements) {
+                    await this.inventoryEngineService.recordMovement(movement, queryRunner.manager);
                 }
             }
+            await releaseCouponUsage(queryRunner.manager, lockedOrder.orderId);
 
             // Atomically mark pending/unknown payments as EXPIRED
             await queryRunner.manager.update(

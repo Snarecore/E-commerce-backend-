@@ -25,18 +25,19 @@ function setup(opts: { user?: Record<string, unknown> | null; attemptsLeft?: boo
         update: jest.fn().mockResolvedValue(undefined),
     };
     const authSessionService = { revokeAllForUser: jest.fn().mockResolvedValue(undefined) };
+    const emailService = { sendResetPasswordEmail: jest.fn().mockResolvedValue(undefined) };
     const service = new AuthService(
         userRepository as any,
         {} as any,
         {} as any,
         {} as any,
-        {} as any,
+        emailService as any,
         {} as any,
         {} as any,
         authSessionService as any,
         {} as any
     );
-    return { service, userRepository, execute, authSessionService };
+    return { service, userRepository, execute, authSessionService, emailService };
 }
 
 const dto = (token: string) => ({
@@ -69,7 +70,8 @@ describe('AuthService.resetPassword', () => {
     it('burns the code once the attempt limit is reached, even for the right code', async () => {
         const { service, userRepository } = setup({ attemptsLeft: false });
         await expect(service.resetPassword(dto(CODE) as any)).rejects.toThrow('Too many incorrect attempts');
-        expect(userRepository.update).toHaveBeenCalledWith('u1', { resetToken: null, resetTokenExpiry: null });
+        // The window's expiry is kept so a new code requested right away does not refill the guesses
+        expect(userRepository.update).toHaveBeenCalledWith('u1', { resetToken: null });
     });
 
     it('does not accept the plain-text code stored in the column', async () => {
@@ -97,3 +99,31 @@ describe('AuthService.resetPassword', () => {
         expect(execute).not.toHaveBeenCalled();
     });
 });
+
+describe('AuthService.forgotPassword', () => {
+    const minutesFromNow = (m: number) => new Date(Date.now() + m * 60_000);
+
+    it('starts a fresh window with a full guess budget when no code is live', async () => {
+        const { service, userRepository, emailService } = setup({ user: { id: 'u1', name: 'A', email: 'a@b.com', resetTokenExpiry: null } });
+        await service.forgotPassword('a@b.com');
+        expect(emailService.sendResetPasswordEmail).toHaveBeenCalledTimes(1);
+        expect(userRepository.update).toHaveBeenCalledWith('u1', expect.objectContaining({ resetAttempts: 0 }));
+    });
+
+    it('re-issues inside a live window without refilling the guess budget', async () => {
+        // issued 5 minutes ago (10-minute window ends in 5)
+        const { service, userRepository, emailService } = setup({ user: { id: 'u1', name: 'A', email: 'a@b.com', resetTokenExpiry: minutesFromNow(5) } });
+        await service.forgotPassword('a@b.com');
+        expect(emailService.sendResetPasswordEmail).toHaveBeenCalledTimes(1);
+        expect(userRepository.update.mock.calls[0][1]).not.toHaveProperty('resetAttempts');
+    });
+
+    it('does not send another email within a minute of the previous one', async () => {
+        const { service, userRepository, emailService } = setup({ user: { id: 'u1', name: 'A', email: 'a@b.com', resetTokenExpiry: minutesFromNow(9.8) } });
+        const res = await service.forgotPassword('a@b.com');
+        expect(res).toMatchObject({ data: { sent: true } });
+        expect(emailService.sendResetPasswordEmail).not.toHaveBeenCalled();
+        expect(userRepository.update).not.toHaveBeenCalled();
+    });
+});
+

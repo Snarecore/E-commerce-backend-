@@ -20,7 +20,7 @@ export function normalizeOrigin(value: string): string {
     return value.trim().replace(/\/+$/, '').toLowerCase();
 }
 
-function splitList(value: string | undefined): string[] {
+export function splitList(value: string | undefined): string[] {
     return (value || '')
         .split(',')
         .map(normalizeOrigin)
